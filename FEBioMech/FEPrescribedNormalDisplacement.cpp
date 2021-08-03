@@ -1,69 +1,53 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEPrescribedNormalDisplacement.h"
-#include <FECore/FEModel.h>
 #include <FECore/FESurface.h>
+#include <FECore/FENode.h>
+#include "FEBioMech.h"
 
-BEGIN_PARAMETER_LIST(FEPrescribedNormalDisplacement, FEPrescribedBC)
-	ADD_PARAMETER(m_scale, FE_PARAM_DOUBLE, "scale");
-	ADD_PARAMETER(m_hint, FE_PARAM_INT, "surface_hint");
-END_PARAMETER_LIST()
+BEGIN_FECORE_CLASS(FEPrescribedNormalDisplacement, FEPrescribedSurface)
+	ADD_PARAMETER(m_scale, "scale");
+	ADD_PARAMETER(m_hint, "surface_hint");
+END_FECORE_CLASS()
 
-FEPrescribedNormalDisplacement::FEPrescribedNormalDisplacement(FEModel* fem) : FEPrescribedBC(fem)
+FEPrescribedNormalDisplacement::FEPrescribedNormalDisplacement(FEModel* fem) : FEPrescribedSurface(fem)
 {
 	m_scale = 0.0;
 	m_hint = 0;
 }
 
-bool FEPrescribedNormalDisplacement::Init()
-{
-	return FEPrescribedBC::Init();
-}
-
+// activation
 void FEPrescribedNormalDisplacement::Activate()
 {
-	FEModel& fem = *GetFEModel();
-	DOFS& dofs = fem.GetDOFS();
-	int dofX = dofs.GetDOF("x");
-	int dofY = dofs.GetDOF("y");
-	int dofZ = dofs.GetDOF("z");
+	const FESurface& surf = *GetSurface();
 
-	FEMesh& mesh = fem.GetMesh();
-	for (size_t i = 0; i<m_node.size(); ++i)
-	{
-		// get the node
-		FENode& node = mesh.Node(m_node[i].nodeId);
-
-		// set the dof to prescribed
-		node.m_BC[dofX] = DOF_PRESCRIBED;
-		node.m_BC[dofY] = DOF_PRESCRIBED;
-		node.m_BC[dofZ] = DOF_PRESCRIBED;
-	}
-}
-
-void FEPrescribedNormalDisplacement::Deactivate()
-{
-	FEModel& fem = *GetFEModel();
-	DOFS& dofs = fem.GetDOFS();
-	int dofX = dofs.GetDOF("x");
-	int dofY = dofs.GetDOF("y");
-	int dofZ = dofs.GetDOF("z");
-
-	FEMesh& mesh = fem.GetMesh();
-	for (size_t i = 0; i<m_node.size(); ++i)
-	{
-		// get the node
-		FENode& node = mesh.Node(m_node[i].nodeId);
-
-		// set the dof to prescribed
-		node.m_BC[dofX] = DOF_OPEN;
-		node.m_BC[dofY] = DOF_OPEN;
-		node.m_BC[dofZ] = DOF_OPEN;
-	}
-}
-
-// assign a node set to the prescribed BC
-void FEPrescribedNormalDisplacement::AddNodes(const FESurface& surf)
-{
 	int N = surf.Nodes();
 	m_node.resize(N);
 	for (int i=0; i<N; ++i)
@@ -145,57 +129,27 @@ void FEPrescribedNormalDisplacement::AddNodes(const FESurface& surf)
 			m_node[i].normal = ri;
 		}
 	}
+
+	FEPrescribedSurface::Activate();
 }
 
-// This function is called when the solver needs to know the 
-// prescribed dof values. The brel flag indicates wheter the total 
-// value is needed or the value with respect to the current nodal dof value
-void FEPrescribedNormalDisplacement::PrepStep(std::vector<double>& ui, bool brel)
+// set the dof list
+bool FEPrescribedNormalDisplacement::SetDofList(FEDofList& dofs)
 {
-	FEModel& fem = *GetFEModel();
-	FEMesh& mesh = fem.GetMesh();
-	DOFS& dofs = fem.GetDOFS();
-	int dofX = dofs.GetDOF("x");
-	int dofY = dofs.GetDOF("y");
-	int dofZ = dofs.GetDOF("z");
-
-	int I;
-	for (size_t i = 0; i<m_node.size(); ++i)
-	{
-		FENode& node = mesh.Node(m_node[i].nodeId);
-		vec3d u = m_node[i].normal*m_scale;
-
-		I = -node.m_ID[dofX] - 2; if (I >= 0) ui[I] = u.x;
-		I = -node.m_ID[dofY] - 2; if (I >= 0) ui[I] = u.y;
-		I = -node.m_ID[dofZ] - 2; if (I >= 0) ui[I] = u.z;
-	}
+	return dofs.AddVariable(FEBioMech::GetVariableName(FEBioMech::DISPLACEMENT));
 }
 
-// This is called during nodal update and should be used to enforce the 
-// nodal degrees of freedoms
-void FEPrescribedNormalDisplacement::Update()
+// return the values for node nodelid
+void FEPrescribedNormalDisplacement::GetNodalValues(int nodelid, std::vector<double>& val)
 {
-	FEModel& fem = *GetFEModel();
-	DOFS& dofs = fem.GetDOFS();
-	int dofX = dofs.GetDOF("x");
-	int dofY = dofs.GetDOF("y");
-	int dofZ = dofs.GetDOF("z");
-
-	// update the current nodal values
-	FEMesh& mesh = fem.GetMesh();
-	for (size_t i = 0; i<m_node.size(); ++i)
-	{
-		FENode& node = mesh.Node(m_node[i].nodeId);
-		vec3d u = m_node[i].normal*m_scale;
-
-		node.set(dofX, u.x);
-		node.set(dofY, u.y);
-		node.set(dofZ, u.z);
-	}
+	vec3d v = m_node[nodelid].normal*m_scale;
+	val[0] = v.x;
+	val[1] = v.y;
+	val[2] = v.z;
 }
 
 // copy data from another class
-void FEPrescribedNormalDisplacement::CopyFrom(FEPrescribedBC* pbc)
+void FEPrescribedNormalDisplacement::CopyFrom(FEBoundaryCondition* pbc)
 {
 	FEPrescribedNormalDisplacement* pnd = dynamic_cast<FEPrescribedNormalDisplacement*>(pbc);
 	assert(pnd);

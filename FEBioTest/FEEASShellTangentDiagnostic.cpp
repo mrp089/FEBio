@@ -1,16 +1,35 @@
-//
-//  FEShellTangentDiagnostic.cpp
-//  FEBioTest
-//
-//  Created by Gerard Ateshian on 11/27/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEEASShellTangentDiagnostic.h"
 #include "FEBioMech/FESolidSolver2.h"
 #include "FEBioMech/FEElasticEASShellDomain.h"
-#include <FECore/BC.h>
-#include <FECore/FEDataLoadCurve.h>
 #include "FECore/log.h"
 
 //////////////////////////////////////////////////////////////////////
@@ -18,14 +37,14 @@
 //////////////////////////////////////////////////////////////////////
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEEASShellTangentUnloaded, FEDiagnosticScenario)
-ADD_PARAMETER(m_strain, FE_PARAM_DOUBLE, "strain");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEEASShellTangentUnloaded, FEDiagnosticScenario)
+	ADD_PARAMETER(m_strain, "strain");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 bool FEEASShellTangentUnloaded::Init()
 {
-    FEModel& fem = GetDiagnostic()->GetFEModel();
+    FEModel& fem = *GetDiagnostic()->GetFEModel();
     const int NELN = 4;
     
     int i;
@@ -50,7 +69,7 @@ bool FEEASShellTangentUnloaded::Init()
     {
         FENode& n = m.Node(i);
         n.m_rt = n.m_r0 = r[i];
-        n.m_d0 = D[i];
+        n.m_dt = n.m_d0 = D[i];
         n.m_rid = -1;
     }
     
@@ -60,7 +79,7 @@ bool FEEASShellTangentUnloaded::Init()
     // create a solid domain
     FEElasticEASShellDomain* pd = new FEElasticEASShellDomain(&fem);
     pd->SetMaterial(pmat);
-    pd->Create(1, FE_SHELL_QUAD4G8);
+    pd->Create(1, FEElementLibrary::GetElementSpecFromType(FE_SHELL_QUAD4G8));
     pd->SetMatID(0);
     m.AddDomain(pd);
     FEShellElement& el = pd->Element(0);
@@ -85,7 +104,7 @@ FEEASShellTangentDiagnostic::FEEASShellTangentDiagnostic(FEModel& fem) : FEDiagn
     FEAnalysis* pstep = new FEAnalysis(&fem);
     
     // create a new solver
-    FESolver* pnew_solver = fecore_new<FESolver>(FESOLVER_ID, "solid", &fem);
+    FESolver* pnew_solver = fecore_new<FESolver>("solid", &fem);
     assert(pnew_solver);
     pstep->SetFESolver(pnew_solver);
     
@@ -109,20 +128,20 @@ void FEEASShellTangentDiagnostic::print_matrix(matrix& m)
     int N = m.rows();
     int M = m.columns();
     
-    felog.printf("\n    ");
-    for (i=0; i<N; ++i) felog.printf("%15d ", i);
-    felog.printf("\n----");
-    for (i=0; i<N; ++i) felog.printf("----------------", i);
+    feLog("\n    ");
+    for (i=0; i<N; ++i) feLog("%15d ", i);
+    feLog("\n----");
+    for (i=0; i<N; ++i) feLog("----------------", i);
     
     for (i=0; i<N; ++i)
     {
-        felog.printf("\n%2d: ", i);
+        feLog("\n%2d: ", i);
         for (j=0; j<M; ++j)
         {
-            felog.printf("%15lg ", m[i][j]);
+            feLog("%15lg ", m[i][j]);
         }
     }
-    felog.printf("\n");
+    feLog("\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -145,13 +164,11 @@ bool FEEASShellTangentDiagnostic::Init()
 // of the element residual.
 bool FEEASShellTangentDiagnostic::Run()
 {
-    Logfile::MODE oldmode = felog.SetMode(Logfile::LOG_FILE);
-    
     // solve the problem
-    FEModel& fem = GetFEModel();
-    felog.SetMode(Logfile::LOG_NEVER);
+    FEModel& fem = *GetFEModel();
+	fem.BlockLog();
     bool bret = fem.Solve();
-    felog.SetMode(Logfile::LOG_FILE);
+	fem.UnBlockLog();
     if (bret == false) return false;
     
     FEMesh& mesh = fem.GetMesh();
@@ -166,7 +183,7 @@ bool FEEASShellTangentDiagnostic::Run()
     bd.ElementStiffness(0, k0);
     
     // print the element stiffness matrix
-    felog.printf("\nActual stiffness matrix:\n");
+    feLog("\nActual stiffness matrix:\n");
     print_matrix(k0);
     
     // now calculate the derivative of the residual
@@ -174,11 +191,11 @@ bool FEEASShellTangentDiagnostic::Run()
     deriv_residual(k1);
     
     // print the approximate element stiffness matrix
-    felog.printf("\nApproximate stiffness matrix:\n");
+    feLog("\nApproximate stiffness matrix:\n");
     print_matrix(k1);
     
     // finally calculate the difference matrix
-    felog.printf("\n");
+    feLog("\n");
     matrix kd(NDOF, NDOF);
     double kmax = 0, kij;
     int i0 = -1, j0 = -1, i, j;
@@ -196,12 +213,10 @@ bool FEEASShellTangentDiagnostic::Run()
         }
     
     // print the difference
-    felog.printf("\ndifference matrix:\n");
+    feLog("\ndifference matrix:\n");
     print_matrix(kd);
     
-    felog.SetMode(oldmode);
-    
-    felog.printf("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+    feLog("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
     
     return (kmax < 1e-4);
 }
@@ -212,7 +227,7 @@ bool FEEASShellTangentDiagnostic::Run()
 void FEEASShellTangentDiagnostic::deriv_residual(matrix& ke)
 {
     // get the solver
-    FEModel& fem = GetFEModel();
+    FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     FESolidSolver2& solver = static_cast<FESolidSolver2&>(*pstep->GetFESolver());
     
@@ -255,12 +270,12 @@ void FEEASShellTangentDiagnostic::deriv_residual(matrix& ke)
         
         switch (nj)
         {
-            case 0: node.inc(dof_X, dx); node.m_rt.x += dx; break;
-            case 1: node.inc(dof_Y, dx); node.m_rt.y += dx; break;
-            case 2: node.inc(dof_Z, dx); node.m_rt.z += dx; break;
-            case 3: node.inc(dof_SX, dx); break;
-            case 4: node.inc(dof_SY, dx); break;
-            case 5: node.inc(dof_SZ, dx); break;
+            case 0: node.add(dof_X, dx); node.m_rt.x += dx; break;
+            case 1: node.add(dof_Y, dx); node.m_rt.y += dx; break;
+            case 2: node.add(dof_Z, dx); node.m_rt.z += dx; break;
+            case 3: node.add(dof_SX, dx); break;
+            case 4: node.add(dof_SY, dx); break;
+            case 5: node.add(dof_SZ, dx); break;
         }
         ui[j] += dx;
         
@@ -271,12 +286,12 @@ void FEEASShellTangentDiagnostic::deriv_residual(matrix& ke)
         
         switch (nj)
         {
-            case 0: node.dec(dof_X, dx); node.m_rt.x -= dx; break;
-            case 1: node.dec(dof_Y, dx); node.m_rt.y -= dx; break;
-            case 2: node.dec(dof_Z, dx); node.m_rt.z -= dx; break;
-            case 3: node.dec(dof_SX, dx); break;
-            case 4: node.dec(dof_SY, dx); break;
-            case 5: node.dec(dof_SZ, dx); break;
+            case 0: node.sub(dof_X, dx); node.m_rt.x -= dx; break;
+            case 1: node.sub(dof_Y, dx); node.m_rt.y -= dx; break;
+            case 2: node.sub(dof_Z, dx); node.m_rt.z -= dx; break;
+            case 3: node.sub(dof_SX, dx); break;
+            case 4: node.sub(dof_SY, dx); break;
+            case 5: node.sub(dof_SZ, dx); break;
         }
         ui[j] -= dx;
 

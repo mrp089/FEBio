@@ -1,79 +1,75 @@
-//
-//  FEFluidResistanceBC.cpp
-//  FEBioFluid
-//
-//  Created by Gerard Ateshian on 9/28/16.
-//  Copyright © 2016 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#include "FEFluidResistanceBC.h"
-#include "FEFluid.h"
-#include "FEFluidFSI.h"
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
-#include "FECore/FEModel.h"
-#include "FECore/DOFS.h"
+#include "FEFluidResistanceBC.h"
+#include "FEBioFluid.h"
 
 //=============================================================================
-BEGIN_PARAMETER_LIST(FEFluidResistanceBC, FESurfaceLoad)
-ADD_PARAMETER(m_R, FE_PARAM_DOUBLE    , "R");
-ADD_PARAMETER(m_p0, FE_PARAM_DOUBLE   , "pressure_offset");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFluidResistanceBC, FESurfaceLoad)
+	ADD_PARAMETER(m_R , "R");
+	ADD_PARAMETER(m_p0, "pressure_offset");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! constructor
-FEFluidResistanceBC::FEFluidResistanceBC(FEModel* pfem) : FESurfaceLoad(pfem)
+FEFluidResistanceBC::FEFluidResistanceBC(FEModel* pfem) : FESurfaceLoad(pfem), m_dofW(pfem)
 {
     m_R = 0.0;
-    m_k = 1.0;
+    m_pfluid = nullptr;
     m_alpha = 1.0;
     m_p0 = 0;
     
-    m_dofWX = pfem->GetDOFIndex("wx");
-    m_dofWY = pfem->GetDOFIndex("wy");
-    m_dofWZ = pfem->GetDOFIndex("wz");
-    m_dofEF  = pfem->GetDOFIndex("ef" );
+	m_dofW.AddVariable(FEBioFluid::GetVariableName(FEBioFluid::RELATIVE_FLUID_VELOCITY));
+	m_dofEF = pfem->GetDOFIndex(FEBioFluid::GetVariableName(FEBioFluid::FLUID_DILATATION), 0);
+    
+    m_dof.Clear();
+    m_dof.AddDofs(m_dofW);
+    m_dof.AddDof(m_dofEF);
 
-    m_dofWXP = pfem->GetDOFIndex("wxp");
-    m_dofWYP = pfem->GetDOFIndex("wyp");
-    m_dofWZP = pfem->GetDOFIndex("wzp");
-}
-
-//-----------------------------------------------------------------------------
-//! allocate storage
-void FEFluidResistanceBC::SetSurface(FESurface* ps)
-{
-    FESurfaceLoad::SetSurface(ps);
 }
 
 //-----------------------------------------------------------------------------
 //! initialize
 bool FEFluidResistanceBC::Init()
 {
-    FEModelComponent::Init();
-    
-    FESurface* ps = &GetSurface();
-    ps->Init();
-    // get fluid bulk modulus from first surface element
+	if (FESurfaceLoad::Init() == false) return false;
+
+    // get fluid from first surface element
     // assuming the entire surface bounds the same fluid
-    FESurfaceElement& el = ps->Element(0);
-    FEMesh* mesh = ps->GetMesh();
-    FEElement* pe = mesh->FindElementFromID(el.m_elem[0]);
+    FESurfaceElement& el = m_psurf->Element(0);
+    FEElement* pe = el.m_elem[0];
     if (pe == nullptr) return false;
-    // get the material
+
+	// get the material
     FEMaterial* pm = GetFEModel()->GetMaterial(pe->GetMatID());
-    FEFluid* fluid = dynamic_cast<FEFluid*> (pm);
-    FEFluidFSI* fsi = dynamic_cast<FEFluidFSI*>(pm);
-    // get the bulk modulus
-    if (fluid) {
-        FEMaterialPoint* fp = fluid->CreateMaterialPointData();
-        m_k = fluid->BulkModulus(*fp);
-    }
-    else if (fsi) {
-        FEMaterialPoint* fp = fsi->CreateMaterialPointData();
-        m_k = fsi->Fluid()->BulkModulus(*fp);
-    }
-    else
-        return false;
+	m_pfluid = pm->ExtractProperty<FEFluidMaterial>();
+	if (m_pfluid == nullptr) return false;
     
     return true;
 }
@@ -88,7 +84,7 @@ void FEFluidResistanceBC::Activate()
     {
         FENode& node = ps->Node(i);
         // mark node as having prescribed DOF
-        node.m_BC[m_dofEF] = DOF_PRESCRIBED;
+        node.set_bc(m_dofEF, DOF_PRESCRIBED);
     }
 }
 
@@ -103,7 +99,9 @@ void FEFluidResistanceBC::Update()
     double p = m_R*Q;
     
     // calculate the dilatation
-    double e = -(p+m_p0)/m_k;
+    double e = 0;
+    bool good = m_pfluid->Dilatation(0,p+m_p0,0, e);
+    assert(good);
     
     // prescribe this dilatation at the nodes
     FESurface* ps = &GetSurface();
@@ -117,6 +115,8 @@ void FEFluidResistanceBC::Update()
             node.set(m_dofEF, e);
         }
     }
+    
+    GetFEModel()->SetMeshUpdateFlag(true);
 }
 
 //-----------------------------------------------------------------------------
@@ -142,7 +142,7 @@ double FEFluidResistanceBC::FlowRate()
         for (int i=0; i<neln; ++i) {
             FENode& node = m_psurf->GetMesh()->Node(el.m_node[i]);
             rt[i] = node.m_rt*m_alpha + node.m_rp*(1-m_alpha);
-            vt[i] = node.get_vec3d(m_dofWX, m_dofWY, m_dofWZ)*m_alphaf + node.get_vec3d(m_dofWXP, m_dofWYP, m_dofWZP)*(1-m_alphaf);
+            vt[i] = node.get_vec3d(m_dofW[0], m_dofW[1], m_dofW[2])*m_alphaf + node.get_vec3d_prev(m_dofW[0], m_dofW[1], m_dofW[2])*(1-m_alphaf);
         }
         
         double* Nr, *Ns;
@@ -174,4 +174,20 @@ double FEFluidResistanceBC::FlowRate()
     }
 
     return Q;
+}
+
+//-----------------------------------------------------------------------------
+//! calculate residual
+void FEFluidResistanceBC::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
+{ 
+	m_alpha = tp.alpha; m_alphaf = tp.alphaf; 
+}
+
+//-----------------------------------------------------------------------------
+//! serialization
+void FEFluidResistanceBC::Serialize(DumpStream& ar)
+{
+	FESurfaceLoad::Serialize(ar);
+	ar & m_alpha & m_alphaf;
+	ar & m_pfluid;
 }

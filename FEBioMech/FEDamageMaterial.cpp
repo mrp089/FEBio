@@ -1,25 +1,53 @@
-//
-//  FEDamageMaterial.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 9/18/14.
-//  Copyright (c) 2014 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEDamageMaterial.h"
 #include "FEDamageCriterion.h"
 #include "FEDamageCDF.h"
 #include "FEUncoupledMaterial.h"
-#include "FECore/FECoreKernel.h"
+#include <FECore/log.h>
+
+//-----------------------------------------------------------------------------
+BEGIN_FECORE_CLASS(FEDamageMaterial, FEElasticMaterial)
+	// set material properties
+	ADD_PROPERTY(m_pBase, "elastic");
+	ADD_PROPERTY(m_pDamg, "damage");
+	ADD_PROPERTY(m_pCrit, "criterion");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! Constructor.
 FEDamageMaterial::FEDamageMaterial(FEModel* pfem) : FEElasticMaterial(pfem)
 {
-	// set material properties
-	AddProperty(&m_pBase, "elastic"  );
-	AddProperty(&m_pDamg, "damage"   );
-	AddProperty(&m_pCrit, "criterion");
+	m_pBase = 0;
+	m_pDamg = 0;
+	m_pCrit = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -27,8 +55,11 @@ FEDamageMaterial::FEDamageMaterial(FEModel* pfem) : FEElasticMaterial(pfem)
 bool FEDamageMaterial::Init()
 {
     FEUncoupledMaterial* m_pMat = dynamic_cast<FEUncoupledMaterial*>((FEElasticMaterial*)m_pBase);
-    if (m_pMat != nullptr)
-        return MaterialError("Elastic material should not be of type uncoupled");
+	if (m_pMat != nullptr)
+	{
+		feLogError("Elastic material should not be of type uncoupled");
+		return false;
+	}
     
 	return FEElasticMaterial::Init();
 }
@@ -91,11 +122,4 @@ double FEDamageMaterial::Damage(FEMaterialPoint& pt)
     pd.m_D = d;
     
     return d;
-}
-
-//-----------------------------------------------------------------------------
-void FEDamageMaterial::SetLocalCoordinateSystem(FEElement& el, int n, FEMaterialPoint& mp)
-{
-	FEElasticMaterial::SetLocalCoordinateSystem(el, n, mp);
-	m_pBase->SetLocalCoordinateSystem(el, n, mp);
 }

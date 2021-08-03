@@ -1,6 +1,36 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEBiphasicSolute.h"
-#include "FECore/FEModel.h"
-#include "FECore/FECoreKernel.h"
+#include <FECore/FEModel.h>
+#include <FECore/FECoreKernel.h>
+#include <FECore/log.h>
 
 //=============================================================================
 //                 B I P H A S I C S O L U T E
@@ -8,10 +38,17 @@
 
 //-----------------------------------------------------------------------------
 // Material parameters for the FEBiphasicSolute material
-BEGIN_PARAMETER_LIST(FEBiphasicSolute, FEMaterial)
-	ADD_PARAMETER2(m_phi0 , FE_PARAM_DOUBLE, FE_RANGE_CLOSED(0.0, 1.0)     , "phi0");
-	ADD_PARAMETER2(m_rhoTw, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "fluid_density");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEBiphasicSolute, FEMaterial)
+	ADD_PARAMETER(m_phi0 , FE_RANGE_CLOSED(0.0, 1.0)     , "phi0");
+	ADD_PARAMETER(m_rhoTw, FE_RANGE_GREATER_OR_EQUAL(0.0), "fluid_density");
+
+	// set material properties
+	ADD_PROPERTY(m_pSolid , "solid");
+	ADD_PROPERTY(m_pPerm  , "permeability");
+	ADD_PROPERTY(m_pOsmC  , "osmotic_coefficient");
+	ADD_PROPERTY(m_pSolute, "solute");
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! FEBiphasicSolute constructor
@@ -25,18 +62,16 @@ FEBiphasicSolute::FEBiphasicSolute(FEModel* pfem) : FEMaterial(pfem)
 	m_Rgas = 0;
 	m_Tabs = 0; 
 
-	// set material properties
-	AddProperty(&m_pSolid , "solid"              );
-	AddProperty(&m_pPerm  , "permeability"       );
-	AddProperty(&m_pOsmC  , "osmotic_coefficient");
-	AddProperty(&m_pSolute, "solute"             );
+	m_pSolid = 0;
+	m_pPerm = 0;
+	m_pOsmC = 0;
+	m_pSolute = 0;
 }
 
 //-----------------------------------------------------------------------------
 FEMaterialPoint* FEBiphasicSolute::CreateMaterialPointData() 
 {
 	FEBiphasicMaterialPoint* pbp = new FEBiphasicMaterialPoint(m_pSolid->CreateMaterialPointData());
-	pbp->m_phi0 = m_phi0;
 	return new FESolutesMaterialPoint(pbp);
 }
 
@@ -53,8 +88,8 @@ bool FEBiphasicSolute::Init()
 	m_Rgas = GetFEModel()->GetGlobalConstant("R");
 	m_Tabs = GetFEModel()->GetGlobalConstant("T");
 	
-	if (m_Rgas <= 0) return MaterialError("A positive universal gas constant R must be defined in Globals section");
-	if (m_Tabs <= 0) return MaterialError("A positive absolute temperature T must be defined in Globals section");
+	if (m_Rgas <= 0) { feLogError("A positive universal gas constant R must be defined in Globals section"); return false; }
+	if (m_Tabs <= 0) { feLogError("A positive absolute temperature T must be defined in Globals section");	 return false; }
 
 	return true;
 }
@@ -63,17 +98,8 @@ bool FEBiphasicSolute::Init()
 void FEBiphasicSolute::Serialize(DumpStream& ar)
 {
 	FEMaterial::Serialize(ar);
-	if (ar.IsShallow() == false)
-	{
-		if (ar.IsSaving())
-		{
-			ar << m_Rgas << m_Tabs << m_Mu;
-		}
-		else
-		{
-			ar >> m_Rgas >> m_Tabs >> m_Mu;
-		}
-	}
+	if (ar.IsShallow()) return;
+	ar & m_Rgas & m_Tabs & m_Mu;
 }
 
 //-----------------------------------------------------------------------------

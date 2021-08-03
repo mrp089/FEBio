@@ -1,17 +1,48 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FECoreBase.h"
 #include "DumpStream.h"
 #include "FECoreKernel.h"
+#include "FEModelParam.h"
+#include "log.h"
+#include <sstream>
 
 //-----------------------------------------------------------------------------
 //! The constructor takes one argument, namely the SUPER_CLASS_ID which
 //! defines the type of class this is. (The SUPER_CLASS_ID was introduced to
 //! eliminate a lot of akward dynamic_casts.)
-FECoreBase::FECoreBase(SUPER_CLASS_ID sid) : m_sid(sid) 
+FECoreBase::FECoreBase(FEModel* fem) : m_fem(fem)
 { 
 	m_nID = -1;
-	m_sztype = 0;
 	m_pParent = 0;
+	m_fac = nullptr;
 }
 
 //-----------------------------------------------------------------------------
@@ -20,17 +51,25 @@ FECoreBase::~FECoreBase(){}
 
 //-----------------------------------------------------------------------------
 //! return the super class id
-SUPER_CLASS_ID FECoreBase::GetSuperClassID() { return m_sid; }
+SUPER_CLASS_ID FECoreBase::GetSuperClassID() { return (m_fac ? m_fac->GetSuperClassID() : FEINVALID_ID); }
 
 //-----------------------------------------------------------------------------
 //! return a (unique) string describing the type of this class
 //! This string is used in object creation
-const char* FECoreBase::GetTypeStr() { return m_sztype; }
+const char* FECoreBase::GetTypeStr() { return (m_fac ? m_fac->GetTypeStr() : nullptr); }
 
 //-----------------------------------------------------------------------------
-//! Set the type string (This is used by the factory methods to make sure 
-//! the class has the same type string as corresponding factory class
-void FECoreBase::SetTypeStr(const char* sz) { m_sztype = sz; }
+//! Set the factory class
+void FECoreBase::SetFactoryClass(FECoreFactory* fac)
+{
+	m_fac = fac;
+}
+
+//-----------------------------------------------------------------------------
+FECoreFactory* FECoreBase::GetFactoryClass()
+{
+	return m_fac;
+}
 
 //-----------------------------------------------------------------------------
 //! Sets the user defined name of the component
@@ -47,6 +86,108 @@ const std::string& FECoreBase::GetName() const
 }
 
 //-----------------------------------------------------------------------------
+//! Get the parent of this object (zero if none)
+FECoreBase* FECoreBase::GetParent()
+{ 
+	return m_pParent; 
+}
+
+//-----------------------------------------------------------------------------
+FECoreBase* FECoreBase::GetAncestor()
+{
+	FECoreBase* mp = GetParent(); 
+	return (mp ? mp->GetAncestor() : this); 
+}
+
+//-----------------------------------------------------------------------------
+//! Set the parent of this class
+void FECoreBase::SetParent(FECoreBase* parent) { m_pParent = parent; }
+
+//-----------------------------------------------------------------------------
+//! return the component ID
+int FECoreBase::GetID() const { return m_nID; }
+
+//-----------------------------------------------------------------------------
+//! set the component ID
+void FECoreBase::SetID(int nid) { m_nID = nid; }
+
+//-----------------------------------------------------------------------------
+//! Get the FE model
+FEModel* FECoreBase::GetFEModel() const { return m_fem; }
+
+//-----------------------------------------------------------------------------
+void FECoreBase::SetFEModel(FEModel* fem) { m_fem = fem; }
+
+//-----------------------------------------------------------------------------
+void setParamValue(FEParam& pi, const std::string& val)
+{
+	if (val.empty()) return;
+	const char* sz = val.c_str();
+	switch (pi.type())
+	{
+	case FE_PARAM_INT: pi.value<int>() = atoi(sz); break;
+	case FE_PARAM_BOOL: pi.value<bool>() = (atoi(sz) == 0 ? false : true); break;
+	case FE_PARAM_DOUBLE: pi.value<double>() = atof(sz); break;
+	default:
+		assert(false);
+	}
+}
+
+//-----------------------------------------------------------------------------
+// set parameters through a class descriptor
+bool FECoreBase::SetParameters(const ClassDescriptor& cd)
+{
+	const ClassDescriptor::ClassVariable* root = cd.Root();
+	return SetParameters(*cd.Root());
+}
+
+//-----------------------------------------------------------------------------
+// set parameters through a class descriptor
+bool FECoreBase::SetParameters(const ClassDescriptor::ClassVariable& cv)
+{
+	FEParameterList& PL = GetParameterList();
+	for (int i=0; i<cv.Count(); ++i)
+	{
+		// get the next variable
+		const ClassDescriptor::Variable* vari = cv.GetVariable(i);
+
+		// see if this parameter is defined
+		FEParam* pi = PL.FindFromName(vari->m_name.c_str());
+		if (pi)
+		{
+			const ClassDescriptor::SimpleVariable* vi = dynamic_cast<const ClassDescriptor::SimpleVariable*>(vari);
+			assert(vi);
+			if (vi == nullptr) return false;
+
+			// set the value
+			setParamValue(*pi, vi->m_val);
+		}
+		else
+		{
+			// could be a property
+			const ClassDescriptor::ClassVariable* ci = dynamic_cast<const ClassDescriptor::ClassVariable*>(vari);
+			assert(ci);
+
+			// find the property
+			FEProperty* prop = FindProperty(ci->m_name.c_str()); assert(prop);
+			if (prop == nullptr) return false;
+
+			// allocate a new child class
+			FECoreBase* pc = fecore_new<FECoreBase>(prop->GetClassID(), ci->m_type.c_str(), GetFEModel()); assert(pc);
+			if (pc == nullptr) return false;
+
+			// assign the property
+			prop->SetProperty(pc);
+
+			// set the property's parameters
+			pc->SetParameters(*ci);
+		}
+	}
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
 void FECoreBase::Serialize(DumpStream& ar)
 {
 	// do base class first
@@ -55,33 +196,74 @@ void FECoreBase::Serialize(DumpStream& ar)
 	// serialize name
 	if (ar.IsShallow() == false)
 	{
-		if (ar.IsSaving())
-		{
-			ar << m_name;
-			ar << m_nID;
-		}
-		else
-		{
-			ar >> m_name;
-			ar >> m_nID;
-		}
+		ar & m_name;
+		ar & m_nID;
 	}
+
+	if (ar.IsShallow() == false) ar & m_pParent;
 
 	// serialize all the properties
 	int NP = (int)m_Prop.size();
 	for (int i = 0; i<NP; ++i)
 	{
-		FEProperty* pmat = m_Prop[i];
-		pmat->SetParent(this);
-		pmat->Serialize(ar);
+		FEProperty* prop = m_Prop[i];
+		prop->SetParent(this);
+		prop->Serialize(ar);
 	}
+}
+
+//-----------------------------------------------------------------------------
+void FECoreBase::SaveClass(DumpStream& ar, FECoreBase* a)
+{
+	assert(ar.IsSaving());
+	int classID = 0;
+	if (a == nullptr) { ar << classID; return; }
+	classID = a->GetSuperClassID();
+	assert(classID != FEINVALID_ID);
+	const char* sztype = a->GetTypeStr();
+	ar << classID;
+	ar << sztype;
+}
+
+FECoreBase* FECoreBase::LoadClass(DumpStream& ar, FECoreBase* a)
+{
+	assert(ar.IsLoading());
+
+	int classID = 0;
+	ar >> classID;
+	if (classID == FEINVALID_ID) return nullptr;
+
+	char sztype[256] = { 0 };
+	ar >> sztype;
+
+	// instantiate the class
+	a = fecore_new<FECoreBase>(classID, sztype, &ar.GetFEModel());
+	assert(a);
+
+	if (a == nullptr) throw DumpStream::ReadError();
+
+	return a;
 }
 
 //-----------------------------------------------------------------------------
 bool FECoreBase::Validate()
 {
-	// call base class first
-	if (FEParamContainer::Validate() == false) return false;
+	// validate parameters
+	FEParameterList& pl = GetParameterList();
+	int N = pl.Parameters();
+	list<FEParam>::iterator pi = pl.first();
+	for (int i = 0; i < N; ++i, pi++)
+	{
+		FEParam& p = *pi;
+		if (p.is_valid() == false)
+		{
+			stringstream ss;
+			ss << GetName() << "." << p.name();
+			string paramName = ss.str();
+			feLogError("Invalid value for parameter: %s", paramName.c_str());
+			return false;
+		}
+	}
 
 	// check properties
 	const int nprop = (int)m_Prop.size();
@@ -100,6 +282,25 @@ bool FECoreBase::Validate()
 //-----------------------------------------------------------------------------
 bool FECoreBase::Init()
 {
+	// call init on model parameters
+	FEParameterList& PL = GetParameterList();
+	FEParamIterator it = PL.first();
+	for (int i = 0; i < PL.Parameters(); ++i, ++it)
+	{
+		FEParam& pi = *it;
+		if (pi.type() == FE_PARAM_DOUBLE_MAPPED)
+		{
+			for (int j = 0; j < pi.dim(); ++j)
+			{
+				FEParamDouble& pd = pi.value<FEParamDouble>(j);
+				if (pd.Init() == false)
+				{
+					feLogError("Failed to initialize parameter %s", pi.name());
+					return false;
+				}
+			}
+		}
+	}
 	// check the parameter ranges
 	if (Validate() == false) return false;
 
@@ -110,9 +311,17 @@ bool FECoreBase::Init()
 		FEProperty* pi = m_Prop[i];
 		if (pi)
 		{
-			if (pi->Init() == false) return false;
+			if (pi->Init() == false)
+			{
+				feLogError("The required property \"%s\" was not defined", pi->GetName());
+				return false;
+			}
 		}
-		else return fecore_error("A nullptr was set for property i");
+		else
+		{
+			feLogError("A nullptr was set for property i");
+			return false;
+		}
 	}
 	return true;
 }
@@ -121,8 +330,8 @@ bool FECoreBase::Init()
 void FECoreBase::AddProperty(FEProperty* pp, const char* sz, unsigned int flags)
 {
 	pp->SetName(sz);
-	pp->m_brequired = ((flags & FEProperty::Required) != 0);
-	pp->m_bvalue    = ((flags & FEProperty::ValueProperty) != 0);
+	pp->SetFlags(flags);
+	pp->SetParent(this);
 	m_Prop.push_back(pp);
 }
 
@@ -188,6 +397,13 @@ bool FECoreBase::SetProperty(int i, FECoreBase* pb)
 }
 
 //-----------------------------------------------------------------------------
+//! number of parameters
+int FECoreBase::Parameters() const
+{
+	return GetParameterList().Parameters();
+}
+
+//-----------------------------------------------------------------------------
 FEParam* FECoreBase::FindParameter(const ParamString& s)
 {
 	// first search the parameter list
@@ -230,12 +446,55 @@ FEParam* FECoreBase::FindParameter(const ParamString& s)
 			}
 			else
 			{
-				return mp->get(0)->FindParameter(s.next());
+				FECoreBase* pc = mp->get(0);
+				return (pc ? pc->FindParameter(s.next()) : nullptr);
 			}
 		}
 	}
 
-	return 0;
+	return nullptr;
+}
+
+//-----------------------------------------------------------------------------
+//! return the property (or this) that owns a parameter
+FECoreBase* FECoreBase::FindParameterOwner(void* pd)
+{
+	// see if this class is the owner of the data pointer
+	FEParam* p = FindParameterFromData(pd);
+	if (p) return this;
+
+	// it's not se let's check the properties
+	int NP = PropertyClasses();
+	for (int i = 0; i < NP; ++i)
+	{
+		FEProperty* pi = PropertyClass(i);
+		int n = pi->size();
+		for (int j = 0; j < n; ++j)
+		{
+			FECoreBase* pcj = pi->get(j);
+			if (pcj)
+			{
+				FECoreBase* pc = pcj->FindParameterOwner(pd);
+				if (pc) return pc;
+			}
+		}
+	}
+
+	// sorry, no luck
+	return nullptr;
+}
+
+//-----------------------------------------------------------------------------
+//! return the number of properties defined
+int FECoreBase::PropertyClasses() const 
+{ 
+	return (int)m_Prop.size(); 
+}
+
+//! return a property
+FEProperty* FECoreBase::PropertyClass(int i)
+{ 
+	return m_Prop[i]; 
 }
 
 //-----------------------------------------------------------------------------
@@ -293,4 +552,22 @@ FECoreBase* FECoreBase::GetProperty(const ParamString& prop)
 	}
 
 	return 0;
+}
+
+//-----------------------------------------------------------------------------
+bool FECoreBase::BuildClass()
+{
+	GetParameterList();
+
+	for (int i = 0; i < PropertyClasses(); ++i)
+	{
+		FEProperty* pp = PropertyClass(i);
+		int m = pp->size();
+		for (int j = 0; j < m; ++j)
+		{
+			FECoreBase* pj = pp->get(j);
+			if (pj) pj->BuildClass();
+		}
+	}
+	return true;
 }

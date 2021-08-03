@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEMortarInterface.h"
 #include "FECore/mortar.h"
@@ -26,7 +54,7 @@ void FEMortarInterface::UpdateMortarWeights(FESurface& ss, FESurface& ms)
 
 	// number of integration points
 	const int MAX_INT = 11;
-	const int nint = m_pT->nint;
+	const int nint = m_pT->m_nint;
 	vector<double>& gw = m_pT->gw;
 	vector<double>& gr = m_pT->gr;
 	vector<double>& gs = m_pT->gs;
@@ -36,7 +64,7 @@ void FEMortarInterface::UpdateMortarWeights(FESurface& ss, FESurface& ms)
 	CalculateMortarSurface(ss, ms, mortar);
 
 	// These arrays will store the shape function values of the projection points 
-	// on the slave and master side when evaluating the integral over a pallet
+	// on the primary and secondary side when evaluating the integral over a pallet
 	double Ns[MAX_INT][4], Nm[MAX_INT][4];
 
 	// loop over the mortar patches
@@ -47,8 +75,8 @@ void FEMortarInterface::UpdateMortarWeights(FESurface& ss, FESurface& ms)
 		Patch& pi = mortar.GetPatch(i);
 
 		// get the facet ID's that generated this patch
-		int k = pi.GetSlaveFacetID();
-		int l = pi.GetMasterFacetID();
+		int k = pi.GetPrimaryFacetID();
+		int l = pi.GetSecondaryFacetID();
 
 		// get the non-mortar surface element
 		FESurfaceElement& se = ss.Element(k);
@@ -74,7 +102,7 @@ void FEMortarInterface::UpdateMortarWeights(FESurface& ss, FESurface& ms)
 					// evaluate the spatial position of the integration point on the patch
 					vec3d xp = fj.Position(gr[n], gs[n]);
 
-					// evaluate the integration points on the slave and master surfaces
+					// evaluate the integration points on the primary and secondary surfaces
 					// i.e. determine rs, rm
 					double r1 = 0, s1 = 0, r2 = 0, s2 = 0;
 					vec3d xs = ss.ProjectToSurface(se, xp, r1, s1);
@@ -95,7 +123,7 @@ void FEMortarInterface::UpdateMortarWeights(FESurface& ss, FESurface& ms)
 				{
 					int a = se.m_lnode[A];
 
-					// loop over all the nodes on the slave facet
+					// loop over all the nodes on the primary facet
 					for (int B=0; B<ns; ++B)
 					{
 						double n1 = 0;
@@ -109,7 +137,7 @@ void FEMortarInterface::UpdateMortarWeights(FESurface& ss, FESurface& ms)
 						m_n1[a][b] += n1;
 					}
 
-					// loop over all the nodes on the master facet
+					// loop over all the nodes on the secondary facet
 					for (int C = 0; C<nm; ++C)
 					{
 						double n2 = 0;
@@ -138,8 +166,8 @@ void FEMortarInterface::UpdateMortarWeights(FESurface& ss, FESurface& ms)
 	for (int A=0; A<NS; ++A)
 		for (int C=0; C<NM; ++C) sum2 += m_n2[A][C];
 
-	if (fabs(sum1 - 1.0) > 1e-5) felog.printf("WARNING: Mortar weights are not correct (%lg).\n", sum1);
-	if (fabs(sum2 - 1.0) > 1e-5) felog.printf("WARNING: Mortar weights are not correct (%lg).\n", sum2);
+	if (fabs(sum1 - 1.0) > 1e-5) feLog("WARNING: Mortar weights are not correct (%lg).\n", sum1);
+	if (fabs(sum2 - 1.0) > 1e-5) feLog("WARNING: Mortar weights are not correct (%lg).\n", sum2);
 #endif
 }
 
@@ -154,10 +182,10 @@ void FEMortarInterface::UpdateNodalGaps(FEMortarContactSurface& ss, FEMortarCont
 	int NS = ss.Nodes();
 	int NM = ms.Nodes();
 
-	// loop over all slave nodes
+	// loop over all primary nodes
 	for (int A=0; A<NS; ++A)
 	{
-		// loop over all slave nodes
+		// loop over all primary nodes
 		for (int B=0; B<NS; ++B)
 		{
 			FENode& nodeB = ss.Node(B);
@@ -166,7 +194,7 @@ void FEMortarInterface::UpdateNodalGaps(FEMortarContactSurface& ss, FEMortarCont
 			gap[A] += xB*nAB;
 		}
 
-		// loop over master side
+		// loop over secondary side
 		for (int C=0; C<NM; ++C)
 		{
 			FENode& nodeC = ms.Node(C);

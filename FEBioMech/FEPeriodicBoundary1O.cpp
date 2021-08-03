@@ -1,20 +1,48 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEPeriodicBoundary1O.h"
 #include "FECore/FEModel.h"
 #include "FECore/FENormalProjection.h"
 #include "FECore/FEGlobalMatrix.h"
+#include <FECore/FELinearSystem.h>
 #include "FECore/log.h"
 
 //-----------------------------------------------------------------------------
 // Define sliding interface parameters
-BEGIN_PARAMETER_LIST(FEPeriodicBoundary1O, FEContactInterface)
-	ADD_PARAMETER(m_blaugon  , FE_PARAM_BOOL  , "laugon"   );
-	ADD_PARAMETER(m_atol     , FE_PARAM_DOUBLE, "tolerance");
-	ADD_PARAMETER(m_eps      , FE_PARAM_DOUBLE, "penalty"  );
-	ADD_PARAMETER(m_btwo_pass, FE_PARAM_BOOL  , "two_pass" );
-	ADD_PARAMETER(m_off      , FE_PARAM_VEC3D , "offset"   );
-	ADD_PARAMETER(m_naugmin  , FE_PARAM_INT   , "minaug"   );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEPeriodicBoundary1O, FEContactInterface)
+	ADD_PARAMETER(m_atol     , "tolerance");
+	ADD_PARAMETER(m_eps      , "penalty"  );
+	ADD_PARAMETER(m_btwo_pass, "two_pass" );
+	ADD_PARAMETER(m_off      , "offset"   );
+	ADD_PARAMETER(m_naugmin  , "minaug"   );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 // FEPeriodicBoundary
@@ -55,7 +83,7 @@ void FEPeriodicBoundary1O::Activate()
 	// don't forget to call the base class
 	FEContactInterface::Activate();
 
-	// project slave surface onto master surface
+	// project primary surface onto secondary surface
 	ProjectSurface(m_ss, m_ms, false);
 	ProjectSurface(m_ms, m_ss, false);
 }
@@ -94,7 +122,7 @@ void FEPeriodicBoundary1O::BuildMatrixProfile(FEGlobalMatrix& K)
 
 	for (int j=0; j<m_ss.Nodes(); ++j)
 	{
-		FESurfaceElement& me = *m_ss.m_pme[j];
+		FESurfaceElement& me = *m_ss.m_data[j].m_pme;
 		int* en = &me.m_node[0];
 
 		int n = me.Nodes();
@@ -137,10 +165,10 @@ void FEPeriodicBoundary1O::ProjectSurface(FEPeriodicSurface& ss, FEPeriodicSurfa
 	int i;
 	double rs[2];
 
-	// get the slave's center of mass
+	// get the primary's center of mass
 	vec3d cs = ss.CenterOfMass();
 
-	// get the master's center of mass
+	// get the secondary's center of mass
 	vec3d cm = ms.CenterOfMass();
 
 	// get the relative distance
@@ -156,7 +184,7 @@ void FEPeriodicBoundary1O::ProjectSurface(FEPeriodicSurface& ss, FEPeriodicSurfa
 	np.SetSearchRadius(m_srad);
 	np.Init();
 
-	// loop over all slave nodes
+	// loop over all primary nodes
 	for (i=0; i<ss.Nodes(); ++i)
 	{
 		FENode& node = ss.Node(i);
@@ -164,17 +192,17 @@ void FEPeriodicBoundary1O::ProjectSurface(FEPeriodicSurface& ss, FEPeriodicSurfa
 		// get the nodal position
 		vec3d r0 = node.m_r0;
 
-		// find the intersection with the master surface
-		ss.m_pme[i] = np.Project3(r0, cn, rs);
-		assert(ss.m_pme[i]);
+		// find the intersection with the secondary surface
+		ss.m_data[i].m_pme = np.Project3(r0, cn, rs);
+		assert(ss.m_data[i].m_pme);
 
-		ss.m_rs[i][0] = rs[0];
-		ss.m_rs[i][1] = rs[1];
+		ss.m_data[i].m_rs[0] = rs[0];
+		ss.m_data[i].m_rs[1] = rs[1];
 	}
 }
 
 //-----------------------------------------------------------------------------
-void FEPeriodicBoundary1O::Update(int niter, const FETimeInfo& tp)
+void FEPeriodicBoundary1O::Update()
 {
 	int i, j, ne;
 	FESurfaceElement* pme;
@@ -200,14 +228,14 @@ void FEPeriodicBoundary1O::Update(int niter, const FETimeInfo& tp)
 
 		for (i=0; i<N; ++i)
 		{
-			// calculate the slave displacement
+			// calculate the primary displacement
 			FENode& node = ss.Node(i);
 			ws = node.m_rt - m_Fmacro*node.m_r0;
 
-			// get the master element
-			pme = ss.m_pme[i];
+			// get the secondary element
+			pme = ss.m_data[i].m_pme;
 
-			// calculate the master displacement
+			// calculate the secondary displacement
 			ne = pme->Nodes();
 			for (j=0; j<ne; ++j)
 			{
@@ -215,16 +243,16 @@ void FEPeriodicBoundary1O::Update(int niter, const FETimeInfo& tp)
 				wmi[j] = node.m_rt - m_Fmacro*node.m_r0;
 			}
 			
-			wm = pme->eval(wmi, ss.m_rs[i][0], ss.m_rs[i][1]);
+			wm = pme->eval(wmi, ss.m_data[i].m_rs[0], ss.m_data[i].m_rs[1]);
 
 			// calculate gap function
-			ss.m_gap[i] = ws - wm;
+			ss.m_data[i].m_gap = ws - wm;
 		}
 	}
 }
 
 //-----------------------------------------------------------------------------
-void FEPeriodicBoundary1O::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEPeriodicBoundary1O::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	int j, k, l, m, n;
 	int nseln, nmeln;
@@ -237,7 +265,7 @@ void FEPeriodicBoundary1O::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	vec3d dxr, dxs;
 	double* w;
 
-	// natural coordinates of slave node in master element
+	// natural coordinates of primary node in secondary element
 	double r, s;
 
 	// contact force
@@ -266,13 +294,13 @@ void FEPeriodicBoundary1O::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 		FEPeriodicSurface& ss = (np == 0? m_ss : m_ms);
 		FEPeriodicSurface& ms = (np == 0? m_ms : m_ss);
 
-		zero(ss.m_Fr);
+		for (int i=0; i<ss.m_data.size(); ++i) ss.m_data[i].m_Fr = vec3d(0,0,0);
 
-		// loop over all slave facets
+		// loop over all primary facets
 		int ne = ss.Elements();
 		for (j=0; j<ne; ++j)
 		{
-			// get the slave element
+			// get the primary element
 			FESurfaceElement& sel = ss.Element(j);
 			
 			// get the elements LM vector
@@ -287,7 +315,7 @@ void FEPeriodicBoundary1O::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 			}
 			w = sel.GaussWeights();
 
-			// loop over slave element nodes (which are the integration points as well)
+			// loop over primary element nodes (which are the integration points as well)
 			for (n=0; n<nseln; ++n)
 			{
 				Gr = sel.Gr(n);
@@ -310,22 +338,22 @@ void FEPeriodicBoundary1O::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 				detJ = (dxr ^ dxs).norm();
 
-				// get slave node contact force
-				tc = ss.m_Lm[m] + ss.m_gap[m]*m_eps;
-				ss.m_Tn[m] = tc;
+				// get primary node contact force
+				tc = ss.m_data[m].m_Lm + ss.m_data[m].m_gap*m_eps;
+				ss.m_data[m].m_Tn = tc;
 
-				// get the master element
-				FESurfaceElement& mel = *ss.m_pme[m];
+				// get the secondary element
+				FESurfaceElement& mel = *ss.m_data[m].m_pme;
 				ms.UnpackLM(mel, mLM);
 
 				nmeln = mel.Nodes();
 
-				// isoparametric coordinates of the projected slave node
-				// onto the master element
-				r = ss.m_rs[m][0];
-				s = ss.m_rs[m][1];
+				// isoparametric coordinates of the projected primary node
+				// onto the secondary element
+				r = ss.m_data[m].m_rs[0];
+				s = ss.m_data[m].m_rs[1];
 
-				// get the master shape function values at this slave node
+				// get the secondary shape function values at this primary node
 				if (nmeln == 4)
 				{
 					// quadrilateral
@@ -380,7 +408,7 @@ void FEPeriodicBoundary1O::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 				R.Assemble(en, lm, fe);
 
 				// also store in the reaction force vector
-				vec3d& fr = ss.m_Fr[m];
+				vec3d& fr = ss.m_data[m].m_Fr;
 				fr.x += fe[0];
 				fr.y += fe[1];
 				fr.z += fe[2];
@@ -390,12 +418,12 @@ void FEPeriodicBoundary1O::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FEPeriodicBoundary1O::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEPeriodicBoundary1O::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	int j, k, l, n, m;
 	int nseln, nmeln, ndof;
 
-	matrix ke;
+	FEElementMatrix ke;
 
 	const int MN = FEElement::MAX_NODES;
 	vector<int> lm(3*(MN+1));
@@ -426,7 +454,7 @@ void FEPeriodicBoundary1O::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 		FEPeriodicSurface& ss = (np == 0? m_ss : m_ms);
 		FEPeriodicSurface& ms = (np == 0? m_ms : m_ss);
 
-		// loop over all slave elements
+		// loop over all primary elements
 		int ne = ss.Elements();
 		for (j=0; j<ne; ++j)
 		{
@@ -468,23 +496,23 @@ void FEPeriodicBoundary1O::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 
 				detJ = (dxr ^ dxs).norm();
 
-				// get the master element
-				FESurfaceElement& me = *ss.m_pme[m];
+				// get the secondary element
+				FESurfaceElement& me = *ss.m_data[m].m_pme;
 				ms.UnpackLM(me, mLM);
 
 				nmeln = me.Nodes();
 
-				// get the master element node positions
+				// get the secondary element node positions
 				for (k=0; k<nmeln; ++k) rtm[k] = ms.GetMesh()->Node(me.m_node[k]).m_rt;
 
-				// slave node natural coordinates in master element
-				r = ss.m_rs[m][0];
-				s = ss.m_rs[m][1];
+				// primary node natural coordinates in secondary element
+				r = ss.m_data[m].m_rs[0];
+				s = ss.m_data[m].m_rs[1];
 
-				// get slave node normal force
-				tc = ss.m_Lm[m] + ss.m_gap[m]*m_eps; //ss.T[m];
+				// get primary node normal force
+				tc = ss.m_data[m].m_Lm + ss.m_data[m].m_gap*m_eps; //ss.T[m];
 
-				// get the master shape function values at this slave node
+				// get the secondary shape function values at this primary node
 				if (nmeln == 4)
 				{
 					// quadrilateral
@@ -549,7 +577,9 @@ void FEPeriodicBoundary1O::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 				for (k=0; k<nmeln; ++k) en[k+1] = me.m_node[k];
 
 				// assemble stiffness matrix
-				psolver->AssembleStiffness(en, lm, ke);
+				ke.SetNodes(en);
+				ke.SetIndices(lm);
+				LS.Assemble(ke);
 			}
 		}
 	}
@@ -559,7 +589,7 @@ void FEPeriodicBoundary1O::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 bool FEPeriodicBoundary1O::Augment(int naug, const FETimeInfo& tp)
 {
 	// make sure we need to augment
-	if (!m_blaugon) return true;
+	if (m_laugon != 1) return true;
 
 	int i;
 
@@ -570,12 +600,12 @@ bool FEPeriodicBoundary1O::Augment(int naug, const FETimeInfo& tp)
 	double normL0 = 0;
 	for (i=0; i<m_ss.Nodes(); ++i)
 	{
-		lm = m_ss.m_Lm[i];
+		lm = m_ss.m_data[i].m_Lm;
 		normL0 += lm*lm;
 	}
 	for (i=0; i<m_ms.Nodes(); ++i)
 	{
-		lm = m_ms.m_Lm[i];
+		lm = m_ms.m_data[i].m_Lm;
 		normL0 += lm*lm;
 	}
 	normL0 = sqrt(normL0);
@@ -586,19 +616,19 @@ bool FEPeriodicBoundary1O::Augment(int naug, const FETimeInfo& tp)
 	int N = 0;
 	for (i=0; i<m_ss.Nodes(); ++i)
 	{
-		lm = m_ss.m_Lm[i] + m_ss.m_gap[i]*m_eps;
+		lm = m_ss.m_data[i].m_Lm + m_ss.m_data[i].m_gap*m_eps;
 
 		normL1 += lm*lm;
-		g = m_ss.m_gap[i].norm();
+		g = m_ss.m_data[i].m_gap.norm();
 		normgc += g*g;
 		++N;
 	}
 	for (i=0; i<m_ms.Nodes(); ++i)
 	{
-		lm = m_ms.m_Lm[i] + m_ms.m_gap[i]*m_eps;
+		lm = m_ms.m_data[i].m_Lm + m_ms.m_data[i].m_gap*m_eps;
 
 		normL1 += lm*lm;
-		g = m_ms.m_gap[i].norm();
+		g = m_ms.m_data[i].m_gap.norm();
 		normgc += g*g;
 		++N;
 	}
@@ -607,12 +637,12 @@ bool FEPeriodicBoundary1O::Augment(int naug, const FETimeInfo& tp)
 	normL1 = sqrt(normL1);
 	normgc = sqrt(normgc / N);
 
-	felog.printf(" tied interface # %d\n", GetID());
-	felog.printf("                        CURRENT        REQUIRED\n");
+	feLog(" tied interface # %d\n", GetID());
+	feLog("                        CURRENT        REQUIRED\n");
 	double pctn = 0;
 	if (fabs(normL1) > 1e-10) pctn = fabs((normL1 - normL0)/normL1);
-	felog.printf("    normal force : %15le %15le\n", pctn, m_atol);
-	felog.printf("    gap function : %15le       ***\n", normgc);
+	feLog("    normal force : %15le %15le\n", pctn, m_atol);
+	feLog("    gap function : %15le       ***\n", normgc);
 
 	// check convergence of constraints
 	bool bconv = true;
@@ -625,12 +655,12 @@ bool FEPeriodicBoundary1O::Augment(int naug, const FETimeInfo& tp)
 		for (i=0; i<m_ss.Nodes(); ++i)
 		{
 			// update Lagrange multipliers
-			m_ss.m_Lm[i] = m_ss.m_Lm[i] + m_ss.m_gap[i]*m_eps;
+			m_ss.m_data[i].m_Lm = m_ss.m_data[i].m_Lm + m_ss.m_data[i].m_gap*m_eps;
 		}
 		for (i=0; i<m_ms.Nodes(); ++i)
 		{
 			// update Lagrange multipliers
-			m_ms.m_Lm[i] = m_ms.m_Lm[i] + m_ms.m_gap[i]*m_eps;
+			m_ms.m_data[i].m_Lm = m_ms.m_data[i].m_Lm + m_ms.m_data[i].m_gap*m_eps;
 		}
 	}
 

@@ -1,19 +1,53 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEFungOrthotropic.h"
+#include <FECore/log.h>
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEFungOrthotropic, FEUncoupledMaterial)
-	ADD_PARAMETER2(E1, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "E1");
-	ADD_PARAMETER2(E2, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "E2");
-	ADD_PARAMETER2(E3, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "E3");
-	ADD_PARAMETER2(G12, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "G12");
-	ADD_PARAMETER2(G23, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "G23");
-	ADD_PARAMETER2(G31, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "G31");
-	ADD_PARAMETER(v12, FE_PARAM_DOUBLE, "v12");
-	ADD_PARAMETER(v23, FE_PARAM_DOUBLE, "v23");
-	ADD_PARAMETER(v31, FE_PARAM_DOUBLE, "v31");
-	ADD_PARAMETER2(m_c, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "c");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFungOrthotropic, FEUncoupledMaterial)
+	ADD_PARAMETER(E1, FE_RANGE_GREATER(0.0), "E1");
+	ADD_PARAMETER(E2, FE_RANGE_GREATER(0.0), "E2");
+	ADD_PARAMETER(E3, FE_RANGE_GREATER(0.0), "E3");
+	ADD_PARAMETER(G12, FE_RANGE_GREATER_OR_EQUAL(0.0), "G12");
+	ADD_PARAMETER(G23, FE_RANGE_GREATER_OR_EQUAL(0.0), "G23");
+	ADD_PARAMETER(G31, FE_RANGE_GREATER_OR_EQUAL(0.0), "G31");
+	ADD_PARAMETER(v12, "v12");
+	ADD_PARAMETER(v23, "v23");
+	ADD_PARAMETER(v31, "v31");
+	ADD_PARAMETER(m_c, FE_RANGE_GREATER(0.0), "c");
+END_FECORE_CLASS();
+
+//-----------------------------------------------------------------------------
+FEFungOrthotropic::FEFungOrthotropic(FEModel* pfem) : FEUncoupledMaterial(pfem) 
+{
+}
 
 //-----------------------------------------------------------------------------
 //! Data initialization
@@ -21,9 +55,9 @@ bool FEFungOrthotropic::Validate()
 {
 	if (FEUncoupledMaterial::Validate() == false) return false;
 
-	if (v12 > sqrt(E1/E2)) return MaterialError("Invalid value for v12. Let v12 <= sqrt(E1/E2)");
-	if (v23 > sqrt(E2/E3)) return MaterialError("Invalid value for v23. Let v23 <= sqrt(E2/E3)");
-	if (v31 > sqrt(E3/E1)) return MaterialError("Invalid value for v31. Let v31 <= sqrt(E3/E1)");
+	if (v12 > sqrt(E1/E2)) { feLogError("Invalid value for v12. Let v12 <= sqrt(E1/E2)"); return false; }
+	if (v23 > sqrt(E2/E3)) { feLogError("Invalid value for v23. Let v23 <= sqrt(E2/E3)"); return false; }
+	if (v31 > sqrt(E3/E1)) { feLogError("Invalid value for v31. Let v31 <= sqrt(E3/E1)"); return false; }
 	
 	// Evaluate Lame coefficients
 	mu[0] = G12 + G31 - G23;
@@ -66,11 +100,14 @@ mat3ds FEFungOrthotropic::DevStress(FEMaterialPoint& mp)
 	// calculate deviatoric left and right Cauchy-Green tensor
 	mat3ds b = pt.DevLeftCauchyGreen();
 	mat3ds c = pt.DevRightCauchyGreen();
-	mat3ds c2 = c*c;
+	mat3ds c2 = c.sqr();
 	
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	for (i=0; i<3; i++) {	// Perform sum over all three texture directions
 		// Copy the texture direction in the reference configuration to a0
-		a0[i].x = pt.m_Q[0][i]; a0[i].y = pt.m_Q[1][i]; a0[i].z = pt.m_Q[2][i];
+		a0[i].x = Q[0][i]; a0[i].y = Q[1][i]; a0[i].z = Q[2][i];
 		K[i] = a0[i]*(c*a0[i]);
 		L[i] = a0[i]*(c2*a0[i]);
 		a[i] = Fd*a0[i]/sqrt(K[i]);	// Evaluate the texture direction in the current configuration
@@ -91,7 +128,7 @@ mat3ds FEFungOrthotropic::DevStress(FEMaterialPoint& mp)
 	s.zero();		// Initialize for summation
 	bmi = b - mat3dd(1.);
 	for (i=0; i<3; i++) {
-		s += mu[i]*K[i]*(A[i]*bmi + bmi*A[i]);
+		s += (A[i]*bmi).sym()*(2.0*mu[i] * K[i]);
 		for (j=0; j<3; j++)
 			s += lam[i][j]*((K[i]-1)*K[j]*A[j]+(K[j]-1)*K[i]*A[i])/2.;
 	}
@@ -122,12 +159,15 @@ tens4ds FEFungOrthotropic::DevTangent(FEMaterialPoint& mp)
 	// calculate left and right Cauchy-Green tensor
 	mat3ds b = pt.DevLeftCauchyGreen();
 	mat3ds c = pt.DevRightCauchyGreen();
-	mat3ds c2 = c*c;
+	mat3ds c2 = c.sqr();
 	mat3dd I(1.);
 	
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	for (i=0; i<3; i++) {	// Perform sum over all three texture directions
 		// Copy the texture direction in the reference configuration to a0
-		a0[i].x = pt.m_Q[0][i]; a0[i].y = pt.m_Q[1][i]; a0[i].z = pt.m_Q[2][i];
+		a0[i].x = Q[0][i]; a0[i].y = Q[1][i]; a0[i].z = Q[2][i];
 		K[i] = a0[i]*(c*a0[i]);
 		L[i] = a0[i]*(c2*a0[i]);
 		a[i] = Fd*a0[i]/sqrt(K[i]);	// Evaluate the texture direction in the current configuration
@@ -149,7 +189,7 @@ tens4ds FEFungOrthotropic::DevTangent(FEMaterialPoint& mp)
 	tens4ds C(0.0);
 	bmi = b - I;
 	for (i=0; i<3; i++) {
-		sd += mu[i]*K[i]*(A[i]*bmi + bmi*A[i]);
+		sd += ((A[i]*bmi).sym())*(2.0*mu[i] * K[i]);
 		for (j=0; j<3; j++)
 			sd += lam[i][j]*((K[i]-1)*K[j]*A[j]+(K[j]-1)*K[i]*A[i])/2.;
 		C += mu[i]*K[i]*dyad4s(A[i],b);
@@ -185,11 +225,14 @@ double FEFungOrthotropic::DevStrainEnergyDensity(FEMaterialPoint& mp)
 	mat3ds C = pt.DevRightCauchyGreen();
 	mat3dd I(1.);
     mat3ds E = (C - I)*0.5;
-    mat3ds E2 = E*E;
+    mat3ds E2 = E.sqr();
 	
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	for (i=0; i<3; i++) {	// Perform sum over all three texture directions
 		// Copy the texture direction in the reference configuration to a0
-		a0[i].x = pt.m_Q[0][i]; a0[i].y = pt.m_Q[1][i]; a0[i].z = pt.m_Q[2][i];
+		a0[i].x = Q[0][i]; a0[i].y = Q[1][i]; a0[i].z = Q[2][i];
 		A0[i] = dyad(a0[i]);			// Evaluate the texture tensor in the reference configuration
         AE[i] = A0[i].dotdot(E);
         AE2[i] = A0[i].dotdot(E2);

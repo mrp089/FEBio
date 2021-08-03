@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FEElasticMaterial.h"
 
@@ -7,7 +35,7 @@
 //! The solid supply has units of mass/(referential volume)/time
 //!
 
-class FESolidSupply : public FEMaterial
+class FEBIOMECH_API FESolidSupply : public FEMaterial
 {
 public:
 	//! constructor
@@ -25,7 +53,7 @@ public:
 
 //-----------------------------------------------------------------------------
 //! Material point data for remodeling elastic materials
-class FERemodelingMaterialPoint : public FEMaterialPoint
+class FEBIOMECH_API FERemodelingMaterialPoint : public FEMaterialPoint
 {
 public:
 	FERemodelingMaterialPoint(FEMaterialPoint *pt) : FEMaterialPoint(pt) {}
@@ -63,7 +91,7 @@ public:
 
 //-----------------------------------------------------------------------------
 //! Material class for remodeling solids
-class FERemodelingElasticMaterial : public FEElasticMaterial
+class FEBIOMECH_API FERemodelingElasticMaterial : public FEElasticMaterial
 {
 public:
 	//! constructor
@@ -94,12 +122,12 @@ public:
 	FEElasticMaterial* GetElasticMaterial() override { return m_pBase; }
 
 public:
-	FEPropertyT<FEElasticMaterial>	m_pBase;		//!< pointer to elastic solid material
-	FEPropertyT<FESolidSupply>		m_pSupp;		//!< pointer to solid supply material
+	FEElasticMaterial*	m_pBase;		//!< pointer to elastic solid material
+	FESolidSupply*		m_pSupp;		//!< pointer to solid supply material
 	double				m_rhormin;		//!< minimum density
 	double				m_rhormax;		//!< maximum density
 	
 public:
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

@@ -1,25 +1,45 @@
-//
-//  FEFluidFSITangentDiagnostic.cpp
-//  FEBioTest
-//
-//  Created by Gerard Ateshian on 8/16/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEFluidFSITangentDiagnostic.h"
 #include "FETangentDiagnostic.h"
 #include "FEBioLib/FEBox.h"
 #include "FEBioFluid/FEFluidFSISolver.h"
 #include "FEBioFluid/FEFluidFSIDomain3D.h"
 #include "FECore/log.h"
-#include "FECore/BC.h"
-#include "FECore/FEDataLoadCurve.h"
+#include <FECore/FEFixedBC.h>
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEFluidFSITangentUniaxial, FEFluidFSIScenario)
-ADD_PARAMETER(m_dilation, FE_PARAM_DOUBLE, "fluid_dilation");
-ADD_PARAMETER(m_dt      , FE_PARAM_DOUBLE, "time_step"     );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFluidFSITangentUniaxial, FEFluidFSIScenario)
+	ADD_PARAMETER(m_dilation, "fluid_dilation");
+	ADD_PARAMETER(m_dt      , "time_step"     );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEFluidFSITangentUniaxial::FEFluidFSITangentUniaxial(FEDiagnostic* pdia) : FEFluidFSIScenario(pdia)
@@ -57,7 +77,7 @@ bool FEFluidFSITangentUniaxial::Init()
         { 0, 0, 0, 0, 0, 0, 0}
     };
     
-    FEModel& fem = GetDiagnostic()->GetFEModel();
+    FEModel& fem = *GetDiagnostic()->GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     pstep->m_nanalysis = FE_DYNAMIC;
 //    pstep->m_nanalysis = FE_STEADY_STATE;
@@ -76,6 +96,9 @@ bool FEFluidFSITangentUniaxial::Init()
     FEMesh& m = fem.GetMesh();
     m.CreateNodes(8);
     m.SetDOFS(MAX_DOFS);
+
+	FENodeSet* nset[7] = { 0 };
+	for (int i = 0; i < 7; ++i) nset[i] = new FENodeSet(&fem);
     for (i=0; i<8; ++i)
     {
         FENode& n = m.Node(i);
@@ -83,22 +106,30 @@ bool FEFluidFSITangentUniaxial::Init()
         n.m_rid = -1;
         
         // set displacement BC's
-        if (BC[i][0] == -1) fem.AddFixedBC(i, dof_X);
-        if (BC[i][1] == -1) fem.AddFixedBC(i, dof_Y);
-        if (BC[i][2] == -1) fem.AddFixedBC(i, dof_Z);
-        if (BC[i][3] == -1) fem.AddFixedBC(i, dof_WX);
-        if (BC[i][4] == -1) fem.AddFixedBC(i, dof_WY);
-        if (BC[i][5] == -1) fem.AddFixedBC(i, dof_WZ);
-        if (BC[i][6] == -1) fem.AddFixedBC(i, dof_EF);
+        if (BC[i][0] == -1) nset[0]->Add(i);
+        if (BC[i][1] == -1) nset[1]->Add(i);
+        if (BC[i][2] == -1) nset[2]->Add(i);
+        if (BC[i][3] == -1) nset[3]->Add(i);
+        if (BC[i][4] == -1) nset[4]->Add(i);
+        if (BC[i][5] == -1) nset[5]->Add(i);
+        if (BC[i][6] == -1) nset[6]->Add(i);
     }
     
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_X , nset[0]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_Y , nset[1]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_Z , nset[2]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_WX, nset[3]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_WY, nset[4]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_WZ, nset[5]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_EF, nset[6]));
+
     // get the material
     FEMaterial* pmat = fem.GetMaterial(0);
     
     // create a fluid domain
     FEFluidFSIDomain3D* pd = new FEFluidFSIDomain3D(&fem);
     pd->SetMaterial(pmat);
-    pd->Create(1, FE_HEX8G8);
+    pd->Create(1, FEElementLibrary::GetElementSpecFromType(FE_HEX8G8));
     pd->SetMatID(0);
     m.AddDomain(pd);
     FESolidElement& el = pd->Element(0);
@@ -108,7 +139,7 @@ bool FEFluidFSITangentUniaxial::Init()
     pd->CreateMaterialPointData();
     
     // Add a loadcurve
-/*    FELoadCurve* plc = new FELinearRamp(1.0, 0.0);
+/*    FELoadCurve* plc = new FELoadCurve(new FELinearFunction(&fem, 1.0, 0.0));
     fem.AddLoadCurve(plc);
     
     // Add a prescribed BC
@@ -130,9 +161,9 @@ FEFluidFSITangentDiagnostic::FEFluidFSITangentDiagnostic(FEModel& fem) : FEDiagn
     FEAnalysis* pstep = new FEAnalysis(&fem);
     
     // create a new solver
-    FESolver* pnew_solver = fecore_new<FESolver>(FESOLVER_ID, "fluid-FSI", &fem);
+    FESolver* pnew_solver = fecore_new<FESolver>("fluid-FSI", &fem);
     assert(pnew_solver);
-    pnew_solver->m_bsymm = false;
+    pnew_solver->m_msymm = REAL_UNSYMMETRIC;
     FEFluidFSISolver* fluid_solver = dynamic_cast<FEFluidFSISolver*>(pnew_solver);
     fluid_solver->m_rhoi = 0;
     fluid_solver->m_pred = 0;
@@ -169,20 +200,20 @@ void FEFluidFSITangentDiagnostic::print_matrix(matrix& m)
     int N = m.rows();
     int M = m.columns();
     
-    felog.printf("\n    ");
-    for (i=0; i<N; ++i) felog.printf("%15d ", i);
-    felog.printf("\n----");
-    for (i=0; i<N; ++i) felog.printf("----------------", i);
+    feLog("\n    ");
+    for (i=0; i<N; ++i) feLog("%15d ", i);
+    feLog("\n----");
+    for (i=0; i<N; ++i) feLog("----------------", i);
     
     for (i=0; i<N; ++i)
     {
-        felog.printf("\n%2d: ", i);
+        feLog("\n%2d: ", i);
         for (j=0; j<M; ++j)
         {
-            felog.printf("%15lg ", m[i][j]);
+            feLog("%15lg ", m[i][j]);
         }
     }
-    felog.printf("\n");
+    feLog("\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -191,11 +222,8 @@ void FEFluidFSITangentDiagnostic::print_matrix(matrix& m)
 // of the element residual.
 bool FEFluidFSITangentDiagnostic::Run()
 {
-    Logfile::MODE oldmode = felog.SetMode(Logfile::LOG_FILE);
-    
     // solve the problem
-    felog.SetMode(Logfile::LOG_NEVER);
-    FEModel& fem = GetFEModel();
+    FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
 	fem.GetTime().timeIncrement = pstep->m_dt0 = dt;
@@ -203,8 +231,9 @@ bool FEFluidFSITangentDiagnostic::Run()
     pstep->m_tend = dt;
     pstep->m_final_time = dt;
     pstep->Activate();
+	fem.BlockLog();
     fem.Solve();
-    felog.SetMode(Logfile::LOG_FILE);
+	fem.UnBlockLog();
     FETimeInfo tp;
     tp.timeIncrement = dt;
     tp.alpha = 1;
@@ -228,7 +257,7 @@ bool FEFluidFSITangentDiagnostic::Run()
     bd.ElementMassMatrix(el,k0, tp);
     
     // print the element stiffness matrix
-    felog.printf("\nActual stiffness matrix:\n");
+    feLog("\nActual stiffness matrix:\n");
     print_matrix(k0);
     
     // now calculate the derivative of the residual
@@ -236,11 +265,11 @@ bool FEFluidFSITangentDiagnostic::Run()
     deriv_residual(k1);
     
     // print the approximate element stiffness matrix
-    felog.printf("\nApproximate stiffness matrix:\n");
+    feLog("\nApproximate stiffness matrix:\n");
     print_matrix(k1);
     
     // finally calculate the difference matrix
-    felog.printf("\n");
+    feLog("\n");
     matrix kd(ndpn*N, ndpn*N);
     double kmax = 0, kij;
     int i0 = -1, j0 = -1, i, j;
@@ -258,12 +287,10 @@ bool FEFluidFSITangentDiagnostic::Run()
         }
     
     // print the difference
-    felog.printf("\ndifference matrix:\n");
+    feLog("\ndifference matrix:\n");
     print_matrix(kd);
     
-    felog.SetMode(oldmode);
-    
-    felog.printf("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+    feLog("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
     
     return (kmax < 1e-4);
 }
@@ -276,7 +303,7 @@ void FEFluidFSITangentDiagnostic::deriv_residual(matrix& ke)
     int i, j, nj;
     
     // get the solver
-    FEModel& fem = GetFEModel();
+    FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
 	fem.GetTime().timeIncrement = pstep->m_dt0 = dt;
@@ -285,7 +312,7 @@ void FEFluidFSITangentDiagnostic::deriv_residual(matrix& ke)
     pstep->m_final_time = dt;
     FEFluidFSISolver& solver = static_cast<FEFluidFSISolver&>(*pstep->GetFESolver());
     FETimeInfo& tp = fem.GetTime();
-    tp.alpha = solver.m_alpha;
+    tp.alpha = solver.m_alphaf;
     tp.beta  = solver.m_beta;
     tp.gamma = solver.m_gamma;
     tp.alphaf = solver.m_alphaf;
@@ -328,17 +355,17 @@ void FEFluidFSITangentDiagnostic::deriv_residual(matrix& ke)
         
         switch (nj)
         {
-            case 0: node.inc(dof_X, dx); node.m_rt.x += dx; break;
-            case 1: node.inc(dof_Y, dx); node.m_rt.y += dx; break;
-            case 2: node.inc(dof_Z, dx); node.m_rt.z += dx; break;
-            case 3: node.inc(dof_WX, dx); break;
-            case 4: node.inc(dof_WY, dx); break;
-            case 5: node.inc(dof_WZ, dx); break;
-            case 6: node.inc(dof_EF, dx); break;
+            case 0: node.add(dof_X, dx); node.m_rt.x += dx; break;
+            case 1: node.add(dof_Y, dx); node.m_rt.y += dx; break;
+            case 2: node.add(dof_Z, dx); node.m_rt.z += dx; break;
+            case 3: node.add(dof_WX, dx); break;
+            case 4: node.add(dof_WY, dx); break;
+            case 5: node.add(dof_WZ, dx); break;
+            case 6: node.add(dof_EF, dx); break;
         }
         
         
-		solver.UpdateModel();
+		fem.Update();
         
         zero(f1);
         bd.ElementInternalForce(el, f1, tp);
@@ -346,16 +373,16 @@ void FEFluidFSITangentDiagnostic::deriv_residual(matrix& ke)
         
         switch (nj)
         {
-            case 0: node.dec(dof_X, dx); node.m_rt.x -= dx; break;
-            case 1: node.dec(dof_Y, dx); node.m_rt.y -= dx; break;
-            case 2: node.dec(dof_Z, dx); node.m_rt.z -= dx; break;
-            case 3: node.dec(dof_WX, dx); break;
-            case 4: node.dec(dof_WY, dx); break;
-            case 5: node.dec(dof_WZ, dx); break;
-            case 6: node.dec(dof_EF, dx); break;
+            case 0: node.sub(dof_X, dx); node.m_rt.x -= dx; break;
+            case 1: node.sub(dof_Y, dx); node.m_rt.y -= dx; break;
+            case 2: node.sub(dof_Z, dx); node.m_rt.z -= dx; break;
+            case 3: node.sub(dof_WX, dx); break;
+            case 4: node.sub(dof_WY, dx); break;
+            case 5: node.sub(dof_WZ, dx); break;
+            case 6: node.sub(dof_EF, dx); break;
         }
         
-		solver.UpdateModel();
+		fem.Update();
         
         for (i=0; i<ndpn*N; ++i) ke[i][j] = -(f1[i] - f0[i])/dx;
     }

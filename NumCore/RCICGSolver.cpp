@@ -1,5 +1,34 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "RCICGSolver.h"
+#include "IncompleteCholesky.h"
 
 //-----------------------------------------------------------------------------
 // We must undef PARDISO since it is defined as a function in mkl_solver.h
@@ -13,11 +42,21 @@
 #endif // MKL_ISS
 
 //-----------------------------------------------------------------------------
-RCICGSolver::RCICGSolver() : m_pA(0), m_P(0)
+BEGIN_FECORE_CLASS(RCICGSolver, IterativeLinearSolver)
+	ADD_PARAMETER(m_print_level, "print_level");
+	ADD_PARAMETER(m_tol, "tol");
+	ADD_PARAMETER(m_maxiter, "max_iter");
+	ADD_PARAMETER(m_fail_max_iters, "fail_max_iters");
+	ADD_PROPERTY(m_P, "pc_left");
+END_FECORE_CLASS();
+
+//-----------------------------------------------------------------------------
+RCICGSolver::RCICGSolver(FEModel* fem) : IterativeLinearSolver(fem), m_pA(0), m_P(0)
 {
 	m_maxiter = 0;
 	m_tol = 1e-5;
 	m_print_level = 0;
+	m_fail_max_iters = true;
 }
 
 //-----------------------------------------------------------------------------
@@ -40,9 +79,21 @@ bool RCICGSolver::SetSparseMatrix(SparseMatrix* A)
 }
 
 //-----------------------------------------------------------------------------
-void RCICGSolver::SetPreconditioner(Preconditioner* P)
+void RCICGSolver::SetLeftPreconditioner(LinearSolver* P)
 {
 	m_P = P;
+}
+
+//-----------------------------------------------------------------------------
+LinearSolver* RCICGSolver::GetLeftPreconditioner()
+{
+	return m_P;
+}
+
+//-----------------------------------------------------------------------------
+bool RCICGSolver::HasPreconditioner() const
+{
+	return (m_P != nullptr);
 }
 
 //-----------------------------------------------------------------------------
@@ -55,12 +106,11 @@ bool RCICGSolver::PreProcess()
 bool RCICGSolver::Factor()
 {
 	if (m_pA == 0) return false;
-	if (m_P) return m_P->Create(m_pA);
 	return true;
 }
 
 //-----------------------------------------------------------------------------
-bool RCICGSolver::BackSolve(vector<double>& x, vector<double>& b)
+bool RCICGSolver::BackSolve(double* x, double* b)
 {
 #ifdef MKL_ISS
 	// make sure we have a matrix
@@ -70,7 +120,7 @@ bool RCICGSolver::BackSolve(vector<double>& x, vector<double>& b)
 	MKL_INT n = m_pA->Rows();
 
 	// zero solution vector
-	zero(x);
+	for (int i=0; i<n; ++i) x[i] = 0.0;
 
 	// get pointers to solution and RHS vector
 	double* px = &x[0];
@@ -114,9 +164,13 @@ bool RCICGSolver::BackSolve(vector<double>& x, vector<double>& b)
 			break;
 		case 1: // compute vector A*tmp[0] and store in tmp[n]
 			{
-				// NOTE: It seems that this blas operation has a memory leak for large problems (+1,500,000). 
-				//       The solution is to set the environment variable MKL_DISABLE_FAST_MM to 1
-				m_pA->mult_vector(ptmp, ptmp+n);
+				bool bret = m_pA->mult_vector(ptmp, ptmp+n);
+				if (bret == false)
+				{
+					bsuccess = false;
+					bdone = true;
+					break;
+				}
 
 				if (m_print_level == 1)
 				{
@@ -147,10 +201,12 @@ bool RCICGSolver::BackSolve(vector<double>& x, vector<double>& b)
 		fprintf(stderr, "%3d = %lg (%lg), %lg (%lg)\n", ipar[3], dpar[4], dpar[3], dpar[6], dpar[7]);
 	}
 
-	// release internal MKL buffers
-	MKL_Free_Buffers();
+	UpdateStats(niter);
 
-	return bsuccess;
+	// release internal MKL buffers
+//	MKL_Free_Buffers();
+
+	return (m_fail_max_iters ? bsuccess : true);
 #else
 	return false;
 #endif // MKL_ISS
@@ -159,14 +215,4 @@ bool RCICGSolver::BackSolve(vector<double>& x, vector<double>& b)
 //-----------------------------------------------------------------------------
 void RCICGSolver::Destroy()
 {
-}
-
-//! convenience function for solving linear system Ax = b
-bool RCICGSolver::Solve(SparseMatrix* A, vector<double>& x, vector<double>& b, Preconditioner* P)
-{
-	SetSparseMatrix(A);
-	SetPreconditioner(P);
-	if (PreProcess() == false) return false;
-	if (Factor() == false) return false;
-	return BackSolve(x, b);
 }

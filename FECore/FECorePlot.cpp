@@ -1,99 +1,403 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FECorePlot.h"
 #include "FEMaterial.h"
 #include "FESolidDomain.h"
+#include "FEModelParam.h"
+#include "FEBodyLoad.h"
+#include "FEPlotData.h"
+#include "FESurface.h"
+#include "FEMaterialPointProperty.h"
+#include "writeplot.h"
+#include "FESurfaceLoad.h"
 
 //-----------------------------------------------------------------------------
-FEPlotMaterialParameter::FEPlotMaterialParameter(FEModel* pfem) : FEDomainData(PLT_FLOAT, FMT_MULT) { m_index = 0; }
+FEPlotParameter::FEPlotParameter(FEModel* pfem) : FEPlotData(pfem)
+{
+	m_index = 0; 
+	SetStorageFormat(FMT_MULT);
+
+	m_mat = 0;
+	m_dom = 0;
+	m_surf = 0;
+}
 
 //-----------------------------------------------------------------------------
 // This plot field requires a filter which defines the material name and 
 // the material parameter in the format [materialname.parametername].
-bool FEPlotMaterialParameter::SetFilter(const char* sz)
+bool FEPlotParameter::SetFilter(const char* sz)
 {
-	// copy name into temp buffer
-	char szbuf[256] = {0};
-	strcpy(szbuf, sz);
+	// find the parameter
+	ParamString ps(sz);
+	m_param = GetFEModel()->GetParameterValue(ps);
+	if (m_param.isValid() == false) return false;
 
-	// strip the material name
-	char* ch = strchr(szbuf, '.');
-	if (ch) *ch++ = 0; else return false;
+	FEParam* param = m_param.param();
+	if (param == 0) return false;
 
-	// get the last component
-	char* cd = strrchr(ch, '.');
-	if (cd == 0) cd = ch; else cd++;
+	FECoreBase* pc = dynamic_cast<FECoreBase*>(param->parent());
+	if (pc == nullptr) return false;
 
-	// get the optional index
-	char* chl = strchr(cd, '[');
-	if (chl)
+	switch (m_param.type())
 	{
-		*chl++ = 0;
-		char* chr = strrchr(chl, ']');
-		if (chr == 0) return false;
-		*chr=0;
-		m_index = atoi(chl);
-		if (m_index < 0) return false;
-	}
+	case FE_PARAM_DOUBLE_MAPPED:
+	{
+		FEParamDouble& p = m_param.value<FEParamDouble>();
 
-	m_matName = szbuf;
-	m_paramName = ch;
+		// check for materials first
+		if (dynamic_cast<FEMaterial*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_mat = dynamic_cast<FEMaterial*>(pc); m_mat = dynamic_cast<FEMaterial*>(m_mat->GetAncestor()); }
+		else 
+		{
+			FEItemList* itemList = p.GetItemList();
+			if (itemList == 0)
+			{
+				// for some classes, the item list can be empty
+				if      (dynamic_cast<FEBodyLoad*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEBodyLoad*>(pc))->GetDomainList(); }
+	//			else if (dynamic_cast<FESurfaceLoad*>(pc)) { SetRegionType(FE_REGION_SURFACE); m_surf = dynamic_cast<FESurfaceLoad*>(pc)->GetSurface().GetFacetSet(); }
+				else return false;
+			}
+			else
+			{
+				if      (dynamic_cast<FENodeSet*>(itemList)) SetRegionType(FE_REGION_NODE);
+				else if (dynamic_cast<FEFacetSet*>(itemList)) { SetRegionType(FE_REGION_SURFACE); m_surf = dynamic_cast<FEFacetSet*>(itemList); }
+				else if (dynamic_cast<FEElementSet*>(itemList)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEElementSet*>(itemList))->GetDomainList(); }
+				else return false;
+			}
+		}
+
+		SetVarType(PLT_FLOAT);
+	}
+	break;
+	case FE_PARAM_VEC3D_MAPPED:
+	{
+		FEParamVec3& p = m_param.value<FEParamVec3>();
+
+		FEItemList* itemList = p.GetItemList();
+		if (itemList == 0)
+		{
+			// for material parameters, the item list can be empty
+			if      (dynamic_cast<FEMaterial*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_mat = dynamic_cast<FEMaterial*>(pc); m_mat = dynamic_cast<FEMaterial*>(m_mat->GetAncestor()); }
+			else if (dynamic_cast<FEBodyLoad*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEBodyLoad*>(pc))->GetDomainList(); }
+			else return false;
+		}
+		else
+		{
+			if      (dynamic_cast<FENodeSet*>(itemList)) SetRegionType(FE_REGION_NODE);
+			else if (dynamic_cast<FEFacetSet*>(itemList)) { SetRegionType(FE_REGION_SURFACE); m_surf = dynamic_cast<FEFacetSet*>(itemList); }
+			else if (dynamic_cast<FEElementSet*>(itemList)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEElementSet*>(itemList))->GetDomainList(); }
+			else return false;
+		}
+
+		SetVarType(PLT_VEC3F);
+	}
+	break;
+	case FE_PARAM_MAT3D_MAPPED:
+	{
+		FEParamMat3d& p = m_param.value<FEParamMat3d>();
+
+		FEItemList* itemList = p.GetItemList();
+		if (itemList == 0)
+		{
+			// for material parameters, the item list can be empty
+			if      (dynamic_cast<FEMaterial*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_mat = dynamic_cast<FEMaterial*>(pc); m_mat = dynamic_cast<FEMaterial*>(m_mat->GetAncestor()); }
+			else if (dynamic_cast<FEBodyLoad*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEBodyLoad*>(pc))->GetDomainList(); }
+			else return false;
+		}
+		else
+		{
+			if      (dynamic_cast<FENodeSet*>(itemList)) SetRegionType(FE_REGION_NODE);
+			else if (dynamic_cast<FEFacetSet*>(itemList)) { SetRegionType(FE_REGION_SURFACE); m_surf = dynamic_cast<FEFacetSet*>(itemList); }
+			else if (dynamic_cast<FEElementSet*>(itemList)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEElementSet*>(itemList))->GetDomainList(); }
+			else return false;
+		}
+
+		SetStorageFormat(FMT_ITEM);
+		SetVarType(PLT_MAT3F);
+	}
+	break;
+	case FE_PARAM_MAT3DS_MAPPED:
+	{
+		FEParamMat3ds& p = m_param.value<FEParamMat3ds>();
+
+		FEItemList* itemList = p.GetItemList();
+		if (itemList == 0)
+		{
+			// for material parameters, the item list can be empty
+			if      (dynamic_cast<FEMaterial*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_mat = dynamic_cast<FEMaterial*>(pc); m_mat = dynamic_cast<FEMaterial*>(m_mat->GetAncestor()); }
+			else if (dynamic_cast<FEBodyLoad*>(pc)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEBodyLoad*>(pc))->GetDomainList(); }
+			else return false;
+		}
+		else
+		{
+			if      (dynamic_cast<FENodeSet*>(itemList)) SetRegionType(FE_REGION_NODE);
+			else if (dynamic_cast<FEFacetSet*>(itemList)) { SetRegionType(FE_REGION_SURFACE); m_surf = dynamic_cast<FEFacetSet*>(itemList); }
+			else if (dynamic_cast<FEElementSet*>(itemList)) { SetRegionType(FE_REGION_DOMAIN); m_dom = &(dynamic_cast<FEElementSet*>(itemList))->GetDomainList(); }
+			else return false;
+		}
+
+		SetStorageFormat(FMT_ITEM);
+		SetVarType(PLT_MAT3FS);
+	}
+	break;
+	case FE_PARAM_DOUBLE:
+	{
+		if (dynamic_cast<FEMaterial*>(pc))
+		{
+			m_mat = dynamic_cast<FEMaterial*>(pc->GetAncestor());
+			SetRegionType(FE_REGION_DOMAIN);
+			SetStorageFormat(FMT_REGION);
+		}
+		else if (dynamic_cast<FESurfaceLoad*>(pc))
+		{
+			FESurfaceLoad* psl = dynamic_cast<FESurfaceLoad*>(pc);
+			SetRegionType(FE_REGION_SURFACE);
+			SetStorageFormat(FMT_REGION);
+			m_surf = psl->GetSurface().GetFacetSet();
+		}
+		else return false;
+	}
+	break;
+	case FE_PARAM_VEC3D:
+	{
+		if (dynamic_cast<FEMaterial*>(pc))
+		{
+			m_mat = dynamic_cast<FEMaterial*>(pc->GetAncestor());
+			SetRegionType(FE_REGION_DOMAIN);
+			SetStorageFormat(FMT_REGION);
+		}
+		else if (dynamic_cast<FEBodyLoad*>(pc))
+		{
+			SetRegionType(FE_REGION_DOMAIN);
+			SetStorageFormat(FMT_REGION);
+			m_dom = &(dynamic_cast<FEBodyLoad*>(pc))->GetDomainList();
+		}
+		else if (dynamic_cast<FESurfaceLoad*>(pc))
+		{
+			FESurfaceLoad* psl = dynamic_cast<FESurfaceLoad*>(pc);
+			SetRegionType(FE_REGION_SURFACE);
+			SetStorageFormat(FMT_REGION);
+			m_surf = psl->GetSurface().GetFacetSet();
+		}
+		else return false;
+
+		SetVarType(PLT_VEC3F);
+	}
+	break;
+	case FE_PARAM_MATERIALPOINT:
+	{
+		FEMaterialPointProperty& prop = m_param.value<FEMaterialPointProperty>();
+		m_mat = dynamic_cast<FEMaterial*>(pc->GetAncestor());
+		if (m_mat == nullptr) return false;
+
+		SetRegionType(FE_REGION_DOMAIN);
+
+		switch (prop.dataType())
+		{
+		case FE_DOUBLE: SetVarType(PLT_FLOAT); break;
+		case FE_VEC3D: SetVarType(PLT_VEC3F); break;
+		case FE_MAT3D: SetVarType(PLT_MAT3F); break;
+		default:
+			return false;
+		}
+	}
+	break;
+	default:
+		assert(false);
+		return false;
+		break;
+	}
 
 	return true;
 }
 
 //-----------------------------------------------------------------------------
 // The Save function stores the material parameter data to the plot file.
-// TODO: use ParamString
-bool FEPlotMaterialParameter::Save(FEDomain& dom, FEDataStream& a)
+bool FEPlotParameter::Save(FEDomain& dom, FEDataStream& a)
 {
-	// First, get the domain material
-	FEMaterial* pmat = dom.GetMaterial();
-	if (pmat==0) return false;
+	if (m_param.isValid() == false) return false;
 
-	// check the name of this material
-	if (pmat->GetName() != m_matName) return false;
+	FEParam* param = m_param.param();
 
-	FESolidDomain& sd = dynamic_cast<FESolidDomain&>(dom);
-
-	// loop over all the elements in the domain
-	int NE = dom.Elements();
-	for (int i=0; i<NE; ++i)
+	if ((m_param.type() == FE_PARAM_DOUBLE_MAPPED) ||
+		(m_param.type() == FE_PARAM_VEC3D_MAPPED ) ||
+		(m_param.type() == FE_PARAM_MAT3D_MAPPED ) ||
+		(m_param.type() == FE_PARAM_MAT3DS_MAPPED))
 	{
-		// get the element and loop over its integration points
-		// we only calculate the element's average
-		// but since most material parameters can only defined 
-		// at the element level, this should get the same answer
-		FESolidElement& e = sd.Element(i);
-		int nint = e.GaussPoints();
-		int neln = e.Nodes();
+		FEModelParam& map = m_param.value<FEModelParam>();
 
-		vector<double> gv(nint);
-		double E = 0.0;
-		int nc = 0;
-		for (int j=0; j<nint; ++j)
+		if (m_dom == nullptr)
 		{
-			// get the material point data for this integration point
-			FEMaterialPoint& mp = *e.GetMaterialPoint(j);
+			if ((m_mat == nullptr) || (dom.GetMaterial() != m_mat))
+				return false;
+		}
+		else if (m_dom->IsMember(&dom) == false) return false;
 
-			// extract the parameter
-			// Note that for now this only works for double parameters
-			FEParam* pv = mp.FindParameter(m_paramName);
-			if (pv && (pv->type()==FE_PARAM_DOUBLE) && (m_index < pv->dim()))
+		FESolidDomain& sd = dynamic_cast<FESolidDomain&>(dom);
+
+		if (m_param.type() == FE_PARAM_DOUBLE_MAPPED)
+		{
+			FEParamDouble& mapDouble = dynamic_cast<FEParamDouble&>(map);
+			writeNodalProjectedElementValues<double>(sd, a, mapDouble);
+		}
+		else if (m_param.type() == FE_PARAM_VEC3D_MAPPED)
+		{
+			FEParamVec3& mapVec3 = dynamic_cast<FEParamVec3&>(map);
+			writeNodalProjectedElementValues<vec3d>(sd, a, mapVec3);
+		}
+		else if (m_param.type() == FE_PARAM_MAT3D_MAPPED)
+		{
+			FEParamMat3d& mapMat3 = dynamic_cast<FEParamMat3d&>(map);
+			writeElementValue<mat3d>(sd, a, mapMat3);
+		}
+		else if (m_param.type() == FE_PARAM_MAT3DS_MAPPED)
+		{
+			FEParamMat3ds& mapMat3 = dynamic_cast<FEParamMat3ds&>(map);
+			writeElementValue<mat3ds>(sd, a, mapMat3);
+		}
+		else return false;
+
+		return true;
+	}
+	else if (m_param.type() == FE_PARAM_DOUBLE)
+	{
+		if (dom.GetMaterial() == m_mat)
+		{
+			double val = m_param.value<double>();
+			a << val;
+			return true;
+		}
+	}
+	else if (m_param.type() == FE_PARAM_VEC3D)
+	{
+		if (m_dom && (m_dom->IsMember(&dom)))
+		{
+			vec3d val = m_param.value<vec3d>();
+			a << val;
+			return true;
+		}
+		else if (dom.GetMaterial() == m_mat)
+		{
+			vec3d val = m_param.value<vec3d>();
+			a << val;
+			return true;
+		}
+		else return false;
+	}
+	else if (m_param.type() == FE_PARAM_MATERIALPOINT)
+	{
+		if (dom.GetMaterial() == m_mat)
+		{
+			FEMaterialPointProperty& prop = m_param.value<FEMaterialPointProperty>();
+
+			switch (prop.dataType())
 			{
-				gv[j] = pv->value<double>(m_index);
-				nc++;
+			case FE_DOUBLE: writeNodalProjectedElementValues<double>(dom, a, [&](const FEMaterialPoint& mp) {
+					FEMaterialPoint& mp_noconst = const_cast<FEMaterialPoint&>(mp);
+					double d;
+					prop.get(mp_noconst, d);
+					return d;
+				});	
+				break;
+			case FE_VEC3D: writeNodalProjectedElementValues<vec3d>(dom, a, [&](const FEMaterialPoint& mp) {
+					FEMaterialPoint& mp_noconst = const_cast<FEMaterialPoint&>(mp);
+					vec3d d;
+					prop.get(mp_noconst, d);
+					return d;
+				});	
+				break;
+			case FE_MAT3D: writeNodalProjectedElementValues<mat3d>(dom, a, [&](const FEMaterialPoint& mp) {
+					FEMaterialPoint& mp_noconst = const_cast<FEMaterialPoint&>(mp);
+					mat3d d;
+					prop.get(mp_noconst, d);
+					return d;
+				});	
+				break;
+
+			default:
+				return false;
 			}
+			return true;
 		}
-
-		vector<double> nv(neln, 0.0);
-		if (nc == nint)
-		{
-			e.project_to_nodes(&gv[0], &nv[0]);
-		}
-
-		// store the result
-		for (int j=0; j<neln; ++j) a << nv[j];
 	}
 
+	return false;
+}
+
+//-----------------------------------------------------------------------------
+// The Save function stores the material parameter data to the plot file.
+bool FEPlotParameter::Save(FESurface& dom, FEDataStream& a)
+{
+	if (m_param.isValid() == false) return false;
+
+	FEFacetSet* surf = dom.GetFacetSet();
+	if (m_surf != surf) return false;
+
+	if (m_param.type() == FE_PARAM_DOUBLE_MAPPED)
+	{
+		FEParamDouble& map = m_param.value<FEParamDouble>();
+		writeNodalProjectedElementValues<double>(dom, a, map);
+	}
+	else if (m_param.type() == FE_PARAM_VEC3D_MAPPED)
+	{
+		FEParamVec3& map = m_param.value<FEParamVec3>();
+		writeNodalProjectedElementValues<vec3d>(dom, a, map);
+	}
+	else if (m_param.type() == FE_PARAM_DOUBLE)
+	{
+		a << m_param.value<double>();
+	}
+	else if (m_param.type() == FE_PARAM_VEC3D)
+	{
+		a << m_param.value<vec3d>();
+	}
+	else return false;
+
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+bool FEPlotParameter::Save(FEMesh& mesh, FEDataStream& a)
+{
+	if (m_param.isValid() == false) return false;
+
+	if (m_param.type() == FE_PARAM_DOUBLE_MAPPED)
+	{
+		FEParamDouble& map = m_param.value<FEParamDouble>();
+		FENodeSet* nset = dynamic_cast<FENodeSet*>(map.GetItemList());
+		if (nset == 0) return false;
+
+		// write the nodal values
+		writeNodalValues<double>(*nset, a, map);
+
+		return true;
+	}
+
+	return false;
 }

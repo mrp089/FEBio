@@ -1,8 +1,37 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FERemodelingElasticDomain.h"
 #include "FERemodelingElasticMaterial.h"
 #include <FECore/FEModel.h>
 #include "FECore/FEAnalysis.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
 //! constructor
@@ -16,16 +45,14 @@ void FERemodelingElasticDomain::Reset()
 {
 	FEElasticSolidDomain::Reset();
 
-	FEElasticMaterial* pme = m_pMat->GetElasticMaterial();
-	for (size_t i=0; i<m_Elem.size(); ++i)
-	{
-		FESolidElement& el = m_Elem[i];
-		int n = el.GaussPoints();
-		for (int j=0; j<n; ++j) {
-			FERemodelingMaterialPoint& pt = *el.GetMaterialPoint(j)->ExtractData<FERemodelingMaterialPoint>();
-			pt.m_rhor = pme->Density();
-		}
-	}
+	FERemodelingElasticMaterial* pre = m_pMat->ExtractProperty<FERemodelingElasticMaterial>();
+	FEElasticMaterial* pme = pre->GetElasticMaterial();
+
+	// initialize rhor for each material point
+	ForEachMaterialPoint([&](FEMaterialPoint& mp) {
+		FERemodelingMaterialPoint& pt = *mp.ExtractData<FERemodelingMaterialPoint>();
+		pt.m_rhor = pme->Density(mp);
+	});
 }
 
 //-----------------------------------------------------------------------------
@@ -35,44 +62,39 @@ bool FERemodelingElasticDomain::Init()
 	// initialize base class
 	if (FEElasticSolidDomain::Init() == false) return false;
 
-	// get the elements material
-	FEElasticMaterial* pme = m_pMat->GetElasticMaterial();
-	for (size_t i=0; i<m_Elem.size(); ++i)
-	{
-		FESolidElement& el = m_Elem[i];
+	FERemodelingElasticMaterial* pre = m_pMat->ExtractProperty<FERemodelingElasticMaterial>();
+	if (pre == nullptr) return false;
 
-		// initialize referential solid density
-		for (int n=0; n<el.GaussPoints(); ++n)
-		{
-			FERemodelingMaterialPoint& pt = *el.GetMaterialPoint(n)->ExtractData<FERemodelingMaterialPoint>();
-			pt.m_rhor = pme->Density();
-		}
-	}
+	FEElasticMaterial* pme = pre->GetElasticMaterial();
+	if (pme == nullptr) return false;
+
+	// initialize rhor for each material point
+	ForEachMaterialPoint([&](FEMaterialPoint& mp) {
+		FERemodelingMaterialPoint& pt = *mp.ExtractData<FERemodelingMaterialPoint>();
+		pt.m_rhor = pme->Density(mp);
+	});
 
 	return true;
 }
 
 //-----------------------------------------------------------------------------
 //! calculates the global stiffness matrix for this domain
-void FERemodelingElasticDomain::StiffnessMatrix(FESolver* psolver)
+void FERemodelingElasticDomain::StiffnessMatrix(FELinearSystem& LS)
 {
 	// repeat over all solid elements
 	int NE = (int)m_Elem.size();
 
 	// I only need this for the element density stiffness
-	FEModel& fem = psolver->GetFEModel();
+	FEModel& fem = *GetFEModel();
 	double dt = fem.GetTime().timeIncrement;
 
 	#pragma omp parallel for
 	for (int iel=0; iel<NE; ++iel)
 	{
-		// element stiffness matrix
-		matrix ke;
-		vector<int> lm;
-		
 		FESolidElement& el = m_Elem[iel];
 
-		// create the element's stiffness matrix
+		// element stiffness matrix
+		FEElementMatrix ke(el);
 		int ndof = 3*el.Nodes();
 		ke.resize(ndof, ndof);
 		ke.zero();
@@ -94,11 +116,12 @@ void FERemodelingElasticDomain::StiffnessMatrix(FESolver* psolver)
 				ke[j][i] = ke[i][j];
 
 		// get the element's LM vector
+		vector<int> lm;
 		UnpackLM(el, lm);
+		ke.SetIndices(lm);
 
 		// assemble element matrix in global stiffness matrix
-		#pragma omp critical
-		psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
 	}
 }
 

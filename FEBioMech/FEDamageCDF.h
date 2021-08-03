@@ -1,15 +1,34 @@
-//
-//  FEDamageCDF.h
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 9/18/14.
-//  Copyright (c) 2014 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#ifndef __FEBioMech__FEDamageCDF__
-#define __FEBioMech__FEDamageCDF__
+See Copyright-FEBio.txt for details.
 
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#pragma once
 #include "FECore/FEMaterial.h"
+#include <FECore/FEFunction1D.h>
 
 //-----------------------------------------------------------------------------
 // Virtual base class for damage cumulative distribution functions
@@ -17,10 +36,22 @@
 class FEDamageCDF : public FEMaterial
 {
 public:
-	FEDamageCDF(FEModel* pfem) : FEMaterial(pfem) {}
+    FEDamageCDF(FEModel* pfem) : FEMaterial(pfem) { m_Dmax = 1; }
     
 	//! damage
-	virtual double Damage(FEMaterialPoint& pt) = 0;
+	double Damage(FEMaterialPoint& pt);
+    
+    //! cumulative distribution function
+    virtual double cdf(const double X) = 0;
+    
+    //! probability density function
+    virtual double pdf(const double X) = 0;
+
+public:
+    double  m_Dmax;              //!< maximum allowable damage
+    
+    // declare parameter list
+    DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -33,15 +64,18 @@ public:
 	FEDamageCDFSimo(FEModel* pfem);
 	~FEDamageCDFSimo() {}
     
-	//! damage
-	double Damage(FEMaterialPoint& pt) override;
+    //! cumulative distribution function
+    double cdf(const double X) override;
     
+    //! probability density function
+    double pdf(const double X) override;
+
 public:
 	double	m_alpha;			//!< parameter alpha
 	double	m_beta;             //!< parameter beta
     
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -53,16 +87,18 @@ public:
 	FEDamageCDFLogNormal(FEModel* pfem);
 	~FEDamageCDFLogNormal() {}
     
-	//! damage
-	double Damage(FEMaterialPoint& pt) override;
+    //! cumulative distribution function
+    double cdf(const double X) override;
     
+    //! probability density function
+    double pdf(const double X) override;
+
 public:
 	double	m_mu;               //!< mean on log scale
 	double	m_sigma;            //!< standard deviation on log scale
-    double  m_Dmax;              //!< maximum allowable damage
     
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -74,16 +110,18 @@ public:
 	FEDamageCDFWeibull(FEModel* pfem);
 	~FEDamageCDFWeibull() {}
     
-	//! damage
-	double Damage(FEMaterialPoint& pt) override;
+    //! cumulative distribution function
+    double cdf(const double X) override;
     
+    //! probability density function
+    double pdf(const double X) override;
+
 public:
 	double	m_alpha;            //!< exponent alpha
 	double	m_mu;               //!< mean mu
-    double  m_Dmax;              //!< maximum allowable damage
     
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -95,15 +133,17 @@ public:
 	FEDamageCDFStep(FEModel* pfem);
 	~FEDamageCDFStep() {}
     
-	//! damage
-	double Damage(FEMaterialPoint& pt) override;
+    //! cumulative distribution function
+    double cdf(const double X) override;
     
+    //! probability density function
+    double pdf(const double X) override;
+
 public:
 	double	m_mu;               //!< threshold mu
-    double  m_Dmax;              //!< maximum allowable damage
     
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -115,18 +155,63 @@ public:
 	FEDamageCDFPQP(FEModel* pfem);
 	~FEDamageCDFPQP() {}
     
-	//! damage
-	double Damage(FEMaterialPoint& pt) override;
+    //! cumulative distribution function
+    double cdf(const double X) override;
     
+    //! probability density function
+    double pdf(const double X) override;
+
 	bool Validate() override;
     
 public:
 	double	m_mumin;            //!< mu threshold
 	double	m_mumax;            //!< mu cap
-    double  m_Dmax;              //!< maximum allowable damage
     
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
-#endif /* defined(__FEBioMech__FEDamageCDF__) */
+//-----------------------------------------------------------------------------
+// Gamma damage cumulative distribution function
+
+class FEDamageCDFGamma : public FEDamageCDF
+{
+public:
+    FEDamageCDFGamma(FEModel* pfem);
+    ~FEDamageCDFGamma() {}
+    
+    //! cumulative distribution function
+    double cdf(const double X) override;
+    
+    //! probability density function
+    double pdf(const double X) override;
+    
+public:
+    double    m_alpha;            //!< exponent alpha
+    double    m_mu;               //!< pdf expected mean mu
+    
+    // declare parameter list
+    DECLARE_FECORE_CLASS();
+};
+
+//-----------------------------------------------------------------------------
+// User-specified load curve for damage cumulative distribution function
+
+class FEDamageCDFUser : public FEDamageCDF
+{
+public:
+    FEDamageCDFUser(FEModel* pfem);
+    ~FEDamageCDFUser() {}
+    
+    //! cumulative distribution function
+    double cdf(const double X) override;
+    
+    //! probability density function
+    double pdf(const double X) override;
+    
+public:
+    FEFunction1D*    m_cdf;           //!< user-defined CDF
+    
+    // declare parameter list
+    DECLARE_FECORE_CLASS();
+};

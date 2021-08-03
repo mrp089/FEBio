@@ -7,7 +7,7 @@ fi
 
 mkdir $1
 cd $1
-mkdir FEBio2
+mkdir FEBio3
 mkdir FEBioLib
 mkdir FEBioMech
 mkdir FEBioMix

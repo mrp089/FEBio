@@ -1,17 +1,44 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FE2DFiberNeoHookean.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FE2DFiberNeoHookean, FEElasticMaterial)
-	ADD_PARAMETER2(m_E, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "E");
-	ADD_PARAMETER2(m_v, FE_PARAM_DOUBLE, FE_RANGE_RIGHT_OPEN(-1.0, 0.5), "v");
-	ADD_PARAMETERV(m_a, FE_PARAM_DOUBLE, 2, "a");
-	ADD_PARAMETER(m_ac, FE_PARAM_DOUBLE, "active_contraction");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FE2DFiberNeoHookean, FEElasticMaterial)
+	ADD_PARAMETER(m_E, "E");
+	ADD_PARAMETER(m_v, "v");
+	ADD_PARAMETER(m_a, 2, "a");
+	ADD_PARAMETER(m_ac, "active_contraction");
+END_FECORE_CLASS();
 
 double FE2DFiberNeoHookean::m_cth[FE2DFiberNeoHookean::NSTEPS];
 double FE2DFiberNeoHookean::m_sth[FE2DFiberNeoHookean::NSTEPS];
-
 
 //////////////////////////////////////////////////////////////////////
 // FE2DFiberNeoHookean
@@ -24,7 +51,6 @@ FE2DFiberNeoHookean::FE2DFiberNeoHookean(FEModel* pfem) : FEElasticMaterial(pfem
 	if (bfirst)
 	{
 		double ph;
-		const double PI = 4.0*atan(1.0);
 		for (int n=0; n<NSTEPS; ++n)
 		{
 			ph = 2.0*PI*n / (double) NSTEPS;
@@ -47,6 +73,9 @@ mat3ds FE2DFiberNeoHookean::Stress(FEMaterialPoint& mp)
 	double detFi = 1.0/detF;
 	double lndetF = log(detF);
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// calculate left Cauchy-Green tensor
 	// (we commented out the matrix components we do not need)
 	double b[3][3];
@@ -63,9 +92,13 @@ mat3ds FE2DFiberNeoHookean::Stress(FEMaterialPoint& mp)
 //	b[2][1] = F[2][0]*F[1][0]+F[2][1]*F[1][1]+F[2][2]*F[1][2];
 	b[2][2] = F[2][0]*F[2][0]+F[2][1]*F[2][1]+F[2][2]*F[2][2];
 
+	// material parameters
+	double E = m_E(mp);
+	double v = m_v(mp);
+
 	// lame parameters
-	double lam = m_v*m_E/((1+m_v)*(1-2*m_v));
-	double mu  = 0.5*m_E/(1+m_v);
+	double lam = v*E/((1+v)*(1-2*v));
+	double mu  = 0.5*E/(1+v);
 
 	// calculate stress
 	mat3ds s;
@@ -83,7 +116,6 @@ mat3ds FE2DFiberNeoHookean::Stress(FEMaterialPoint& mp)
 	// There is no passive fiber stress.
 	if (m_ac > 0)
 	{
-		const double PI = 4.0*atan(1.0);
 		double wa = 1.0 / (double) NSTEPS;
 		vec3d a0, a, v;
 		double at;
@@ -95,7 +127,7 @@ mat3ds FE2DFiberNeoHookean::Stress(FEMaterialPoint& mp)
 			v.z = 0;
 
 			// calculate the global material fiber vector
-			a0 = pt.m_Q*v;
+			a0 = Q*v;
 
 			// calculate the global spatial fiber vector
 			a.x = F[0][0]*a0.x + F[0][1]*a0.y + F[0][2]*a0.z;
@@ -128,9 +160,13 @@ tens4ds FE2DFiberNeoHookean::Tangent(FEMaterialPoint& mp)
 	mat3d &F = pt.m_F;
 	double detF = pt.m_J;
 
+	// material parameters
+	double E = m_E(mp);
+	double v = m_v(mp);
+
 	// lame parameters
-	double lam = m_v*m_E/((1+m_v)*(1-2*m_v));
-	double mu  = 0.5*m_E/(1+m_v);
+	double lam = v*E/((1+v)*(1-2*v));
+	double mu  = 0.5*E/(1+v);
 
 	double lam1 = lam / detF;
 	double mu1  = (mu - lam*log(detF)) / detF;

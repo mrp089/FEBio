@@ -1,17 +1,50 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEEFDNeoHookean.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEEFDNeoHookean, FEElasticMaterial)
-	ADD_PARAMETER(m_NH.m_E, FE_PARAM_DOUBLE, "E");
-	ADD_PARAMETER(m_NH.m_v, FE_PARAM_DOUBLE, "v");
-	ADD_PARAMETERV(m_EFD.m_beta, FE_PARAM_DOUBLE, 3, "beta");
-	ADD_PARAMETERV(m_EFD.m_ksi , FE_PARAM_DOUBLE, 3, "ksi" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEEFDNeoHookean, FEElasticMaterial)
+	ADD_PARAMETER(m_NH.m_E, "E");
+	ADD_PARAMETER(m_NH.m_v, "v");
+	ADD_PARAMETER(m_EFD.m_beta, 3, "beta");
+	ADD_PARAMETER(m_EFD.m_ksi , 3, "ksi" );
+END_FECORE_CLASS();
 
 //////////////////////////////////////////////////////////////////////
 // FEEFDNeoHookean
 //////////////////////////////////////////////////////////////////////
+
+FEEFDNeoHookean::FEEFDNeoHookean(FEModel* pfem) : FEElasticMaterial(pfem), m_EFD(pfem), m_NH(pfem) 
+{
+	int a = 0;
+}
 
 bool FEEFDNeoHookean::Init()
 {
@@ -73,12 +106,12 @@ double FEEFDNeoHookean::StrainEnergyDensity(FEMaterialPoint& mp)
 //////////////////////////////////////////////////////////////////////
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEEFDNeoHookeanOld, FEElasticMaterial)
-	ADD_PARAMETER(m_NH.m_E, FE_PARAM_DOUBLE, "E");
-	ADD_PARAMETER(m_NH.m_v, FE_PARAM_DOUBLE, "v");
-	ADD_PARAMETERV(m_EFD.m_beta, FE_PARAM_DOUBLE, 3, "beta");
-	ADD_PARAMETERV(m_EFD.m_ksi , FE_PARAM_DOUBLE, 3, "ksi" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEEFDNeoHookeanOld, FEElasticMaterial)
+	ADD_PARAMETER(m_NH.m_E, "E");
+	ADD_PARAMETER(m_NH.m_v, "v");
+	ADD_PARAMETER(m_EFD.m_beta, 3, "beta");
+	ADD_PARAMETER(m_EFD.m_ksi , 3, "ksi" );
+END_FECORE_CLASS();
 
 bool FEEFDNeoHookeanOld::Init()
 {

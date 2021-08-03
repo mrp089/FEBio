@@ -1,305 +1,52 @@
-// FEMesh.h: interface for the FEMesh class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FEMESH_H__81ABA97F_AD5F_4F1D_8EE9_95B67EBA448E__INCLUDED_)
-#define AFX_FEMESH_H__81ABA97F_AD5F_4F1D_8EE9_95B67EBA448E__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
-#include "FEDomain.h"
+#include "FENode.h"
 #include "FENodeElemList.h"
-#include "DumpStream.h"
-#include "FEEdge.h"
+#include "FENodeSet.h"
+#include "FEFacetSet.h"
+#include "FEDiscreteSet.h"
+#include "FESegmentSet.h"
+#include "FEElementSet.h"
+#include "FESurfacePair.h"
 #include "FEBoundingBox.h"
+#include "FESolidElement.h"
+#include "FEShellElement.h"
 
 //-----------------------------------------------------------------------------
+class FEEdge;
 class FESurface;
-
-//-----------------------------------------------------------------------------
-//! This class defines a finite element node
-
-//! It stores nodal positions and nodal equations numbers and more.
-//!
-//! The m_ID array will store the equation number for the corresponding
-//! degree of freedom. Its values can be (a) non-negative (0 or higher) which
-//! gives the equation number in the linear system of equations, (b) -1 if the
-//! dof is fixed, and (c) < -1 if the dof corresponds to a prescribed dof. In
-//! that case the corresponding equation number is given by -ID-2.
-
-class FECORE_API FENode
-{
-public:
-	// Node status flags
-	enum Status {
-		EXCLUDE     = 1,	// exclude node from analysis
-		SHELL       = 2,	// this node belongs to a shell
-		RIGID_CLAMP = 4,	// this node should be clamped to a rigid body (only applies to shell nodes)
-	};
-
-public:
-	//! default constructor
-	FENode();
-
-	//! copy constructor
-	FENode(const FENode& n);
-
-	//! assignment operator
-	FENode& operator = (const FENode& n);
-
-	//! Set the number of DOFS
-	void SetDOFS(int n);
-
-	//! Get the nodal ID
-	int GetID() const { return m_nID; }
-
-	//! Set the node ID
-	void SetID(int n) { m_nID = n; }
-
-	//! see if status flags are set
-	bool HasFlags(unsigned int flags) const { return ((m_nstate & flags) != 0); }
-
-	//! set the status flags
-	void SetFlags(unsigned int flags) { m_nstate = flags; }
-
-	//! get the status falgs
-	unsigned int Flags() const { return m_nstate; }
-
-protected:
-	int		m_nID;	//!< nodal ID
-	
-public: // geometry data
-	vec3d	m_r0;	//!< initial position
-	vec3d	m_rt;	//!< current position
-
-	vec3d	m_at;	//!< nodal acceleration
-
-	vec3d	m_rp;	//!< position of node at previous time step
-	vec3d	m_vp;	//!< previous velocity
-	vec3d	m_ap;	//!< previous acceleration
-
-	vec3d	m_Fr;	//!< nodal reaction forces
-    
-    vec3d   m_d0;   //!< initial director
-
-public:	// rigid body data
-	unsigned int	m_nstate;	//!< node state flags
-	int				m_rid;		//!< rigid body number
-
-public:
-	double get(int n) const { return m_val[n]; }
-	void set(int n, double v) { m_val[n] = v; }
-	void inc(int n, double v) { m_val[n] += v; }
-	void dec(int n, double v) { m_val[n] -= v; }
-	vec3d get_vec3d(int i, int j, int k) const { return vec3d(m_val[i], m_val[j], m_val[k]); }
-    void set_vec3d(int i, int j, int k, const vec3d& v) { m_val[i] = v.x; m_val[j] = v.y; m_val[k] = v.z; }
-
-public:
-	vector<int>		m_BC;	//!< boundary condition array
-	vector<int>		m_ID;	//!< nodal equation numbers
-	vector<double>	m_val;	//!< nodal DOF values
-};
-
-//-----------------------------------------------------------------------------
-// Forward declaration of FEMesh class.
-class FEMesh;
-
-//-----------------------------------------------------------------------------
-//! Defines a node set
-//
-class FECORE_API FENodeSet
-{
-public:
-	FENodeSet();
-	FENodeSet(FEMesh* pm);
-	FENodeSet(const FENodeSet& ns);
-
-	void operator = (const FENodeSet& ns);
-
-	void create(int n);
-
-	void add(int n);
-
-	void add(const vector<int>& ns);
-
-	void add(const FENodeSet& ns);
-
-	int size() const { return (int) m_Node.size(); }
-
-	int& operator [] (int i) { return m_Node[i]; }
-
-	const int& operator [] (int i) const { return m_Node[i]; }
-
-	void SetID(int n) { m_nID = n; }
-	int GetID() const { return m_nID; }
-
-	void SetName(const char* sz);
-	const char* GetName() const { return m_szname; }
-
-	vector<int>& GetNodeList() { return m_Node; }
-
-	FENode* Node(int i);
-	const FENode* Node(int i) const;
-
-	void Serialize(DumpStream& ar);
-
-protected:
-	int			m_nID;
-	char		m_szname[256];
-	vector<int>	m_Node;		//!< list of nodes
-
-protected:
-	FEMesh*	m_pmesh;
-};
-
-//-----------------------------------------------------------------------------
-//! Defines a discrete element set (i.e. node-pairs)
-class FECORE_API FEDiscreteSet
-{
-public:
-	struct NodePair
-	{
-		int	n0, n1;
-	};
-
-public:
-	FEDiscreteSet(FEMesh* pm);
-	void create(int n);
-	int size() const { return (int)m_pair.size(); }
-
-	void add(int n0, int n1);
-
-	void SetName(const char* sz);
-	const char* GetName() const { return m_szname; }
-
-	const NodePair& Element(int i) const { return m_pair[i]; }	
-
-	void Serialize(DumpStream& ar);
-
-private:
-	FEMesh*				m_pmesh;
-	vector<NodePair>	m_pair;		//!< list of discrete elements
-	char	m_szname[256];
-};
-
-//-----------------------------------------------------------------------------
-//! This class defines a set of facets. This can be used in the creation of
-//! surfaces.
-class FECORE_API FEFacetSet
-{
-public:
-	struct FACET
-	{
-		int	node[FEElement::MAX_NODES];
-		int	ntype;	//	3=tri3, 4=quad4, 6=tri6, 7=tri7, 8=quad8
-	};
-
-public:
-	FEFacetSet(FEMesh* mesh);
-	const char* GetName() { return m_szname; }
-	void SetName(const char* sz);
-
-	void Create(int n);
-
-	int Faces() const { return (int) m_Face.size(); }
-	FACET& Face(int i);
-	const FACET& Face(int i) const;
-
-	void Add(FEFacetSet* pf);
-
-	FENodeSet GetNodeSet();
-
-	void Serialize(DumpStream& ar);
-
-	const FEMesh* GetMesh() const { return m_mesh; }
-
-private:
-	char			m_szname[256];
-	vector<FACET>	m_Face;
-
-private:
-	FEMesh*			m_mesh;
-};
-
-//-----------------------------------------------------------------------------
-//! This class defines a set of segments. This can be used in the creation of edges.
-class FECORE_API FESegmentSet
-{
-public:
-	struct SEGMENT
-	{
-		int	node[FEElement::MAX_NODES];
-		int	ntype;	//	2=line2
-	};
-
-public:
-	FESegmentSet(FEMesh* pm);
-	const char* GetName() { return m_szname; }
-	void SetName(const char* sz);
-
-	void Create(int n);
-
-	int Segments() { return (int) m_Seg.size(); }
-	SEGMENT& Segment(int i);
-
-	void Serialize(DumpStream& ar);
-
-private:
-	vector<SEGMENT>	m_Seg;
-	char			m_szname[256];
-	FEMesh*			m_mesh;
-};
-
-//-----------------------------------------------------------------------------
-// This class defines a set of elements
-class FECORE_API FEElementSet
-{
-public:
-	//! constructor
-	FEElementSet(FEMesh* pm);
-
-	void create(int n);
-
-	int size() { return (int)m_Elem.size(); }
-
-	int& operator [] (int i) { return m_Elem[i]; }
-
-	void SetName(const char* sz);
-	const char* GetName() { return m_szname; }
-
-	void Serialize(DumpStream& ar);
-
-protected:
-	char		m_szname[256];	//!< name of element set
-	FEMesh*		m_pmesh;		//!< pointer to parent mesh
-	vector<int>	m_Elem;			//!< list of elements
-};
-
-//-----------------------------------------------------------------------------
-class FECORE_API FESurfacePair
-{
-public:
-	FESurfacePair(FEMesh* pm);
-
-	void SetName(const char* szname);
-	const char* GetName() const;
-
-	FEFacetSet* GetMasterSurface();
-	void SetMasterSurface(FEFacetSet* pf);
-
-	FEFacetSet* GetSlaveSurface();
-	void SetSlaveSurface(FEFacetSet* pf);
-
-	void Serialize(DumpStream& ar);
-
-private:
-	char	m_szname[256];
-	FEFacetSet*	m_master;
-	FEFacetSet*	m_slave;
-	FEMesh*		m_mesh;
-};
+class FEDomain;
+class FEModel;
+class FETimeInfo;
+class FEDataMap;
+class DumpStream;
 
 //---------------------------------------------------------------------------------------
 // Helper class for faster lookup of elements based on their ID 
@@ -325,16 +72,10 @@ class FECORE_API FEMesh
 {
 public:
 	//! constructor
-	FEMesh();
+	FEMesh(FEModel* fem);
 
 	//! destructor
 	virtual ~FEMesh();
-
-	//! stream mesh data
-	void Serialize(DumpStream& dmp);
-
-	//! initialize mesh
-	bool Init();
 
     //! initialize material points in mesh
     void InitMaterialPoints();
@@ -347,7 +88,7 @@ public:
 	void AddNodes(int nodes);
 
 	//! return number of nodes
-	int Nodes() const { return (int)m_Node.size(); }
+	int Nodes() const;
 
 	//! return total nr of elements
 	int Elements() const;
@@ -356,8 +97,8 @@ public:
 	int Elements(int ndom_type) const;
 
 	//! return reference to a node
-	FENode& Node(int i) { return m_Node[i]; }
-	const FENode& Node(int i) const { return m_Node[i]; }
+	FENode& Node(int i);
+	const FENode& Node(int i) const;
 
 	//! Set the number of degrees of freedom on this mesh
 	void SetDOFS(int n);
@@ -377,14 +118,11 @@ public:
 	//! Calculates an elements volume
 	double ElementVolume(FEElement& el);
 
-	//! Get the face nodes from a given element
-	int GetFace(FEElement& el, int n, int* nf);
-
-	//! return the nr of faces an element has
-	int Faces(FEElement& el);
-
 	//! Finds a node from a given ID
 	FENode* FindNodeFromID(int nid);
+
+	//! return an element (expensive way!)
+	FEElement* Element(int i);
 
 	//! Finds an element from a given ID
 	FEElement* FindElementFromID(int nid);
@@ -397,6 +135,9 @@ public:
 		if (m_NEL.Size() != m_Node.size()) m_NEL.Create(*this);
 		return m_NEL;
 	}
+
+	//! See if all elements are of a particular shape
+	bool IsType(FE_Element_Shape eshape);
 
 	// --- NODESETS ---
 	//! adds a node set to the mesh
@@ -412,7 +153,7 @@ public:
 	FENodeSet* FindNodeSet(int nid);
 
 	//! Find a nodeset by name
-	FENodeSet* FindNodeSet(const char* szname);
+	FENodeSet* FindNodeSet(const std::string& name);
 
 	// --- ELEMENT SETS ---
 	int ElementSets() { return (int) m_ElemSet.size(); }
@@ -420,18 +161,22 @@ public:
 	void AddElementSet(FEElementSet* pg) { m_ElemSet.push_back(pg); }
 
 	//! Find a element set by name
-	FEElementSet* FindElementSet(const char* szname);
+	FEElementSet* FindElementSet(const std::string& name);
 
 	// --- DOMAINS ---
-	int Domains() { return (int) m_Domain.size(); }
-	FEDomain& Domain(int n) { return *m_Domain[n]; }
+	int Domains();
+	FEDomain& Domain(int n);
 
 	void AddDomain(FEDomain* pd);
 
 	FEDomain* FindDomain(const std::string& name);
+	FEDomain* FindDomain(int domId);
 
-	//! get a list of domains that belong to a specific material
-	void DomainListFromMaterial(vector<int>& lmat, vector<int>& ldom);
+	//! clear all domains
+	void ClearDomains();
+
+	//! Rebuild the LUT
+	void RebuildLUT();
 
 	// --- SURFACES ---
 	int Surfaces() { return (int) m_Surf.size(); }
@@ -444,29 +189,39 @@ public:
 	FEEdge& Edge(int n) { return *m_Edge[n]; }
 	void AddEdge(FEEdge* ps) { m_Edge.push_back(ps); }
 
-	// --- FACETSETS ---
-	int FacetSets() { return (int) m_FaceSet.size(); }
-	FEFacetSet& FacetSet(int n) { return *m_FaceSet[n]; }
-	void AddFacetSet(FEFacetSet* ps) { m_FaceSet.push_back(ps); }
-	FEFacetSet* FindFacetSet(const char* szname);
-
 	// --- Segment Sets ---
 	int SegmentSets() { return (int) m_LineSet.size(); }
 	FESegmentSet& SegmentSet(int n) { return *m_LineSet[n]; }
 	void AddSegmentSet(FESegmentSet* ps) { m_LineSet.push_back(ps); }
-	FESegmentSet* FindSegmentSet(const char* szname);
+	FESegmentSet* FindSegmentSet(const std::string& name);
 
 	// --- Discrete Element Sets ---
 	int DiscreteSets() { return (int) m_DiscSet.size(); }
 	FEDiscreteSet& DiscreteSet(int n) { return *m_DiscSet[n]; }
 	void AddDiscreteSet(FEDiscreteSet* ps) { m_DiscSet.push_back(ps); }
-	FEDiscreteSet* FindDiscreteSet(const char* szname);
+	FEDiscreteSet* FindDiscreteSet(const std::string& name);
+
+	// --- FACETSETS ---
+	int FacetSets() { return (int)m_FaceSet.size(); }
+	FEFacetSet& FacetSet(int n) { return *m_FaceSet[n]; }
+	void AddFacetSet(FEFacetSet* ps) { m_FaceSet.push_back(ps); }
+	FEFacetSet* FindFacetSet(const std::string& name);
 
 	// --- surface pairs ---
 	int SurfacePairs() { return (int)m_SurfPair.size(); }
 	FESurfacePair& SurfacePair(int n) { return *m_SurfPair[n]; }
 	void AddSurfacePair(FESurfacePair* ps) { m_SurfPair.push_back(ps); }
-	FESurfacePair* FindSurfacePair(const char* szname);
+	FESurfacePair* FindSurfacePair(const std::string& name);
+
+public:
+	//! stream mesh data
+	void Serialize(DumpStream& dmp);
+
+	static void SaveClass(DumpStream& ar, FEMesh* p);
+	static FEMesh* LoadClass(DumpStream& ar, FEMesh* p);
+
+	// create a copy of this mesh
+	void CopyFrom(FEMesh& mesh);
 
 public:
 	//! Calculate the surface representing the element boundaries
@@ -486,14 +241,25 @@ public:
 	//! get the nodal coordinates in current configuration
 	void GetNodalCoordinates(const FEElement& el, vec3d* node);
 
+	// Get the FE model
+	FEModel* GetFEModel() const { return m_fem; }
+
+	// update the domains of the mesh
+	void Update(const FETimeInfo& tp);
+
+public: // data maps
+	void ClearDataMaps();
+	void AddDataMap(FEDataMap* map);
+	FEDataMap* FindDataMap(const std::string& map);
+
+	int DataMaps() const;
+	FEDataMap* GetDataMap(int i);
+
 protected:
 	double SolidElementVolume(FESolidElement& el);
 	double ShellElementVolume(FEShellElement& el);
 
-	//! Initialize shells
-	void InitShells();
-
-protected:
+private:
 	vector<FENode>		m_Node;		//!< nodes
 	vector<FEDomain*>	m_Domain;	//!< list of domains
 	vector<FESurface*>	m_Surf;		//!< surfaces
@@ -501,16 +267,19 @@ protected:
 
 	vector<FENodeSet*>		m_NodeSet;	//!< node sets
 	vector<FESegmentSet*>	m_LineSet;	//!< segment sets
-	vector<FEFacetSet*>		m_FaceSet;	//!< facet sets
 	vector<FEElementSet*>	m_ElemSet;	//!< element sets
 	vector<FEDiscreteSet*>	m_DiscSet;	//!< discrete element sets
+	vector<FEFacetSet*>		m_FaceSet;	//!< facet sets
 	vector<FESurfacePair*>	m_SurfPair;	//!< facet set pairs
+
+	vector<FEDataMap*>		m_DataMap;	//!< all data maps
 
 	FEBoundingBox		m_box;	//!< bounding box
 
 	FENodeElemList	m_NEL;
 	FEElementLUT*	m_LUT;
 
+	FEModel*	m_fem;
 private:
 	//! hide the copy constructor
 	FEMesh(FEMesh& m){}
@@ -519,4 +288,23 @@ private:
 	void operator =(FEMesh& m) {}
 };
 
-#endif // !defined(AFX_FEMESH_H__81ABA97F_AD5F_4F1D_8EE9_95B67EBA448E__INCLUDED_)
+class FECORE_API FEElementIterator
+{
+public:
+	FEElementIterator(FEMesh* mesh, FEElementSet* elemSet = nullptr);
+
+	FEElement& operator *() { return *m_el; }
+
+	bool isValid() { return (m_el != nullptr); }
+
+	void operator++();
+
+	void reset();
+
+private:
+	FEElement*	m_el;
+	FEMesh*	m_mesh;
+	FEElementSet*	m_eset;
+	int	m_index;
+	int	m_dom;
+};

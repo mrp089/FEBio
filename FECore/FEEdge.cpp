@@ -1,9 +1,37 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEEdge.h"
 #include "FEMesh.h"
 
 //-----------------------------------------------------------------------------
-FEEdge::FEEdge(FEMesh* pm) : FEDomain(FE_DOMAIN_EDGE, pm)
+FEEdge::FEEdge(FEModel* fem) : FEMeshPartition(FE_DOMAIN_EDGE, fem)
 {
 }
 
@@ -13,10 +41,10 @@ FEEdge::~FEEdge()
 }
 
 //-----------------------------------------------------------------------------
-FENodeSet FEEdge::GetNodeSet()
+FENodeList FEEdge::GetNodeList()
 {
 	FEMesh* pm = GetMesh();
-	FENodeSet set(pm);
+	FENodeList set(pm);
 
 	vector<int> tag(pm->Nodes(), 0);
 	for (int i = 0; i<Elements(); ++i)
@@ -27,7 +55,7 @@ FENodeSet FEEdge::GetNodeSet()
 		{
 			if (tag[el.m_node[j]] == 0)
 			{
-				set.add(el.m_node[j]);
+				set.Add(el.m_node[j]);
 				tag[el.m_node[j]] = 1;
 			}
 		}
@@ -53,7 +81,7 @@ bool FEEdge::Init()
 	for (int i=0; i<ne; ++i)
 	{
 		FELineElement& el = Element(i);
-		el.m_lid = i;
+		el.SetLocalID(i);
 
 		for (int j=0; j<el.Nodes(); ++j)
 		{
@@ -87,7 +115,12 @@ bool FEEdge::Init()
 void FEEdge::Create(int nelems, int elemType)
 { 
 	m_Elem.resize(nelems); 
-	for (int i = 0; i<nelems; ++i) m_Elem[i].SetDomain(this);
+	for (int i = 0; i < nelems; ++i)
+	{
+		FELineElement& el = m_Elem[i];
+		el.SetLocalID(i);
+		el.SetMeshPartition(this);
+	}
 
 	if (elemType != -1)
 		for (int i=0; i<nelems; ++i) m_Elem[i].SetType(elemType);

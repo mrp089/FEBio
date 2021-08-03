@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FECore/FENodeElemList.h"
 #include "FECore/tens4d.h"
@@ -10,7 +38,7 @@
 //! This class implements the uniform nodal strain tetrahedron with
 //! isochoric stabilization as described by Gee, Dohrmann, Key and Wall (2009)
 //!
-class FEUT4Domain : public FEElasticSolidDomain
+class FEBIOMECH_API FEUT4Domain : public FEElasticSolidDomain
 {
 public:
 	struct UT4NODE
@@ -20,6 +48,8 @@ public:
 		double	vi;		// current nodal volume
 		mat3d	Fi;		// average deformation gradient
 		mat3ds	si;		// nodal stress
+
+		void Serialize(DumpStream& ar);
 	};
 
 public:
@@ -45,6 +75,12 @@ public:
 	//! build the matrix profile
 	void BuildMatrixProfile(FEGlobalMatrix& M) override;
 
+	//! Set UT4 parameters
+	void SetUT4Parameters(double alpha, bool bdev);
+
+	//! override Create so we can grab the ut4 parameters
+	bool Create(int nelems, FE_Element_Spec espec) override;
+
 public: // overrides from FEElasticDomain
 
 	//! Update domain data
@@ -54,7 +90,7 @@ public: // overrides from FEElasticDomain
 	void InternalForces(FEGlobalVector& R) override;
 
 	//! calculates the global stiffness matrix for this domain
-	void StiffnessMatrix(FESolver* psolver) override;
+	void StiffnessMatrix(FELinearSystem& LS) override;
 
 protected:
 	//! calculates the nodal internal forces
@@ -68,13 +104,13 @@ protected:
 
 protected:
 	//! Calculates the element stiffness matrix
-	void ElementalStiffnessMatrix(FESolver* psolver);
+	void ElementalStiffnessMatrix(FELinearSystem& LS);
 
 	//! calculates the solid element stiffness matrix
 	void ElementStiffness(const FETimeInfo& tp, int iel, matrix& ke) override;
 
 	//! Calculates the nodal stiffness matrix
-	void NodalStiffnessMatrix(FESolver* psolver);
+	void NodalStiffnessMatrix(FELinearSystem& LS);
 
 	//! geometrical stiffness (i.e. initial stress)
 	void ElementGeometricalStiffness(FESolidElement& el, matrix& ke) override;
@@ -107,4 +143,6 @@ private:
 	double	(*m_Ge)[4][3];
 
 	FENodeElemList	m_NEL;
+
+	DECLARE_FECORE_CLASS();
 };

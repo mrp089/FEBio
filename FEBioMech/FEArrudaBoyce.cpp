@@ -1,17 +1,40 @@
-// FEArrudaBoyce.cpp: implementation of the FEMArrudaBoyce class.
-//
-// After Kalliske & Rothert, Eng Computations 14(2)(1997):216-232
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEArrudaBoyce.h"
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEArrudaBoyce, FEUncoupledMaterial)
-	ADD_PARAMETER2(m_mu, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "mu");
-	ADD_PARAMETER2(m_N , FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "N" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEArrudaBoyce, FEUncoupledMaterial)
+	ADD_PARAMETER(m_mu, FE_RANGE_GREATER(0.0), "mu");
+	ADD_PARAMETER(m_N , FE_RANGE_GREATER(0.0), "N" );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 mat3ds FEArrudaBoyce::DevStress(FEMaterialPoint& mp)
@@ -30,8 +53,9 @@ mat3ds FEArrudaBoyce::DevStress(FEMaterialPoint& mp)
 	double I1 = B.tr();
 
 	// strain energy derivative
+	double mu = m_mu(mp);
 	double f = I1/m_N;
-	double W1 = m_mu*(a[0] + (2.0*a[1] + (3*a[2] + (4*a[3] + 5*a[4]*f)*f)*f)*f);
+	double W1 = mu*(a[0] + (2.0*a[1] + (3*a[2] + (4*a[3] + 5*a[4]*f)*f)*f)*f);
 
 	// T = FdW/dCFt
 	mat3ds T = B*W1;
@@ -60,9 +84,11 @@ tens4ds FEArrudaBoyce::DevTangent(FEMaterialPoint& mp)
 	// --- TODO: put strain energy derivatives here ---
 	// W1 = dW/dI1
 	// W11 = d2W/dI1^2
+	double mu = m_mu(mp);
+
 	const double f = I1/m_N;
-	double W1  = m_mu*(a[0] + (2*a[1] + (3*a[2] + (4*a[3] + 5*a[4]*f)*f)*f)*f);
-	double W11 = 2.0*m_mu*(a[1] + (3*a[2] + (6*a[3] + 10*a[4]*f)*f)*f)/m_N;
+	double W1  = mu*(a[0] + (2*a[1] + (3*a[2] + (4*a[3] + 5*a[4]*f)*f)*f)*f);
+	double W11 = 2.0*mu*(a[1] + (3*a[2] + (6*a[3] + 10*a[4]*f)*f)*f)/m_N;
 	// ---
 
 	// calculate dWdC:C
@@ -105,6 +131,8 @@ double FEArrudaBoyce::DevStrainEnergyDensity(FEMaterialPoint& mp)
 	double I1 = B.tr();
     double I1i = I1, ti = 3, Ni = 1;
     
+	double mu = m_mu(mp);
+
     double sed = a[0]*(I1-3);
     for (int i=1; i<5; ++i) {
         Ni *= m_N;
@@ -112,7 +140,7 @@ double FEArrudaBoyce::DevStrainEnergyDensity(FEMaterialPoint& mp)
         I1i *= I1;
         sed += a[i]*(I1i - ti)/Ni;
     }
-    sed *= m_mu;
+    sed *= mu;
     
     return sed;
 }

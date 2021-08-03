@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "SparseMatrix.h"
 
@@ -10,10 +38,25 @@ class FENewtonSolver;
 class FECORE_API JFNKMatrix : public SparseMatrix
 {
 public:
+	enum MultiplyPolicy {
+		ZERO_FREE_DOFS,
+		ZERO_PRESCRIBED_DOFS
+	};
+
+public:
 	JFNKMatrix(FENewtonSolver* pns, SparseMatrix* K = 0);
 
 	//! override multiply with vector (Does not use sparse matrix m_K)
-	void mult_vector(double* x, double* r) override;
+	bool mult_vector(double* x, double* r) override;
+
+	//! set the reference residual
+	void SetReferenceResidual(std::vector<double>& R0);
+
+	//! set matrix policy
+	void SetPolicy(MultiplyPolicy p);
+
+	//! set the forward difference epsilon
+	void SetEpsilon(double eps);
 
 public: // these functions use the actual sparse matrix m_K
 
@@ -24,10 +67,10 @@ public: // these functions use the actual sparse matrix m_K
 	void Create(SparseMatrixProfile& MP) override;
 
 	//! assemble a matrix into the sparse matrix
-	void Assemble(matrix& ke, std::vector<int>& lm) override { m_K->Assemble(ke, lm); }
+	void Assemble(const matrix& ke, const std::vector<int>& lm) override { m_K->Assemble(ke, lm); }
 
 	//! assemble a matrix into the sparse matrix
-	void Assemble(matrix& ke, std::vector<int>& lmi, std::vector<int>& lmj) override { m_K->Assemble(ke, lmi, lmj); }
+	void Assemble(const matrix& ke, const std::vector<int>& lmi, const std::vector<int>& lmj) override { m_K->Assemble(ke, lmi, lmj); }
 
 	//! check if an entry was allocated
 	bool check(int i, int j) override { return m_K->check(i, j); }
@@ -48,13 +91,20 @@ public: // these functions use the actual sparse matrix m_K
 	void Clear() override { m_K->Clear(); }
 
 	// interface to compact matrices
-	double* Values() { return m_K->Values(); }
-	int*    Indices() { return m_K->Indices(); }
-	int*    Pointers() { return m_K->Pointers(); }
-	int     Offset() const { return m_K->Offset(); }
+	double* Values() override { return m_K->Values(); }
+	int*    Indices() override { return m_K->Indices(); }
+	int*    Pointers() override { return m_K->Pointers(); }
+	int     Offset() const override { return m_K->Offset(); }
 
 private:
+	bool			m_bauto_eps;	// calculate epsilon automatically
+	double			m_eps;		// forward difference epsilon
 	SparseMatrix*	m_K;		// the actual sparse matrix (This is only used as a preconditioner and can be null)
 	FENewtonSolver*	m_pns;
 	vector<double>	m_v, m_R;
+
+	vector<double>	m_R0;
+
+	vector<int>		m_freeDofs, m_prescribedDofs;
+	MultiplyPolicy	m_policy;
 };

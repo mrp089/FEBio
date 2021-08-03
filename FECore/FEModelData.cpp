@@ -1,22 +1,47 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEModelData.h"
 #include "FEModel.h"
+#include "FEDomain.h"
 
-BEGIN_PARAMETER_LIST(FEModelData, FECoreBase)
-	ADD_PARAMETER(m_data, FE_PARAM_STD_VECTOR_DOUBLE, "value");
-END_PARAMETER_LIST();
+REGISTER_SUPER_CLASS(FEModelData, FEMODELDATA_ID);
 
-FEModelData::FEModelData(FEModel* fem, FELogElemData* eval, vector<int>& item) : FECoreBase(FEMODELDATA_ID)
+BEGIN_FECORE_CLASS(FEModelData, FECoreBase)
+	ADD_PARAMETER(m_data, "value");
+END_FECORE_CLASS();
+
+FEModelData::FEModelData(FEModel* fem, FELogElemData* eval, vector<int>& item) : FECoreBase(fem)
 {
-	m_fem = fem;
 	m_eval = eval;
 	m_item = item;
 	m_data.resize(item.size(), 0.0);
-}
-
-FEModel* FEModelData::GetFEModel()
-{
-	return m_fem;
 }
 
 void FEModelData::Update()
@@ -33,7 +58,7 @@ void FEModelData::Update()
 		return;
 	}
 
-	FEMesh& m = m_fem->GetMesh();
+	FEMesh& m = GetFEModel()->GetMesh();
 
 	m_data.resize(N);
 	for (int i=0; i<N; ++i)
@@ -49,6 +74,10 @@ void FEModelData::Update()
 
 			// get the element value
 			m_data[i] = m_eval->value(*pe);
+
+#ifdef _DEBUG
+			fprintf(stderr, "%lg\n", m_data[i]);
+#endif
 		}
 	}
 }
@@ -57,7 +86,7 @@ void FEModelData::Update()
 void FEModelData::BuildELT()
 {
 	m_ELT.clear();
-	FEMesh& m = m_fem->GetMesh();
+	FEMesh& m = GetFEModel()->GetMesh();
 
 	// find the min, max ID
 	int minID = -1, maxID = 0;

@@ -1,14 +1,32 @@
-// matrix.h: interface for the matrix class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_MATRIX_H__C0F2C6F6_AE26_4C7F_8C70_5A7BF5DD421E__INCLUDED_)
-#define AFX_MATRIX_H__C0F2C6F6_AE26_4C7F_8C70_5A7BF5DD421E__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include <memory.h>
 #include <vector>
 #include "fecore_api.h"
@@ -21,7 +39,7 @@ class FECORE_API matrix
 {
 public:
 	//! constructor
-	matrix() : m_nr(0), m_nc(0), m_nsize(0), m_pd(0), m_pr(0) {}
+	matrix() : m_nr(0), m_nc(0), m_nsize(0), m_pd(nullptr), m_pr(nullptr) {}
 
 	//! constructor
 	matrix(int nr, int nc);
@@ -29,8 +47,20 @@ public:
 	//! copy constructor
 	matrix(const matrix& m);
 
+	//! constructor
+	matrix(const mat3d& m);
+
+	//! move constructor
+	matrix(matrix&& m);
+
 	//! assignment operator
 	matrix& operator = (const matrix& m);
+
+	//! move assigment operator
+	matrix& operator = (matrix&& m);
+
+	//! assignment operator
+	matrix& operator = (const mat3d& m);
 
 	//! Matrix reallocation
 	void resize(int nr, int nc);
@@ -40,6 +70,7 @@ public:
 
 	//! access operator
 	double * operator [] (int l) { return m_pr[l]; }
+	const double* operator [] (int l) const { return m_pr[l]; }
 	double& operator () (int i, int j) { return m_pr[i][j]; }
 	double operator () (int i, int j) const { return m_pr[i][j]; }
 	operator double** () { return m_pr; }
@@ -59,11 +90,12 @@ public:
 	matrix svd_inverse();
 
 	//! matrix operators
-	matrix operator * (const matrix& m);
+	matrix operator *(double a) const;
+	matrix operator * (const matrix& m) const;
 
-	matrix operator + (const matrix& m);
+	matrix operator + (const matrix& m) const;
 
-	matrix operator - (const matrix& m);
+	matrix operator - (const matrix& m) const;
 
 	matrix& operator += (const matrix& m);
 
@@ -74,6 +106,8 @@ public:
 		for (int i=0; i<m_nsize; ++i) m_pd[i] *= g;
 		return *this;
 	}
+
+	matrix operator * (const vec3d& v) const;
 
 	// calculate the LU decomposition
 	// note that this modifies the matrix
@@ -95,13 +129,22 @@ public:
 	void add(int i, int j, const mat3da& a);
 	void add(int i, int j, const mat3dd& a);
 	void add(int i, int j, const mat3d&  a);
+	void add(int i, int j, const matrix& a);
+
+	void add(int i, int j, const vec3d&  a);
+
+	void add_symm(int i, int j, const mat3d&  a);
+	void add_symm(int i, int j, const vec3d&  a);
+
+	void adds(int i, int j, const matrix& m, double s);
+	void adds(const matrix& m, double s);
 
 	void sub(int i, int j, const mat3ds& a);
 	void sub(int i, int j, const mat3da& a);
 	void sub(int i, int j, const mat3dd& a);
 	void sub(int i, int j, const mat3d&  a);
 
-	void get(int i, int j, mat3d& a);
+	void get(int i, int j, mat3d& a) const;
 
 	// copy-lower-triangular
 	// make the matrix symmetric by copying the lower triangular part
@@ -193,6 +236,28 @@ inline void matrix::add(int i, int j, const mat3d& a)
 	m_pr[i][j] += a(2,0); m_pr[i][j+1] += a(2,1); m_pr[i][j+2] += a(2,2);
 }
 
+inline void matrix::add_symm(int i, int j, const mat3d&  a)
+{
+	m_pr[i  ][j] += a(0, 0); m_pr[i  ][j + 1] += a(0, 1); m_pr[i  ][j + 2] += a(0, 2);
+	m_pr[i+1][j] += a(1, 0); m_pr[i+1][j + 1] += a(1, 1); m_pr[i+1][j + 2] += a(1, 2);
+	m_pr[i+2][j] += a(2, 0); m_pr[i+2][j + 1] += a(2, 1); m_pr[i+2][j + 2] += a(2, 2);
+
+	m_pr[j  ][i] += a(0, 0); m_pr[j  ][i + 1] += a(1, 0); m_pr[j  ][i + 2] += a(2, 0);
+	m_pr[j+1][i] += a(0, 1); m_pr[j+1][i + 1] += a(1, 1); m_pr[j+1][i + 2] += a(2, 1);
+	m_pr[j+2][i] += a(0, 2); m_pr[j+2][i + 1] += a(1, 2); m_pr[j+2][i + 2] += a(2, 2);
+}
+
+inline void matrix::add_symm(int i, int j, const vec3d&  a)
+{
+	m_pr[i  ][j] += a.x;
+	m_pr[i+1][j] += a.y;
+	m_pr[i+2][j] += a.z;
+
+	m_pr[j][i  ] += a.x;
+	m_pr[j][i+1] += a.y;
+	m_pr[j][i+2] += a.z;
+}
+
 inline void matrix::sub(int i, int j, const mat3ds& a)
 {
 	m_pr[i][j] -= a.xx(); m_pr[i][j+1] -= a.xy(); m_pr[i][j+2] -= a.xz(); i++;
@@ -221,11 +286,41 @@ inline void matrix::sub(int i, int j, const mat3d& a)
 	m_pr[i][j] -= a(2,0); m_pr[i][j+1] -= a(2,1); m_pr[i][j+2] -= a(2,2);
 }
 
-inline void matrix::get(int i, int j, mat3d& a)
+inline void matrix::get(int i, int j, mat3d& a) const
 {
 	a[0][0] = m_pr[i  ][j]; a[0][1] = m_pr[i  ][j+1]; a[0][2] = m_pr[i  ][j+2];
 	a[1][0] = m_pr[i+1][j]; a[1][1] = m_pr[i+1][j+1]; a[1][2] = m_pr[i+1][j+2];
 	a[2][0] = m_pr[i+2][j]; a[2][1] = m_pr[i+2][j+1]; a[2][2] = m_pr[i+2][j+2];
 }
 
-#endif // !defined(AFX_MATRIX_H__C0F2C6F6_AE26_4C7F_8C70_5A7BF5DD421E__INCLUDED_)
+//! move constructor
+inline matrix::matrix(matrix&& m)
+{
+	m_nr = m.m_nr;
+	m_nc = m.m_nc;
+	m_pd = m.m_pd;
+	m_pr = m.m_pr;
+
+	m.m_pr = nullptr;
+	m.m_pd = nullptr;
+}
+
+//! move assigment operator
+inline matrix& matrix::operator = (matrix&& m)
+{
+	if (this != &m)
+	{
+		if (m_pd) delete[] m_pd;
+		if (m_pr) delete[] m_pr;
+
+		m_nr = m.m_nr;
+		m_nc = m.m_nc;
+		m_pd = m.m_pd;
+		m_pr = m.m_pr;
+
+		m.m_pr = nullptr;
+		m.m_pd = nullptr;
+	}
+
+	return *this;
+}

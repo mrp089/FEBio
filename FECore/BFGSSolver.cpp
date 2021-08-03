@@ -1,16 +1,47 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "BFGSSolver.h"
 #include "FESolver.h"
 #include "FEException.h"
+#include "FENewtonSolver.h"
 
 //-----------------------------------------------------------------------------
 // BFGSSolver
 //-----------------------------------------------------------------------------
 
-BFGSSolver::BFGSSolver(FENewtonSolver* pns) : FENewtonStrategy(pns)
+BFGSSolver::BFGSSolver(FEModel* fem) : FENewtonStrategy(fem)
 {
 	m_maxups = 10;
 	m_cmax   = 1e5;
+
+	m_neq = 0;
 
 	// pointer to linear solver
 	m_plinsolve = 0;
@@ -18,9 +49,13 @@ BFGSSolver::BFGSSolver(FENewtonSolver* pns) : FENewtonStrategy(pns)
 
 //-----------------------------------------------------------------------------
 // Initialization method
-void BFGSSolver::Init(int neq, LinearSolver* pls)
+bool BFGSSolver::Init()
 {
+	if (m_pns == nullptr) return false;
+
 	if (m_max_buf_size <= 0) m_max_buf_size = m_maxups;
+
+	int neq = m_pns->m_neq;
 
 	// allocate storage for BFGS update vectors
 	m_V.resize(m_max_buf_size, neq);
@@ -33,7 +68,9 @@ void BFGSSolver::Init(int neq, LinearSolver* pls)
 	m_neq = neq;
 	m_nups = 0;
 
-	m_plinsolve = pls;
+	m_plinsolve = m_pns->GetLinearSolver();
+
+	return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -49,7 +86,7 @@ void BFGSSolver::Init(int neq, LinearSolver* pls)
 bool BFGSSolver::Update(double s, vector<double>& ui, vector<double>& R0, vector<double>& R1)
 {
 	// calculate the BFGS update vectors
-	int neq = (int)ui.size();
+	int neq = m_neq;
 	for (int i = 0; i<neq; ++i)
 	{
 		m_D[i] = s*ui[i];
@@ -104,14 +141,10 @@ bool BFGSSolver::Update(double s, vector<double>& ui, vector<double>& R0, vector
 
 void BFGSSolver::SolveEquations(vector<double>& x, vector<double>& b)
 {
-	// get the nr of equations
-	int neq = (int)x.size();
-
 	// make sure we need to do work
-	if (neq==0) return;
+	if (m_neq ==0) return;
 
 	// create temporary storage
-	static vector<double> tmp;
 	tmp = b;
 
 	// number of updates can be larger than buffer size, so clamp it
@@ -133,9 +166,9 @@ void BFGSSolver::SolveEquations(vector<double>& x, vector<double>& b)
 		double* wi = m_W[n];
 
 		double wr = 0;
-		for (int j = 0; j<neq; j++) wr += wi[j] * tmp[j];
+		for (int j = 0; j<m_neq; j++) wr += wi[j] * tmp[j];
 
-		for (int j = 0; j<neq; j++) tmp[j] += vi[j] * wr;
+		for (int j = 0; j<m_neq; j++) tmp[j] += vi[j] * wr;
 	}
 
 	// perform a backsubstitution
@@ -153,8 +186,8 @@ void BFGSSolver::SolveEquations(vector<double>& x, vector<double>& b)
 		double* wi = m_W[n];
 
 		double vr = 0;
-		for (int j = 0; j<neq; ++j) vr += vi[j] * x[j];
+		for (int j = 0; j<m_neq; ++j) vr += vi[j] * x[j];
 
-		for (int j = 0; j<neq; ++j) x[j] += wi[j] * vr;
+		for (int j = 0; j<m_neq; ++j) x[j] += wi[j] * vr;
 	}
 }

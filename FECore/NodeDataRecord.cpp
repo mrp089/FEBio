@@ -1,11 +1,53 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "NodeDataRecord.h"
 #include "FEAnalysis.h"
 #include "FECoreKernel.h"
 #include "FEModel.h"
 
+REGISTER_SUPER_CLASS(FENodeLogData, FENODELOGDATA_ID);
+
 //-----------------------------------------------------------------------------
-void NodeDataRecord::Parse(const char* szexpr)
+FENodeLogData::FENodeLogData(FEModel* fem) : FECoreBase(fem) {}
+
+//-----------------------------------------------------------------------------
+FENodeLogData::~FENodeLogData() {}
+
+//-----------------------------------------------------------------------------
+NodeDataRecord::NodeDataRecord(FEModel* pfem, const char* szfile) : DataRecord(pfem, szfile, FE_DATA_NODE) {}
+
+//-----------------------------------------------------------------------------
+int NodeDataRecord::Size() const { return (int)m_Data.size(); }
+
+//-----------------------------------------------------------------------------
+void NodeDataRecord::SetData(const char* szexpr)
 {
 	char szcopy[MAX_STRING] = {0};
 	strcpy(szcopy, szexpr);
@@ -16,7 +58,7 @@ void NodeDataRecord::Parse(const char* szexpr)
 	{
 		ch = strchr(sz, ';');
 		if (ch) *ch++ = 0;
-		FENodeLogData* pdata = fecore_new<FENodeLogData>(FENODELOGDATA_ID, sz, m_pfem);
+		FENodeLogData* pdata = fecore_new<FENodeLogData>(sz, m_pfem);
 		if (pdata) m_Data.push_back(pdata);
 		else 
 		{
@@ -57,18 +99,21 @@ void NodeDataRecord::SelectAllItems()
 // This sets the item list based on a node set.
 // Note that node sets store the nodes in a zero-based list. However, we need
 // a one-base list here.
-void NodeDataRecord::SetItemList(FENodeSet* pns)
+void NodeDataRecord::SetNodeSet(FENodeSet* pns)
 {
-	int n = pns->size();
+	int n = pns->Size();
 	assert(n);
 	m_item.resize(n);
 	for (int i=0; i<n; ++i) m_item[i] = (*pns)[i] + 1;
 }
 
 //-----------------------------------------------------------------------------
+FENodeVarData::FENodeVarData(FEModel* pfem, int ndof) : FENodeLogData(pfem), m_ndof(ndof) {}
+
+//-----------------------------------------------------------------------------
 double FENodeVarData::value(int node)
 {
-	FEModel& fem = *m_pfem;
+	FEModel& fem = *GetFEModel();
 	FEMesh& mesh = fem.GetMesh();
 	return mesh.Node(node).get(m_ndof);
 }

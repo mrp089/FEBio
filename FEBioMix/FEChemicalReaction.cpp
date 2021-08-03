@@ -1,29 +1,63 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEChemicalReaction.h"
-#include "FECore/FEElementTraits.h"
-#include "FECore/DOFS.h"
-#include "FECore/FEModel.h"
-#include "FECore/FECoreKernel.h"
+#include <FECore/FEElementTraits.h>
+#include <FECore/DOFS.h>
+#include <FECore/FEModel.h>
+#include <FECore/log.h>
 #include "FEMultiphasic.h"
 #include <stdlib.h>
+#include "FEBioFluid/FEFluidSolutes.h"
+#include "FEBioFluid/FESolutesMaterial.h"
+#include "FEBioFluid/FEMultiphasicFSI.h"
 
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEChemicalReaction, FEReaction)
-	ADD_PARAMETER(m_Vbar , FE_PARAM_DOUBLE, "Vbar");
-	ADD_PARAMETER(m_vRtmp, FE_PARAM_INT   , "vR"  );
-	ADD_PARAMETER(m_vPtmp, FE_PARAM_INT   , "vP"  );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEChemicalReaction, FEReaction)
+	ADD_PARAMETER(m_Vbar , "Vbar");
+	ADD_PARAMETER(m_vRtmp, "vR"  );
+	ADD_PARAMETER(m_vPtmp, "vP"  );
+
+	// set material properties
+	ADD_PROPERTY(m_pFwd, "forward_rate", FEProperty::Optional);
+	ADD_PROPERTY(m_pRev, "reverse_rate", FEProperty::Optional);
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEChemicalReaction::FEChemicalReaction(FEModel* pfem) : FEReaction(pfem)
 {
-    // set material properties
-    AddProperty(&m_pFwd ,"forward_rate", 0);
-    AddProperty(&m_pRev ,"reverse_rate", 0);
-    
     // additional initializations
 	m_Vovr = false; 
+
+	m_pFwd = m_pRev = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -39,9 +73,37 @@ bool FEChemicalReaction::Init()
 	// initialize the reaction coefficients
 	int isol, isbm, itot;
 
-	const int nsol = m_pMP->Solutes();
-	const int nsbm = m_pMP->SBMs();
-	const int ntot = nsol + nsbm;
+    int nsol, nsbm, ntot;
+    if (m_pMP)
+    {
+        nsol = m_pMP->Solutes();
+        nsbm = m_pMP->SBMs();
+        ntot = nsol + nsbm;
+    }
+    else if (m_pFS)
+    {
+        nsol = m_pFS->Solutes();
+        nsbm = 0;
+        ntot = nsol + nsbm;
+    }
+    else if (m_pSM)
+    {
+        nsol = m_pSM->Solutes();
+        nsbm = 0;
+        ntot = nsol + nsbm;
+    }
+    else if (m_pMF)
+    {
+        nsol = m_pMF->Solutes();
+        nsbm = 0;
+        ntot = nsol + nsbm;
+    }
+    else
+    {
+        nsol = 0;
+        nsbm = 0;
+        ntot = 0;
+    }
 
 	// initialize the stoichiometric coefficients to zero
 	m_nsol = nsol;
@@ -55,7 +117,15 @@ bool FEChemicalReaction::Init()
 	intmap solR = m_solR;
 	intmap solP = m_solP;
 	for (isol = 0; isol<nsol; ++isol) {
-		int sid = m_pMP->GetSolute(isol)->GetSoluteID();
+        int sid = isol;
+        if (m_pMP)
+            sid = m_pMP->GetSolute(isol)->GetSoluteID() - 1;
+        else if (m_pFS)
+            sid = m_pFS->GetSolute(isol)->GetSoluteID() - 1;
+        else if (m_pSM)
+            sid = m_pSM->GetSolute(isol)->GetSoluteID() - 1;
+        else if (m_pMF)
+            sid = m_pMF->GetSolute(isol)->GetSoluteID() - 1;
 		it = solR.find(sid);
 		if (it != solR.end()) m_vR[isol] = it->second;
 		it = solP.find(sid);
@@ -67,7 +137,7 @@ bool FEChemicalReaction::Init()
 	intmap sbmR = m_sbmR;
 	intmap sbmP = m_sbmP;
 	for (isbm = 0; isbm<nsbm; ++isbm) {
-		int sid = m_pMP->GetSBM(isbm)->GetSBMID();
+		int sid = m_pMP->GetSBM(isbm)->GetSBMID() - 1;
 		it = sbmR.find(sid);
 		if (it != sbmR.end()) m_vR[nsol + isbm] = it->second;
 		it = sbmP.find(sid);
@@ -83,7 +153,24 @@ bool FEChemicalReaction::Init()
 	if (!m_Vovr) {
 		m_Vbar = 0;
 		for (isol = 0; isol<nsol; ++isol)
-			m_Vbar += m_v[isol] * m_pMP->GetSolute(isol)->MolarMass() / m_pMP->GetSolute(isol)->Density();
+        {
+            if (m_pMP)
+            {
+                m_Vbar += m_v[isol] * m_pMP->GetSolute(isol)->MolarMass() / m_pMP->GetSolute(isol)->Density();
+            }
+            else if (m_pFS)
+            {
+                m_Vbar += m_v[isol] * m_pFS->GetSolute(isol)->MolarMass() / m_pFS->GetSolute(isol)->Density();
+            }
+            else if (m_pSM)
+            {
+                m_Vbar += m_v[isol] * m_pSM->GetSolute(isol)->MolarMass() / m_pSM->GetSolute(isol)->Density();
+            }
+            else if (m_pMF)
+            {
+                m_Vbar += m_v[isol] * m_pMF->GetSolute(isol)->MolarMass() / m_pMF->GetSolute(isol)->Density();
+            }
+        }
 		for (isbm = 0; isbm<nsbm; ++isbm)
 			m_Vbar += m_v[nsol + isbm] * m_pMP->GetSBM(isbm)->MolarMass() / m_pMP->GetSBM(isbm)->Density();
 	}
@@ -91,10 +178,30 @@ bool FEChemicalReaction::Init()
 	// check that the chemical reaction satisfies electroneutrality
 	int znet = 0;
 	for (isol = 0; isol<nsol; ++isol)
-		znet += m_v[isol] * m_pMP->GetSolute(isol)->ChargeNumber();
+    {
+        if (m_pMP)
+        {
+            znet += m_v[isol] * m_pMP->GetSolute(isol)->ChargeNumber();
+        }
+        else if (m_pFS)
+        {
+            znet += m_v[isol] * m_pFS->GetSolute(isol)->ChargeNumber();
+        }
+        else if (m_pSM)
+        {
+            znet += m_v[isol] * m_pSM->GetSolute(isol)->ChargeNumber();
+        }
+        else if (m_pMF)
+        {
+            znet += m_v[isol] * m_pMF->GetSolute(isol)->ChargeNumber();
+        }
+    }
 	for (isbm = 0; isbm<nsbm; ++isbm)
 		znet += m_v[nsol + isbm] * m_pMP->GetSBM(isbm)->ChargeNumber();
-	if (znet != 0) return MaterialError("chemical reaction must satisfy electroneutrality");
+	if (znet != 0) {
+		feLogError("chemical reaction must satisfy electroneutrality");
+		return false;
+	}
 
 	return true;
 }

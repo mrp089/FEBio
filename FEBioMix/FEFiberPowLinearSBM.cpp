@@ -1,26 +1,46 @@
-//
-//  FEFiberPowLinearSBM.cpp
-//  FEBioMix
-//
-//  Created by Gerard Ateshian on 5/24/15.
-//  Copyright (c) 2015 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEFiberPowLinearSBM.h"
 #include "FEMultiphasic.h"
+#include <FECore/log.h>
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEFiberPowLinearSBM, FEElasticMaterial)
-	ADD_PARAMETER2(m_E0   , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "E0"   );
-	ADD_PARAMETER2(m_lam0 , FE_PARAM_DOUBLE, FE_RANGE_GREATER         (1.0), "lam0" );
-	ADD_PARAMETER2(m_beta , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(2.0), "beta" );
-	ADD_PARAMETER2(m_rho0 , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "rho0" );
-	ADD_PARAMETER2(m_g    , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "gamma");
-	ADD_PARAMETER(m_sbm  , FE_PARAM_INT   , "sbm"  );
-	ADD_PARAMETER(m_thd  , FE_PARAM_DOUBLE, "theta");
-	ADD_PARAMETER(m_phd  , FE_PARAM_DOUBLE, "phi"  );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFiberPowLinearSBM, FEElasticMaterial)
+	ADD_PARAMETER(m_E0   , FE_RANGE_GREATER_OR_EQUAL(0.0), "E0"   );
+	ADD_PARAMETER(m_lam0 , FE_RANGE_GREATER         (1.0), "lam0" );
+	ADD_PARAMETER(m_beta , FE_RANGE_GREATER_OR_EQUAL(2.0), "beta" );
+	ADD_PARAMETER(m_rho0 , FE_RANGE_GREATER_OR_EQUAL(0.0), "rho0" );
+	ADD_PARAMETER(m_g    , FE_RANGE_GREATER_OR_EQUAL(0.0), "gamma");
+	ADD_PARAMETER(m_sbm  , "sbm"  );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 // FEFiberPowLinear
@@ -32,20 +52,22 @@ bool FEFiberPowLinearSBM::Init()
 
     // get the parent material which must be a multiphasic material
     FEMultiphasic* pMP = dynamic_cast<FEMultiphasic*> (GetAncestor());
-    if (pMP == 0) return MaterialError("Parent material must be multiphasic");
+	if (pMP == 0) {
+		feLogError("Parent material must be multiphasic");
+		return false;
+	}
     
     // extract the local id of the SBM whose density controls Young's modulus from the global id
     m_lsbm = pMP->FindLocalSBMID(m_sbm);
-    if (m_lsbm == -1) return MaterialError("Invalid value for sbm");
+	if (m_lsbm == -1) {
+		feLogError("Invalid value for sbm");
+		return false;
+	}
     
-    // convert angles from degrees to radians
-    double pi = 4*atan(1.0);
-    double the = m_thd*pi/180.;
-    double phi = m_phd*pi/180.;
     // fiber direction in local coordinate system (reference configuration)
-    m_n0.x = cos(the)*sin(phi);
-    m_n0.y = sin(the)*sin(phi);
-    m_n0.z = cos(phi);
+    m_n0.x = 1;
+    m_n0.y = 0;
+    m_n0.z = 0;
 
 	return true;
 }
@@ -74,14 +96,17 @@ mat3ds FEFiberPowLinearSBM::Stress(FEMaterialPoint& mp)
     mat3ds C = pt.RightCauchyGreen();
     mat3ds s;
     
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
     // evaluate fiber direction in global coordinate system
-    n0 = pt.m_Q*m_n0;
+    n0 = Q*m_n0;
     
     // Calculate In
     In = n0*(C*n0);
     
     // only take fibers in tension into consideration
-    if (In - 1 > eps)
+    if (In - 1 >= eps)
     {
         // get the global spatial fiber direction in current configuration
         nt = F*n0/sqrt(In);
@@ -128,14 +153,17 @@ tens4ds FEFiberPowLinearSBM::Tangent(FEMaterialPoint& mp)
     mat3ds C = pt.RightCauchyGreen();
     tens4ds c;
     
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
     // evaluate fiber direction in global coordinate system
-    n0 = pt.m_Q*m_n0;
+    n0 = Q*m_n0;
     
     // Calculate In
     In = n0*(C*n0);
     
     // only take fibers in tension into consideration
-    if (In - 1 > eps)
+    if (In - 1 >= eps)
     {
         // get the global spatial fiber direction in current configuration
         nt = F*n0/sqrt(In);
@@ -181,14 +209,17 @@ double FEFiberPowLinearSBM::StrainEnergyDensity(FEMaterialPoint& mp)
     const double eps = 0;
     mat3ds C = pt.RightCauchyGreen();
     
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
     // evaluate fiber direction in global coordinate system
-    n0 = pt.m_Q*m_n0;
+    n0 = Q*m_n0;
     
     // Calculate In = n0*C*n0
     In = n0*(C*n0);
     
     // only take fibers in tension into consideration
-    if (In - 1 > eps)
+    if (In - 1 >= eps)
     {
         // calculate strain energy density
         sed = (In < I0) ?

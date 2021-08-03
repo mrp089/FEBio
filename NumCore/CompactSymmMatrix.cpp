@@ -1,9 +1,33 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "CompactSymmMatrix.h"
-
-#ifdef PARDISO
-#include "mkl_spblas.h"
-#endif
 
 //-----------------------------------------------------------------------------
 //! constructor
@@ -13,7 +37,7 @@ CompactSymmMatrix::CompactSymmMatrix(int offset) : CompactMatrix(offset)
 }
 
 //-----------------------------------------------------------------------------
-void CompactSymmMatrix::mult_vector(double* x, double* r)
+bool CompactSymmMatrix::mult_vector(double* x, double* r)
 {
 	// get row count
 	int N = Rows();
@@ -22,13 +46,6 @@ void CompactSymmMatrix::mult_vector(double* x, double* r)
 	// zero result vector
 	for (int j = 0; j<N; ++j) r[j] = 0.0;
 
-#ifdef PARDISO
-	char tr = 'u';
-	double* a = Values();
-	int* ia = Pointers();
-	int* ja = Indices();
-	mkl_dcsrsymv(&tr, &N, a, ia, ja, x, r);
-#else
 	// loop over all columns
 	for (int j = 0; j<M; ++j)
 	{
@@ -73,7 +90,8 @@ void CompactSymmMatrix::mult_vector(double* x, double* r)
 
 		r[j] += rj;
 	}
-#endif
+
+	return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -158,20 +176,20 @@ void CompactSymmMatrix::Create(SparseMatrixProfile& mp)
 
 //-----------------------------------------------------------------------------
 // this sort function is defined in qsort.cpp
-void qsort(int n, int* arr, int* indx);
+void qsort(int n, const int* arr, int* indx);
 
 //-----------------------------------------------------------------------------
 //! This function assembles the local stiffness matrix
 //! into the global stiffness matrix which is in compact column storage
 //!
-void CompactSymmMatrix::Assemble(matrix& ke, vector<int>& LM)
+void CompactSymmMatrix::Assemble(const matrix& ke, const vector<int>& LM)
 {
 	// get the number of degrees of freedom
 	const int N = ke.rows();
 
 	// find the permutation array that sorts LM in ascending order
 	// we can use this to speed up the row search (i.e. loop over n below)
-	static vector<int> P; P.resize(N);
+	P.resize(N);
 	qsort(N, &LM[0], &P[0]);
 
 	// get the data pointers 
@@ -202,6 +220,7 @@ void CompactSymmMatrix::Assemble(matrix& ke, vector<int>& LM)
 			for (; n<l; ++n)
 				if (pi[n] == I)
 				{
+					#pragma omp atomic
 					pm[n] += ke[i][j];
 					break;
 				}
@@ -211,37 +230,36 @@ void CompactSymmMatrix::Assemble(matrix& ke, vector<int>& LM)
 
 
 //-----------------------------------------------------------------------------
-void CompactSymmMatrix::Assemble(matrix& ke, vector<int>& LMi, vector<int>& LMj)
+void CompactSymmMatrix::Assemble(const matrix& ke, const vector<int>& LMi, const vector<int>& LMj)
 {
-	int i, j, I, J;
-
 	const int N = ke.rows();
 	const int M = ke.columns();
 
 	int* indices = Indices();
 	int* pointers = Pointers();
-	double* pd = Values();
+	double* values = Values();
 
-	int *pi, l, n;
-
-	for (i = 0; i<N; ++i)
+	for (int i = 0; i<N; ++i)
 	{
-		I = LMi[i];
+		int I = LMi[i];
 
-		for (j = 0; j<M; ++j)
+		for (int j = 0; j<M; ++j)
 		{
-			J = LMj[j];
+			int J = LMj[j];
 
 			// only add values to lower-diagonal part of stiffness matrix
 			if ((I >= J) && (J >= 0))
 			{
-				pi = indices + pointers[J];
-				l = pointers[J + 1] - pointers[J];
-				for (n = 0; n<l; ++n) if (pi[n] == I)
-				{
-					pd[pointers[J] + n] += ke[i][j];
-					break;
-				}
+				double* pv = values + (pointers[J] - m_offset);
+				int* pi = indices + (pointers[J] - m_offset);
+				int l = pointers[J + 1] - pointers[J];
+				for (int n = 0; n<l; ++n) 
+					if (pi[n] - m_offset == I)
+					{
+						#pragma omp atomic
+						pv[n] += ke[i][j];
+						break;
+					}
 			}
 		}
 	}
@@ -270,6 +288,7 @@ void CompactSymmMatrix::add(int i, int j, double v)
 			int m = pi[n];
 			if (m == i)
 			{
+				#pragma omp atomic
 				pd[n] += v;
 				return;
 			}
@@ -293,6 +312,9 @@ void CompactSymmMatrix::add(int i, int j, double v)
 //! check fo a matrix item
 bool CompactSymmMatrix::check(int i, int j)
 {
+	// only the lower-triangular part is stored, so swap indices if necessary
+	if (i<j) { i ^= j; j ^= i; i ^= j; }
+
 	// only add to lower triangular part
 	if (j <= i)
 	{
@@ -324,6 +346,7 @@ void CompactSymmMatrix::set(int i, int j, double v)
 			{
 				int k = m_ppointers[j] + n;
 				k -= m_offset;
+#pragma omp critical
 				m_pd[k] = v;
 				return;
 			}
@@ -350,4 +373,101 @@ double CompactSymmMatrix::get(int i, int j)
 			return m_pd[k];
 		}
 	return 0;
+}
+
+//-----------------------------------------------------------------------------
+double CompactSymmMatrix::infNorm() const
+{
+	// get the matrix size
+	const int N = Rows();
+
+	// keep track of row sums
+	vector<double> rowSums(N, 0.0);
+
+	// loop over all columns
+	for (int j = 0; j<N; ++j)
+	{
+		double* pv = m_pd + m_ppointers[j] - m_offset;
+		int* pr = m_pindices + m_ppointers[j] - m_offset;
+		int n = m_ppointers[j + 1] - m_ppointers[j];
+
+		double ri = 0.0;
+		for (int i = 0; i < n; ++i)
+		{
+			int irow = pr[i] - m_offset;
+			double vij = fabs(pv[i]);
+			ri += vij;
+			if (irow != j) rowSums[irow] += vij;
+		}
+
+		rowSums[j] += ri;
+	}
+
+	// find the largest row sum
+	double rmax = rowSums[0];
+	for (int i = 1; i < N; ++i)
+	{
+		if (rowSums[i] > rmax) rmax = rowSums[i];
+	}
+
+	return rmax;
+}
+
+//-----------------------------------------------------------------------------
+double CompactSymmMatrix::oneNorm() const
+{
+	// get the matrix size
+	const int NR = Rows();
+	const int NC = Columns();
+
+	// keep track of col sums
+	vector<double> colSums(NC, 0.0);
+
+	// loop over all columns
+	for (int j = 0; j<NC; ++j)
+	{
+		double* pv = m_pd + m_ppointers[j] - m_offset;
+		int* pr = m_pindices + m_ppointers[j] - m_offset;
+		int n = m_ppointers[j + 1] - m_ppointers[j];
+
+		double cj = 0.0;
+		for (int i = 0; i < n; ++i)
+		{
+			int irow = pr[i] - m_offset;
+			double vij = fabs(pv[i]);
+			cj += vij;
+			if (irow != j) colSums[irow] += vij;
+		}
+
+		colSums[j] += cj;
+	}
+
+	// find the largest row sum
+	double rmax = colSums[0];
+	for (int i = 1; i < NC; ++i)
+	{
+		if (colSums[i] > rmax) rmax = colSums[i];
+	}
+
+	return rmax;
+}
+
+//-----------------------------------------------------------------------------
+void CompactSymmMatrix::scale(const vector<double>& L, const vector<double>& R)
+{
+	// get the matrix size
+	const int N = Columns();
+
+	// loop over all columns
+	for (int j = 0; j < N; ++j)
+	{
+		double* pv = m_pd + m_ppointers[j] - m_offset;
+		int* pr = m_pindices + m_ppointers[j] - m_offset;
+		int n = m_ppointers[j + 1] - m_ppointers[j];
+
+		for (int i = 0; i < n; ++i)
+		{
+			pv[i] *= L[pr[i] - m_offset] * R[j];
+		}
+	}
 }

@@ -1,6 +1,30 @@
-// FENNQuery.cpp: implementation of the FENNQuery class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FENNQuery.h"
@@ -355,4 +379,57 @@ int FENNQuery::FindRadius(double r)
 	while(i0 != i1);
 
 	return i;
+}
+
+
+//-----------------------------------------------------------------------------
+int findNeirestNeighbors(const std::vector<vec3d>& point, const vec3d& x, int k, std::vector<int>& closestNodes)
+{
+	int N0 = (int) point.size();
+	if (N0 < k) k = N0;
+
+	vector<double> dist(k, 0.0);
+	closestNodes.resize(k);
+	int n = 0;
+	for (int i = 0; i < N0; ++i)
+	{
+		vec3d ri = point[i] - x;
+		double L2 = ri*ri;
+
+		if (n == 0)
+		{
+			closestNodes[0] = i;
+			dist[0] = L2;
+			n++;
+		}
+		else if (L2 <= dist[n - 1])
+		{
+			int m;
+			for (m = 0; m < n; ++m)
+			{
+				if (L2 <= dist[m])
+				{
+					break;
+				}
+			}
+
+			if (n < k) n++;
+			for (int l = n - 1; l > m; l--)
+			{
+				closestNodes[l] = closestNodes[l - 1];
+				dist[l] = dist[l - 1];
+			}
+
+			closestNodes[m] = i;
+			dist[m] = L2;
+		}
+		else if (n < k)
+		{
+			closestNodes[n] = i;
+			dist[n] = L2;
+			n++;
+		}
+	}
+
+	return n;
 }

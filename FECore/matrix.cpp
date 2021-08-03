@@ -1,6 +1,30 @@
-// matrix.cpp: implementation of the matrix class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "matrix.h"
@@ -24,7 +48,7 @@ void svdcmp(matrix& a, vector<double>& w, matrix& v);
 //-----------------------------------------------------------------------------
 vector<double> operator / (vector<double>& b, matrix& m)
 {
-	int n = b.size();
+	int n = (int)b.size();
 
 	vector<double> x(b);
 	vector<int> indx(n);
@@ -91,6 +115,27 @@ matrix::matrix(const matrix& m)
 }
 
 //-----------------------------------------------------------------------------
+//! constructor
+matrix::matrix(const mat3d& m)
+{
+	alloc(3, 3);
+	m_pr[0][0] = m[0][0]; m_pr[0][1] = m[0][1]; m_pr[0][2] = m[0][2];
+	m_pr[1][0] = m[1][0]; m_pr[1][1] = m[1][1]; m_pr[1][2] = m[1][2];
+	m_pr[2][0] = m[2][0]; m_pr[2][1] = m[2][1]; m_pr[2][2] = m[2][2];
+}
+
+//-----------------------------------------------------------------------------
+//! assignment operator
+matrix& matrix::operator = (const mat3d& m)
+{
+	resize(3, 3);
+	m_pr[0][0] = m[0][0]; m_pr[0][1] = m[0][1]; m_pr[0][2] = m[0][2];
+	m_pr[1][0] = m[1][0]; m_pr[1][1] = m[1][1]; m_pr[1][2] = m[1][2];
+	m_pr[2][0] = m[2][0]; m_pr[2][1] = m[2][1]; m_pr[2][2] = m[2][2];
+	return *this;
+}
+
+//-----------------------------------------------------------------------------
 matrix& matrix::operator = (const matrix& m)
 {
 	if ((m.m_nr != m_nr) || (m.m_nc != m_nc))
@@ -114,7 +159,16 @@ void matrix::resize(int nr, int nc)
 }
 
 //-----------------------------------------------------------------------------
-matrix matrix::operator * (const matrix& m)
+matrix matrix::operator * (double a) const
+{
+	matrix m(m_nr, m_nc);
+	int n = m_nr*m_nc;
+	for (int i = 0; i < n; ++i) m.m_pd[i] = m_pd[i] * a;
+	return m;
+}
+
+//-----------------------------------------------------------------------------
+matrix matrix::operator * (const matrix& m) const
 {
 	assert(m_nc == m.m_nr);
 	matrix a(m_nr, m.m_nc);
@@ -129,6 +183,44 @@ matrix matrix::operator * (const matrix& m)
 	}
 
 	return a;
+}
+
+//-----------------------------------------------------------------------------
+void matrix::add(int i, int j, const matrix& m)
+{
+	int mr = m.rows();
+	int mc = m.columns();
+	for (int r = 0; r < mr; ++r)
+		for (int c = 0; c < mc; ++c)
+			m_pr[i + r][j + c] += m[r][c];
+}
+
+//-----------------------------------------------------------------------------
+void matrix::add(int i, int j, const vec3d&  a)
+{
+	m_pr[i  ][j] += a.x;
+	m_pr[i+1][j] += a.y;
+	m_pr[i+2][j] += a.z;
+}
+
+//-----------------------------------------------------------------------------
+void matrix::adds(int i, int j, const matrix& m, double s)
+{
+	int mr = m.rows();
+	int mc = m.columns();
+	for (int r = 0; r < mr; ++r)
+		for (int c = 0; c < mc; ++c) 
+			m_pr[i + r][j + c] += m[r][c]*s;
+}
+
+//-----------------------------------------------------------------------------
+void matrix::adds(const matrix& m, double s)
+{
+	const int mr = m.rows();
+	const int mc = m.columns();
+	for (int r = 0; r < mr; ++r)
+		for (int c = 0; c < mc; ++c)
+			m_pr[r][c] += m[r][c] * s;
 }
 
 //-----------------------------------------------------------------------------
@@ -246,6 +338,19 @@ matrix& matrix::operator -= (const matrix& m)
 }
 
 //-----------------------------------------------------------------------------
+matrix matrix::operator * (const vec3d& v) const
+{
+	assert(m_nc == 3);
+	matrix A(m_nr, 1);
+	const matrix& T = *this;
+	for (int i = 0; i < m_nr; ++i)
+	{
+		A[i][0] = T[i][0]*v.x + T[i][1] * v.y + T[i][2] * v.z;
+	}
+	return A;
+}
+
+//-----------------------------------------------------------------------------
 // calculate outer product of a vector to produce a matrix
 matrix outer_product(vector<double>& a)
 {
@@ -335,7 +440,7 @@ void matrix::solve(const vector<double>& b, vector<double>& x)
 }
 
 //-----------------------------------------------------------------------------
-matrix matrix::operator + (const matrix& m)
+matrix matrix::operator + (const matrix& m) const
 {
 	matrix s(*this);
 	for (int i=0; i<m_nr; ++i)
@@ -346,7 +451,7 @@ matrix matrix::operator + (const matrix& m)
 }
 
 //-----------------------------------------------------------------------------
-matrix matrix::operator - (const matrix& m)
+matrix matrix::operator - (const matrix& m) const
 {
 	matrix s(*this);
 	for (int i = 0; i<m_nr; ++i)

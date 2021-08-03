@@ -1,3 +1,32 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#pragma once
 // NOTE: This file is automatically included from mat3d.h
 // Users should not include this file manually!
 
@@ -24,6 +53,7 @@ inline mat3dd mat3dd::operator - (const mat3dd& m) const { return mat3dd(d[0]-m.
 inline mat3dd mat3dd::operator * (const mat3dd& m) const { return mat3dd(d[0]*m.d[0],d[1]*m.d[1],d[2]*m.d[2]);}
 inline mat3dd mat3dd::operator * (double a) const { return mat3dd(d[0]*a, d[1]*a, d[2]*a); }
 inline mat3dd mat3dd::operator / (double a) const { a = 1./a; return mat3dd(d[0]*a, d[1]*a, d[2]*a); }
+inline mat3dd mat3dd::operator - () const { return mat3dd(-d[0], -d[1], -d[2]); }
 
 // arithmetic operators with mat3ds
 inline mat3ds mat3dd::operator + (const mat3ds& m) const
@@ -128,6 +158,16 @@ inline double mat3dd::det() const { return d[0]*d[1]*d[2]; }
 //-----------------------------------------------------------------------------
 
 // constructor
+inline mat3ds::mat3ds(double a)
+{
+	m[XX] = a;
+	m[XY] = a;
+	m[YY] = a;
+	m[XZ] = a;
+	m[YZ] = a;
+	m[ZZ] = a;
+}
+
 inline mat3ds::mat3ds(double xx, double yy, double zz, double xy, double yz, double xz)
 {
 	m[XX] = xx;
@@ -144,6 +184,16 @@ inline mat3ds::mat3ds(const mat3dd& d)
 	m[YY] = d.d[1];
 	m[ZZ] = d.d[2];
 	m[XY] = m[YZ] = m[XZ] = 0.;
+}
+
+inline mat3ds::mat3ds(const mat3ds& d)
+{
+	m[0] = d.m[0];
+	m[1] = d.m[1];
+	m[2] = d.m[2];
+	m[3] = d.m[3];
+	m[4] = d.m[4];
+	m[5] = d.m[5];
 }
 
 // access operator
@@ -192,15 +242,21 @@ inline mat3ds mat3ds::operator -(const mat3ds& t) const
 }
 
 // operator *
-inline mat3ds mat3ds::operator *(const mat3ds& t) const
+inline mat3d mat3ds::operator *(const mat3ds& t) const
 {
-	return mat3ds(
-		m[XX]*t.m[XX]+m[XY]*t.m[XY]+m[XZ]*t.m[XZ],
-		m[XY]*t.m[XY]+m[YY]*t.m[YY]+m[YZ]*t.m[YZ],
-		m[XZ]*t.m[XZ]+m[YZ]*t.m[YZ]+m[ZZ]*t.m[ZZ],
-		m[XX]*t.m[XY]+m[XY]*t.m[YY]+m[XZ]*t.m[YZ],
-		m[XY]*t.m[XZ]+m[YY]*t.m[YZ]+m[YZ]*t.m[ZZ],
-		m[XX]*t.m[XZ]+m[XY]*t.m[YZ]+m[XZ]*t.m[ZZ]);
+	return mat3d(
+		m[XX] * t.m[XX] + m[XY] * t.m[XY] + m[XZ] * t.m[XZ],
+		m[XX] * t.m[XY] + m[XY] * t.m[YY] + m[XZ] * t.m[YZ],
+		m[XX] * t.m[XZ] + m[XY] * t.m[YZ] + m[XZ] * t.m[ZZ],
+
+		m[XY] * t.m[XX] + m[YY] * t.m[XY] + m[YZ] * t.m[XZ],
+		m[XY] * t.m[XY] + m[YY] * t.m[YY] + m[YZ] * t.m[YZ],
+		m[XY] * t.m[XZ] + m[YY] * t.m[YZ] + m[YZ] * t.m[ZZ],
+
+		m[XZ] * t.m[XX] + m[YZ] * t.m[XY] + m[ZZ] * t.m[XZ],
+		m[XZ] * t.m[XY] + m[YZ] * t.m[YY] + m[ZZ] * t.m[YZ],
+		m[XZ] * t.m[XZ] + m[YZ] * t.m[YZ] + m[ZZ] * t.m[ZZ]
+	);
 }
 
 // operator *
@@ -370,6 +426,19 @@ inline mat3ds mat3ds::iso() const
 	return mat3ds(t, t, t, 0, 0, 0);
 }
 
+// return the square 
+inline mat3ds mat3ds::sqr() const
+{
+	return mat3ds(
+		m[XX] * m[XX] + m[XY] * m[XY] + m[XZ] * m[XZ],
+		m[XY] * m[XY] + m[YY] * m[YY] + m[YZ] * m[YZ],
+		m[XZ] * m[XZ] + m[YZ] * m[YZ] + m[ZZ] * m[ZZ],
+		m[XX] * m[XY] + m[XY] * m[YY] + m[XZ] * m[YZ], 
+		m[XY] * m[XZ] + m[YY] * m[YZ] + m[YZ] * m[ZZ],
+		m[XX] * m[XZ] + m[XY] * m[YZ] + m[XZ] * m[ZZ]
+	);
+}
+
 // inverse
 inline mat3ds mat3ds::inverse() const
 {
@@ -410,10 +479,21 @@ inline double mat3ds::norm() const
 }
 
 // double contraction
-inline double mat3ds::dotdot(const mat3ds& B)
+inline double mat3ds::dotdot(const mat3ds& B) const
 {
 	const double* n = B.m;
 	return m[XX]*n[XX] + m[YY]*n[YY] + m[ZZ]*n[ZZ] + 2.0*(m[XY]*n[XY] + m[YZ]*n[YZ] + m[XZ]*n[XZ]);
+}
+
+// Effective or von-mises value
+inline double mat3ds::effective_norm() const
+{
+	double vm;
+	vm = m[XX] * m[XX] + m[YY] * m[YY] + m[ZZ] * m[ZZ];
+	vm -= m[XX] * m[YY] + m[YY] * m[ZZ] + m[XX] * m[ZZ];
+	vm += 3 * (m[XY] * m[XY] + m[YZ] * m[YZ] + m[XZ] * m[XZ]);
+	vm = sqrt(vm >= 0.0 ? vm : 0.0);
+	return vm;
 }
 
 //-----------------------------------------------------------------------------
@@ -455,6 +535,16 @@ inline mat3da mat3da::operator - (const mat3da& a)
 	return mat3da(d[0]-a.d[0], d[1]-a.d[1], d[2]-a.d[2]);
 }
 
+inline mat3da mat3da::operator - () const
+{
+	return mat3da(-d[0], -d[1], -d[2]);
+}
+
+inline mat3da mat3da::transpose() const
+{
+	return mat3da(-d[0], -d[1], -d[2]);
+}
+
 // matrix multiplication
 inline mat3d mat3da::operator * (const mat3d& m)
 {
@@ -465,11 +555,27 @@ inline mat3d mat3da::operator * (const mat3d& m)
 	);
 }
 
+inline vec3d mat3da::operator * (const vec3d& a)
+{
+	return vec3d(
+		 d[0] * a.y + d[2] * a.z, \
+		-d[0] * a.x + d[1] * a.z, \
+		-d[2] * a.x - d[1] * a.y);
+}
+
 //-----------------------------------------------------------------------------
 // class mat3d : general 3D matrix of doubles
 //-----------------------------------------------------------------------------
 
 // constructors
+
+inline mat3d::mat3d(double a)
+{
+	d[0][0] = a; d[0][1] = a; d[0][2] = a;
+	d[1][0] = a; d[1][1] = a; d[1][2] = a;
+	d[2][0] = a; d[2][1] = a; d[2][2] = a;
+}
+
 inline mat3d::mat3d(double a00, double a01, double a02,
 					double a10, double a11, double a12,
 					double a20, double a21, double a22)
@@ -570,6 +676,7 @@ inline mat3d& mat3d::operator = (const mat3d& m)
 inline double& mat3d::operator () (int i, int j) { return d[i][j]; }
 inline const double& mat3d::operator () (int i, int j) const { return d[i][j]; }
 inline double* mat3d::operator [] (int i) { return d[i]; }
+inline const double* mat3d::operator [] (int i) const { return d[i]; }
 
 // arithmetic operators
 inline mat3d mat3d::operator + (const mat3d& m) const
@@ -821,6 +928,28 @@ inline vec3d mat3d::col(int j) const
 	return vec3d(d[0][j], d[1][j], d[2][j]);
 }
 
+// return a row vector from the matrix
+inline vec3d mat3d::row(int j) const
+{
+	return vec3d(d[j][0], d[j][1], d[j][2]);
+}
+
+// set the column of the matrix
+inline void mat3d::setCol(int i, const vec3d& a)
+{
+	d[0][i] = a.x;
+	d[1][i] = a.y;
+	d[2][i] = a.z;
+}
+
+// set the row of the matrix
+inline void mat3d::setRow(int i, const vec3d& a)
+{
+	d[i][0] = a.x;
+	d[i][1] = a.y;
+	d[i][2] = a.z;
+}
+
 // return the symmetric matrix 0.5*(A+A^T)
 inline mat3ds mat3d::sym() const
 {
@@ -924,7 +1053,7 @@ inline double mat3d::norm() const
 }
 
 // double contraction
-inline double mat3d::dotdot(const mat3d& T)
+inline double mat3d::dotdot(const mat3d& T) const
 {
 	return (T.d[0][0]*d[0][0] + T.d[0][1]*d[0][1] + T.d[0][2]*d[0][2] + T.d[1][0]*d[1][0] + T.d[1][1]*d[1][1] + T.d[1][2]*d[1][2] + T.d[2][0]*d[2][0] + T.d[2][1]*d[2][1] + T.d[2][2]*d[2][2]);
 }

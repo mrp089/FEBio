@@ -1,6 +1,30 @@
-// FEMesh.cpp: implementation of the FEMesh class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEMesh.h"
@@ -10,464 +34,37 @@
 #include "FEShellDomain.h"
 #include "FESolidDomain.h"
 #include "FEDomain2D.h"
-#include "FEMaterial.h"
-#include "FEModel.h"
-#include "log.h"
 #include "DOFS.h"
 #include "FEElemElemList.h"
 #include "FEElementList.h"
 #include "FESurface.h"
+#include "FEDataArray.h"
+#include "FEDomainMap.h"
+#include "FESurfaceMap.h"
+#include "FENodeDataMap.h"
+#include "DumpStream.h"
 #include <algorithm>
 
-//=============================================================================
-// FENode
 //-----------------------------------------------------------------------------
-FENode::FENode()
+FEDataMap* CreateDataMap(int mapType)
 {
-	// set the default state
-	m_nstate = 0;
-
-	// rigid body data
-	m_rid = -1;
-
-	// default ID
-	m_nID = -1;
-}
-
-//-----------------------------------------------------------------------------
-void FENode::SetDOFS(int n)
-{
-	// initialize dof stuff
-    m_ID.assign(n, DOF_FIXED);
-	m_BC.assign(n, DOF_OPEN );
-	m_val.assign(n, 0.0);
-}
-
-//-----------------------------------------------------------------------------
-FENode::FENode(const FENode& n)
-{
-	m_r0 = n.m_r0;
-	m_rt = n.m_rt;
-	m_at = n.m_at;
-	m_rp = n.m_rp;
-	m_vp = n.m_vp;
-	m_ap = n.m_ap;
-	m_Fr = n.m_Fr;
-    m_d0 = n.m_d0;
-
-	m_nID = n.m_nID;
-	m_rid = n.m_rid;
-	m_nstate = n.m_nstate;
-
-	m_ID = n.m_ID;
-	m_BC = n.m_BC;
-	m_val = n.m_val;
-}
-
-//-----------------------------------------------------------------------------
-FENode& FENode::operator = (const FENode& n)
-{
-	m_r0 = n.m_r0;
-	m_rt = n.m_rt;
-	m_at = n.m_at;
-	m_rp = n.m_rp;
-	m_vp = n.m_vp;
-	m_ap = n.m_ap;
-	m_Fr = n.m_Fr;
-    m_d0 = n.m_d0;
-
-	m_nID = n.m_nID;
-	m_rid = n.m_rid;
-	m_nstate = n.m_nstate;
-
-	m_ID = n.m_ID;
-	m_BC = n.m_BC;
-	m_val = n.m_val;
-
-	return (*this);
-}
-
-//=============================================================================
-// FENodeSet
-//-----------------------------------------------------------------------------
-FENodeSet::FENodeSet() : m_pmesh(0), m_nID(-1)
-{
-	m_szname[0] = 0;
-}
-
-//-----------------------------------------------------------------------------
-FENodeSet::FENodeSet(FEMesh* pm) : m_pmesh(pm), m_nID(-1)
-{ 
-	m_szname[0] = 0; 
-}
-
-//-----------------------------------------------------------------------------
-FENodeSet::FENodeSet(const FENodeSet& n)
-{
-	m_pmesh = n.m_pmesh;
-	m_Node = n.m_Node;
-	strcpy(m_szname, n.m_szname);
-}
-
-//-----------------------------------------------------------------------------
-void FENodeSet::operator = (const FENodeSet& n)
-{
-	m_pmesh = n.m_pmesh;
-	m_Node = n.m_Node;
-	strcpy(m_szname, n.m_szname);
-}
-
-//-----------------------------------------------------------------------------
-void FENodeSet::create(int n)
-{
-	assert(n);
-	m_Node.resize(n);
-}
-
-//-----------------------------------------------------------------------------
-void FENodeSet::add(int id)
-{
-	m_Node.push_back(id);
-}
-
-//-----------------------------------------------------------------------------
-void FENodeSet::add(const vector<int>& ns)
-{
-	int n0 = (int)m_Node.size();
-	int n1 = ns.size();
-	int N = n0 + n1;
-	m_Node.resize(N);
-	for (int i = 0; i<n1; ++i) m_Node[n0 + i] = ns[i];
-}
-
-//-----------------------------------------------------------------------------
-void FENodeSet::add(const FENodeSet& ns)
-{
-	int n0 = (int) m_Node.size();
-	int n1 = ns.size();
-	int N = n0 + n1;
-	m_Node.resize(N);
-	for (int i=0; i<n1; ++i) m_Node[n0 + i] = ns[i];
-}
-
-//-----------------------------------------------------------------------------
-void FENodeSet::SetName(const char* sz)
-{
-	strcpy(m_szname, sz); 
-}
-
-//-----------------------------------------------------------------------------
-FENode* FENodeSet::Node(int i)
-{
-	return &m_pmesh->Node(m_Node[i]); 
-}
-
-//-----------------------------------------------------------------------------
-const FENode* FENodeSet::Node(int i) const
-{
-	return &m_pmesh->Node(m_Node[i]);
-}
-
-//-----------------------------------------------------------------------------
-void FENodeSet::Serialize(DumpStream& ar)
-{
-	if (ar.IsSaving())
+	FEDataMap* map = nullptr;
+	switch (mapType)
 	{
-		ar << m_nID;
-		ar << m_szname;
-		ar << m_Node;
+	case FE_NODE_DATA_MAP: map = new FENodeDataMap; break;
+	case FE_DOMAIN_MAP   : map = new FEDomainMap; break;
+	case FE_SURFACE_MAP  : map = new FESurfaceMap; break;
+	default:
+		assert(false);
 	}
-	else
-	{
-		ar >> m_nID;
-		ar >> m_szname;
-		ar >> m_Node;
-	}
-}
 
-//=============================================================================
-// FEDiscreteSet
-//-----------------------------------------------------------------------------
-
-FEDiscreteSet::FEDiscreteSet(FEMesh* pm) : m_pmesh(pm)
-{
-
-}
-
-//-----------------------------------------------------------------------------
-void FEDiscreteSet::create(int n)
-{
-	m_pair.resize(n);
-}
-
-//-----------------------------------------------------------------------------
-void FEDiscreteSet::add(int n0, int n1)
-{
-	NodePair p = {n0, n1};
-	m_pair.push_back(p);
-}
-
-//-----------------------------------------------------------------------------
-void FEDiscreteSet::SetName(const char* sz)
-{
-	strcpy(m_szname, sz); 
-}
-
-//-----------------------------------------------------------------------------
-void FEDiscreteSet::Serialize(DumpStream& ar)
-{
-	if (ar.IsSaving())
-	{
-		ar << m_szname;
-		ar << m_pair;
-	}
-	else
-	{
-		ar >> m_szname;
-		ar >> m_pair;
-	}
-}
-
-//=============================================================================
-// FEFacetSet
-//-----------------------------------------------------------------------------
-FEFacetSet::FEFacetSet(FEMesh* mesh) : m_mesh(mesh)
-{
-	m_szname[0] = 0;
-}
-
-//-----------------------------------------------------------------------------
-void FEFacetSet::Create(int n)
-{
-	m_Face.resize(n);
-}
-
-//-----------------------------------------------------------------------------
-FEFacetSet::FACET& FEFacetSet::Face(int i)
-{
-	return m_Face[i];
-}
-
-//-----------------------------------------------------------------------------
-const FEFacetSet::FACET& FEFacetSet::Face(int i) const
-{
-	return m_Face[i];
-}
-
-//-----------------------------------------------------------------------------
-void FEFacetSet::SetName(const char* sz)
-{
-	strcpy(m_szname, sz); 
-}
-
-//-----------------------------------------------------------------------------
-void FEFacetSet::Add(FEFacetSet* pf)
-{
-	m_Face.insert(m_Face.end(), pf->m_Face.begin(), pf->m_Face.end());
-}
-
-//-----------------------------------------------------------------------------
-FENodeSet FEFacetSet::GetNodeSet()
-{
-	FEMesh* pm = m_mesh;
-	FENodeSet set(pm);
-
-	vector<int> tag(pm->Nodes(), 0);
-	for (int i = 0; i<Faces(); ++i)
-	{
-		FACET& el = m_Face[i];
-		int ne = el.ntype;
-		for (int j = 0; j<ne; ++j)
-		{
-			if (tag[el.node[j]] == 0)
-			{
-				set.add(el.node[j]);
-				tag[el.node[j]] = 1;
-			}
-		}
-	}
-	return set;
-}
-
-//-----------------------------------------------------------------------------
-void FEFacetSet::Serialize(DumpStream& ar)
-{
-	if (ar.IsSaving())
-	{
-		ar << m_szname;
-		ar << m_Face;
-	}
-	else
-	{
-		ar >> m_szname;
-		ar >> m_Face;
-	}
-}
-
-//=============================================================================
-// FESegmentSet
-//-----------------------------------------------------------------------------
-FESegmentSet::FESegmentSet(FEMesh* pm) : m_mesh(pm)
-{
-	m_szname[0] = 0;
-}
-
-//-----------------------------------------------------------------------------
-void FESegmentSet::Create(int n)
-{
-	m_Seg.resize(n);
-}
-
-//-----------------------------------------------------------------------------
-FESegmentSet::SEGMENT& FESegmentSet::Segment(int i)
-{
-	return m_Seg[i];
-}
-
-//-----------------------------------------------------------------------------
-void FESegmentSet::SetName(const char* sz)
-{
-	strcpy(m_szname, sz); 
-}
-
-//-----------------------------------------------------------------------------
-void FESegmentSet::Serialize(DumpStream& ar)
-{
-	if (ar.IsSaving())
-	{
-		ar << m_szname;
-		ar << m_Seg;
-	}
-	else
-	{
-		ar >> m_szname;
-		ar >> m_Seg;
-	}
-}
-
-//=============================================================================
-// FEElementSet
-//-----------------------------------------------------------------------------
-FEElementSet::FEElementSet(FEMesh* pm) : m_pmesh(pm)
-{
-	m_szname[0] = 0;
-}
-
-//-----------------------------------------------------------------------------
-void FEElementSet::create(int n)
-{
-	assert(n);
-	m_Elem.resize(n);
-}
-
-//-----------------------------------------------------------------------------
-void FEElementSet::SetName(const char* sz)
-{
-	strcpy(m_szname, sz); 
-}
-
-//-----------------------------------------------------------------------------
-void FEElementSet::Serialize(DumpStream& ar)
-{
-	if (ar.IsSaving())
-	{
-		ar << m_szname;
-		ar << m_Elem;
-	}
-	else
-	{
-		ar >> m_szname;
-		ar >> m_Elem;
-	}
-}
-
-//=============================================================================
-FESurfacePair::FESurfacePair(FEMesh* pm) : m_mesh(pm)
-{
-	m_master = 0;
-	m_slave = 0;
-}
-
-void FESurfacePair::SetName(const char* szname)
-{
-	strcpy(m_szname, szname);
-}
-
-const char* FESurfacePair::GetName() const
-{
-	return m_szname;
-}
-
-FEFacetSet* FESurfacePair::GetMasterSurface()
-{
-	return m_master;
-}
-
-void FESurfacePair::SetMasterSurface(FEFacetSet* pf)
-{
-	m_master = pf;
-}
-
-FEFacetSet* FESurfacePair::GetSlaveSurface()
-{
-	return m_slave;
-}
-
-void FESurfacePair::SetSlaveSurface(FEFacetSet* pf)
-{
-	m_slave = pf;
-}
-
-void FESurfacePair::Serialize(DumpStream& ar)
-{
-	if (ar.IsSaving())
-	{
-		ar << m_szname;
-
-		if (m_master)
-		{
-			ar << (int) 1;
-			ar << m_master->GetName();
-		}
-		else ar << (int) 0;
-
-		if (m_slave)
-		{
-			ar << (int) 1;
-			ar << m_slave->GetName();
-		}
-		else ar << (int) 0;
-	}
-	else
-	{
-		ar >> m_szname;
-
-		// NOTE: This assumes that facet sets have already been serialized!!
-		int flag = 0;
-		ar >> flag;
-		if (flag == 1)
-		{
-			char sz[256] = {0};
-			ar >> sz;
-			m_master = m_mesh->FindFacetSet(sz); assert(m_master);
-		}
-		else m_master = 0;
-
-		ar >> flag;
-		if (flag == 1)
-		{
-			char sz[256] = {0};
-			ar >> sz;
-			m_slave = m_mesh->FindFacetSet(sz); assert(m_slave);
-		}
-		else m_slave = 0;
-	}
+	return map;
 }
 
 //=============================================================================
 // FEMesh
 //-----------------------------------------------------------------------------
-FEMesh::FEMesh()
+FEMesh::FEMesh(FEModel* fem) : m_fem(fem)
 {
 	m_LUT = 0;
 }
@@ -479,247 +76,134 @@ FEMesh::~FEMesh()
 }
 
 //-----------------------------------------------------------------------------
+//! return number of nodes
+int FEMesh::Nodes() const 
+{ 
+	return (int)m_Node.size(); 
+}
+
+//-----------------------------------------------------------------------------
 void FEMesh::Serialize(DumpStream& ar)
 {
-	if (ar.IsShallow())
+	// clear the mesh if we are loading from an archive
+	if ((ar.IsShallow() == false) && (ar.IsLoading())) Clear();
+
+	// we don't want to store pointers to all the nodes
+	// mostly for efficiency, so we tell the archive not to store the pointers
+	ar.LockPointerTable();
 	{
- 		// stream nodal data
-		if (ar.IsSaving())
+		// store the node list
+		ar & m_Node;
+	}
+	ar.UnlockPointerTable();
+
+	// stream domain data
+	ar & m_Domain;
+
+	// if this is a shallow archive, we're done
+	if (ar.IsShallow()) return;
+
+	// serialize node sets
+	ar & m_NodeSet;
+
+	if (ar.IsSaving())
+	{
+		// write segment sets
+		int ssets = SegmentSets();
+		ar << ssets;
+		for (int i=0; i<ssets; ++i)
 		{
-			int NN = (int) m_Node.size();
-			for (int i=0; i<NN; ++i)
-			{
-				FENode& nd = m_Node[i];
-				ar << nd.m_r0;
-				ar << nd.m_rt << nd.m_at;
-				ar << nd.m_rp << nd.m_vp << nd.m_ap;
-				ar << nd.m_Fr;
-				ar << nd.m_val;
-			}
-		}
-		else
-		{
-			int NN = (int) m_Node.size();
-			for (int i=0; i<NN; ++i)
-			{
-				FENode& nd = m_Node[i];
-				ar >> nd.m_r0;
-				ar >> nd.m_rt >> nd.m_at;
-				ar >> nd.m_rp >> nd.m_vp >> nd.m_ap;
-				ar >> nd.m_Fr;
-				ar >> nd.m_val;
-			}
+			FESegmentSet& sset = SegmentSet(i);
+			sset.Serialize(ar);
 		}
 
-		// stream domain data
-		int ND = Domains();
-		for (int i=0; i<ND; ++i)
+		// write element sets
+		ar << m_ElemSet;
+
+		// write facet sets
+		ar << m_FaceSet;
+
+		// write discrete sets
+		int dsets = DiscreteSets();
+		ar << dsets;
+		for (int i=0; i<dsets; ++i)
 		{
-			FEDomain& dom = Domain(i);
-			dom.Serialize(ar);
+			FEDiscreteSet& dset = DiscreteSet(i);
+			dset.Serialize(ar);
+		}
+
+		// write data maps
+		int maps = DataMaps();
+		ar << maps;
+		for (int i = 0; i < maps; ++i)
+		{
+			FEDataMap* map = GetDataMap(i);
+			ar << map->DataMapType();
+			map->Serialize(ar);
 		}
 	}
 	else
 	{
-		if (ar.IsSaving())
+		FEModel* fem = &ar.GetFEModel();
+
+		// read segment sets
+		int ssets = 0;
+		ar >> ssets;
+		for (int i=0; i<ssets; ++i)
 		{
-			// write nodal data
-			int nn = Nodes();
-			ar << nn;
-			for (int i=0; i<nn; ++i)
-			{
-				FENode& node = Node(i);
-				ar << node.m_nstate;
-				ar << node.m_ap;
-				ar << node.m_at;
-				ar << node.m_Fr;
-				ar << node.m_ID;
-				ar << node.m_BC;
-				ar << node.m_r0;
-				ar << node.m_rid;
-				ar << node.m_rp;
-				ar << node.m_rt;
-				ar << node.m_vp;
-				ar << node.m_val;
-				ar << node.m_d0;
-			}
-
-			// write domain data
-			int ND = Domains();
-			ar << ND;
-			for (int i=0; i<ND; ++i)
-			{
-				FEDomain& d = Domain(i);
-				ar << d.GetMaterial()->GetID();
-				ar << d.GetTypeStr() << d.Elements();
-				d.Serialize(ar);
-			}
-
-			// write node sets
-			int nsets = NodeSets();
-			ar << nsets;
-			for (int i=0; i<nsets; ++i)
-			{
-				FENodeSet* nset = NodeSet(i);
-				nset->Serialize(ar);
-			}
-
-			// write segment sets
-			int ssets = SegmentSets();
-			ar << ssets;
-			for (int i=0; i<ssets; ++i)
-			{
-				FESegmentSet& sset = SegmentSet(i);
-				sset.Serialize(ar);
-			}
-
-			// write facet sets
-			int fsets = FacetSets();
-			ar << fsets;
-			for (int i=0; i<fsets; ++i)
-			{
-				FEFacetSet& fset = FacetSet(i);
-				fset.Serialize(ar);
-			}
-
-			// write element sets
-			int esets = ElementSets();
-			ar << esets;
-			for (int i=0; i<esets; ++i)
-			{
-				FEElementSet& eset = ElementSet(i);
-				eset.Serialize(ar);
-			}
-
-			// write discrete sets
-			int dsets = DiscreteSets();
-			ar << dsets;
-			for (int i=0; i<dsets; ++i)
-			{
-				FEDiscreteSet& dset = DiscreteSet(i);
-				dset.Serialize(ar);
-			}
-
-			// write surface pairs
-			int spairs = SurfacePairs();
-			ar << spairs;
-			for (int i=0; i<spairs; ++i)
-			{
-				FESurfacePair& sp = SurfacePair(i);
-				sp.Serialize(ar);
-			}
+			FESegmentSet* sset = new FESegmentSet(fem);
+			AddSegmentSet(sset);
+			sset->Serialize(ar);
 		}
-		else
+
+		// read element sets
+		ar >> m_ElemSet;
+
+		// write facet sets
+		ar >> m_FaceSet;
+
+		// read discrete sets
+		int dsets = 0;
+		ar >> dsets;
+		for (int i=0; i<dsets; ++i)
 		{
-			FEModel& fem = ar.GetFEModel();
-			FECoreKernel& febio = FECoreKernel::GetInstance();
-
-			// read nodal data
-			int nn;
-			ar >> nn;
-			CreateNodes(nn);
-			for (int i=0; i<nn; ++i)
-			{
-				FENode& node = Node(i);
-				ar >> node.m_nstate;
-				ar >> node.m_ap;
-				ar >> node.m_at;
-				ar >> node.m_Fr;
-				ar >> node.m_ID;
-				ar >> node.m_BC;
-				ar >> node.m_r0;
-				ar >> node.m_rid;
-				ar >> node.m_rp;
-				ar >> node.m_rt;
-				ar >> node.m_vp;
-				ar >> node.m_val;
-				ar >> node.m_d0;
-			}
-
-			// read domain data
-			int ND, ne;
-			ar >> ND;
-			char sz[256] = {0};
-			for (int i=0; i<ND; ++i)
-			{
-				int nmat;
-				ar >> nmat;
-				FEMaterial* pm = fem.FindMaterial(nmat);
-				assert(pm);
-
-				ar >> sz >> ne;
-				FEDomain* pd = fecore_new<FEDomain>(FEDOMAIN_ID, sz, &fem);
-				assert(pd);
-				pd->SetMaterial(pm);
-				pd->Create(ne);
-				pd->Serialize(ar);
-
-				AddDomain(pd);
-			}
-
-			// read node sets
-			int nsets = 0;
-			ar >> nsets;
-			for (int i = 0; i<nsets; ++i)
-			{
-				FENodeSet* nset = new FENodeSet(this);
-				AddNodeSet(nset);
-				nset->Serialize(ar);
-			}
-
-			// read segment sets
-			int ssets = 0;
-			ar >> ssets;
-			for (int i=0; i<ssets; ++i)
-			{
-				FESegmentSet* sset = new FESegmentSet(this);
-				AddSegmentSet(sset);
-				sset->Serialize(ar);
-			}
-
-			// read facet sets
-			int fsets = 0;
-			ar >> fsets;
-			for (int i=0; i<fsets; ++i)
-			{
-				FEFacetSet* fset = new FEFacetSet(this);
-				AddFacetSet(fset);
-				fset->Serialize(ar);
-			}
-
-			// read element sets
-			int esets = 0;
-			ar >> esets;
-			for (int i=0; i<esets; ++i)
-			{
-				FEElementSet* eset = new FEElementSet(this);
-				AddElementSet(eset);
-				eset->Serialize(ar);
-			}
-
-			// read discrete sets
-			int dsets = 0;
-			ar >> dsets;
-			for (int i=0; i<dsets; ++i)
-			{
-				FEDiscreteSet* dset = new FEDiscreteSet(this);
-				AddDiscreteSet(dset);
-				dset->Serialize(ar);
-			}
-
-			// read surface pairs
-			int spairs = 0;
-			ar >> spairs;
-			for (int i=0; i<spairs; ++i)
-			{
-				FESurfacePair* sp = new FESurfacePair(this);
-				AddSurfacePair(sp);
-				sp->Serialize(ar);
-			}
-
-			UpdateBox();
+			FEDiscreteSet* dset = new FEDiscreteSet(this);
+			AddDiscreteSet(dset);
+			dset->Serialize(ar);
 		}
+
+		// write data maps
+		ClearDataMaps();
+		int maps = 0, mapType;
+		string mapName;
+		ar >> maps;
+		for (int i = 0; i < maps; ++i)
+		{
+			ar >> mapType;
+
+			FEDataMap* map = CreateDataMap(mapType);
+			assert(map);
+			map->Serialize(ar);
+			AddDataMap(map);
+		}
+
+		UpdateBox();
 	}
+}
+
+//-----------------------------------------------------------------------------
+void FEMesh::SaveClass(DumpStream& ar, FEMesh* p)
+{
+	// we should never get here
+	assert(false);
+}
+
+//-----------------------------------------------------------------------------
+FEMesh* FEMesh::LoadClass(DumpStream& ar, FEMesh* p)
+{
+	// we should never get here
+	assert(false);
+	return nullptr;
 }
 
 //-----------------------------------------------------------------------------
@@ -732,6 +216,8 @@ void FEMesh::CreateNodes(int nodes)
 
 	// set the default node IDs
 	for (int i=0; i<nodes; ++i) Node(i).SetID(i+1);
+
+	m_NEL.Clear();
 }
 
 //-----------------------------------------------------------------------------
@@ -784,6 +270,11 @@ int FEMesh::Elements(int ndom_type) const
 }
 
 //-----------------------------------------------------------------------------
+//! return reference to a node
+FENode& FEMesh::Node(int i) { return m_Node[i]; }
+const FENode& FEMesh::Node(int i) const { return m_Node[i]; }
+
+//-----------------------------------------------------------------------------
 //  Updates the bounding box of the mesh (using current coordinates)
 //
 void FEMesh::UpdateBox()
@@ -829,139 +320,10 @@ int FEMesh::RemoveIsolatedVertices()
 		{
 			++ni;
 			FENode& node = Node(i);
-			node.m_nstate |= FENode::EXCLUDE;
+			node.SetFlags(FENode::EXCLUDE);
 		}
 
 	return ni;
-}
-
-//-----------------------------------------------------------------------------
-void FEMesh::InitShells()
-{
-	// calculate initial directors for shell nodes
-	int NN = Nodes();
-	vector<vec3d> D(NN, vec3d(0, 0, 0));
-	vector<int> ND(NN, 0);
-
-	// loop over all domains
-	for (int nd = 0; nd < Domains(); ++nd)
-	{
-		// Calculate the shell directors as the local node normals
-		if (Domain(nd).Class() == FE_DOMAIN_SHELL)
-		{
-			FEShellDomain& sd = static_cast<FEShellDomain&>(Domain(nd));
-			vec3d r0[FEElement::MAX_NODES];
-			for (int i = 0; i<sd.Elements(); ++i)
-			{
-				FEShellElement& el = sd.Element(i);
-
-				int n = el.Nodes();
-				int* en = &el.m_node[0];
-
-				// get the nodes
-				for (int j = 0; j<n; ++j) r0[j] = Node(en[j]).m_r0;
-				for (int j = 0; j<n; ++j)
-				{
-					int m0 = j;
-					int m1 = (j + 1) % n;
-					int m2 = (j == 0 ? n - 1 : j - 1);
-
-					vec3d a = r0[m0];
-					vec3d b = r0[m1];
-					vec3d c = r0[m2];
-					vec3d d = (b - a) ^ (c - a); d.unit();
-
-					D[en[m0]] += d*el.m_h0[j];
-					++ND[en[m0]];
-				}
-			}
-		}
-	}
-
-	// assign initial directors to shell nodes
-	// make sure we average the directors
-	for (int i = 0; i<NN; ++i)
-		if (ND[i] > 0) Node(i).m_d0 = D[i] / ND[i];
-
-	// do any other shell initialization 
-	for (int nd = 0; nd<Domains(); ++nd)
-	{
-		FEDomain& dom = Domain(nd);
-		if (dom.Class() == FE_DOMAIN_SHELL)
-		{
-			FEShellDomain& shellDom = static_cast<FEShellDomain&>(dom);
-			shellDom.InitShells();
-		}
-	}
-
-	// Find the nodes that are on a non-rigid shell. 
-	// These nodes will be assigned rotational degrees of freedom
-	// TODO: Perhaps I should let the domains do this instead
-	for (int i = 0; i<Nodes(); ++i) Node(i).m_nstate &= ~FENode::SHELL;
-	for (int nd = 0; nd<Domains(); ++nd)
-	{
-		FEDomain& dom = Domain(nd);
-		if (dom.Class() == FE_DOMAIN_SHELL)
-		{
-			FEMaterial* pmat = dom.GetMaterial();
-			if (pmat->IsRigid() == false)
-			{
-				int N = dom.Elements();
-				for (int i = 0; i<N; ++i)
-				{
-					FEElement& el = dom.ElementRef(i);
-					int n = el.Nodes();
-					for (int j = 0; j<n; ++j) Node(el.m_node[j]).m_nstate |= FENode::SHELL;
-				}
-			}
-		}
-	}
-}
-
-//-----------------------------------------------------------------------------
-//! Does one-time initialization of the Mesh data. Call FEMesh::Reset for resetting 
-//! the mesh data.
-bool FEMesh::Init()
-{
-	// find and remove isolated vertices
-	int ni = RemoveIsolatedVertices();
-	if (ni != 0) 
-	{
-		if (ni == 1)
-			felog.printbox("WARNING", "%d isolated vertex removed.", ni);
-		else
-			felog.printbox("WARNING", "%d isolated vertices removed.", ni);
-	}
-
-	// Initialize shell data
-	// This has to be done before the domains are initialized below
-	InitShells();
-
-	// reset data
-	// TODO: Not sure why this is here
-	Reset();
-
-	// initialize all domains
-    // Initialize shell domains first (in order to establish SSI)
-	// TODO: I'd like to move the initialization of the SSI to InitShells, but I can't 
-	//       do that because FESSIShellDomain::FindSSI depends on the FEDomain::m_Node array which is
-	//       initialized in FEDomain::Init.
-    for (int i = 0; i<Domains(); ++i)
-    {
-		FEDomain& dom = Domain(i);
-		if (dom.Class() == FE_DOMAIN_SHELL)
-			if (dom.Init() == false) return false;
-    }
-	for (int i = 0; i<Domains(); ++i)
-	{
-		FEDomain& dom = Domain(i);
-		if (dom.Class() != FE_DOMAIN_SHELL)
-			if (dom.Init() == false) return false;
-	}
-
-
-	// All done
-	return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -984,18 +346,23 @@ void FEMesh::Clear()
 	// TODO: Surfaces are currently managed by the classes that use them so don't delete them
 //	for (size_t i=0; i<m_Surf.size   (); ++i) delete m_Surf   [i];
 
-	for (size_t i=0; i<m_NodeSet.size(); ++i) delete m_NodeSet[i];
-	for (size_t i=0; i<m_LineSet.size(); ++i) delete m_LineSet[i];
-	for (size_t i=0; i<m_FaceSet.size(); ++i) delete m_FaceSet[i];
-	for (size_t i=0; i<m_ElemSet.size  (); ++i) delete m_ElemSet[i];
+	for (size_t i=0; i<m_NodeSet.size (); ++i) delete m_NodeSet [i];
+	for (size_t i=0; i<m_LineSet.size (); ++i) delete m_LineSet [i];
+	for (size_t i=0; i<m_ElemSet.size (); ++i) delete m_ElemSet [i];
+	for (size_t i=0; i<m_DiscSet.size (); ++i) delete m_DiscSet [i];
+	for (size_t i=0; i<m_FaceSet.size (); ++i) delete m_FaceSet [i];
+	for (size_t i=0; i<m_SurfPair.size(); ++i) delete m_SurfPair[i];
+
 	m_Domain.clear();
 	m_Surf.clear();
 	m_NodeSet.clear();
 	m_LineSet.clear();
-	m_FaceSet.clear();
 	m_ElemSet.clear();
-	m_NEL.Clear();
+	m_DiscSet.clear();
+	m_FaceSet.clear();
+	m_SurfPair.clear();
 
+	m_NEL.Clear();
 	if (m_LUT) delete m_LUT; m_LUT = 0;
 }
 
@@ -1013,16 +380,16 @@ void FEMesh::Reset()
 		node.m_rp = node.m_rt = node.m_r0;
 		node.m_vp = vec3d(0,0,0);
 		node.m_ap = node.m_at = vec3d(0,0,0);
-
-        node.m_Fr = vec3d(0,0,0);
+        node.m_dp = node.m_dt = node.m_d0;
 
 		// reset ID arrays
-		int ndof = (int)node.m_ID.size();
+		int ndof = (int)node.dofs();
 		for (int i=0; i<ndof; ++i) 
 		{
-			node.m_ID[i] = DOF_FIXED;
-			node.m_BC[i] = DOF_OPEN;
+			node.set_inactive(i);
+			node.set_bc(i, DOF_OPEN);
 			node.set(i, 0.0);
+			node.set_load(i, 0.0);
 		}
 	}
 
@@ -1050,7 +417,7 @@ double FEMesh::ElementVolume(FEElement &el)
 //-----------------------------------------------------------------------------
 double FEMesh::SolidElementVolume(FESolidElement& el)
 {
-	FESolidDomain* dom = dynamic_cast<FESolidDomain*>(el.GetDomain()); assert(dom);
+	FESolidDomain* dom = dynamic_cast<FESolidDomain*>(el.GetMeshPartition()); assert(dom);
 	if (dom)
 		return dom->Volume(el);
 	else
@@ -1060,7 +427,7 @@ double FEMesh::SolidElementVolume(FESolidElement& el)
 //-----------------------------------------------------------------------------
 double FEMesh::ShellElementVolume(FEShellElement& el)
 {
-	FEShellDomain* dom = dynamic_cast<FEShellDomain*>(el.GetDomain()); assert(dom);
+	FEShellDomain* dom = dynamic_cast<FEShellDomain*>(el.GetMeshPartition()); assert(dom);
 	if (dom)
 		return dom->Volume(el);
 	else
@@ -1079,26 +446,18 @@ FENodeSet* FEMesh::FindNodeSet(int nid)
 //-----------------------------------------------------------------------------
 //! Find a nodeset by name
 
-FENodeSet* FEMesh::FindNodeSet(const char* szname)
+FENodeSet* FEMesh::FindNodeSet(const std::string& name)
 {
-	if (szname == 0) return 0;
-	for (size_t i=0; i<m_NodeSet.size(); ++i) if (strcmp(m_NodeSet[i]->GetName(), szname) == 0) return m_NodeSet[i];
-	return 0;
-}
-
-//-----------------------------------------------------------------------------
-FEFacetSet* FEMesh::FindFacetSet(const char* szname)
-{
-	for (size_t i=0; i<(int)m_FaceSet.size(); ++i) if (strcmp(m_FaceSet[i]->GetName(), szname) == 0) return m_FaceSet[i];
+	for (size_t i=0; i<m_NodeSet.size(); ++i) if (m_NodeSet[i]->GetName() == name) return m_NodeSet[i];
 	return 0;
 }
 
 //-----------------------------------------------------------------------------
 //! Find a segment set set by name
 
-FESegmentSet* FEMesh::FindSegmentSet(const char* szname)
+FESegmentSet* FEMesh::FindSegmentSet(const std::string& name)
 {
-	for (size_t i=0; i<m_LineSet.size(); ++i) if (strcmp(m_LineSet[i]->GetName(), szname) == 0) return m_LineSet[i];
+	for (size_t i=0; i<m_LineSet.size(); ++i) if (m_LineSet[i]->GetName() ==  name) return m_LineSet[i];
 	return 0;
 }
 
@@ -1114,31 +473,46 @@ FESurface* FEMesh::FindSurface(const std::string& name)
 //-----------------------------------------------------------------------------
 //! Find a discrete element set set by name
 
-FEDiscreteSet* FEMesh::FindDiscreteSet(const char* szname)
+FEDiscreteSet* FEMesh::FindDiscreteSet(const std::string& name)
 {
-	for (size_t i=0; i<m_DiscSet.size(); ++i) if (strcmp(m_DiscSet[i]->GetName(), szname) == 0) return m_DiscSet[i];
+	for (size_t i=0; i<m_DiscSet.size(); ++i) if (m_DiscSet[i]->GetName() == name) return m_DiscSet[i];
 	return 0;
 }
 
 //-----------------------------------------------------------------------------
 //! Find a element set by name
 
-FEElementSet* FEMesh::FindElementSet(const char* szname)
+FEElementSet* FEMesh::FindElementSet(const std::string& name)
 {
-	for (size_t i=0; i<m_ElemSet.size(); ++i) if (strcmp(m_ElemSet[i]->GetName(), szname) == 0) return m_ElemSet[i];
+	for (size_t i=0; i<m_ElemSet.size(); ++i) if (m_ElemSet[i]->GetName() == name) return m_ElemSet[i];
 	return 0;
 }
 
 //-----------------------------------------------------------------------------
-FESurfacePair* FEMesh::FindSurfacePair(const char* szname)
+FEFacetSet* FEMesh::FindFacetSet(const std::string& name)
 {
-	for (size_t i = 0; i<m_SurfPair.size(); ++i) if (strcmp(m_SurfPair[i]->GetName(), szname) == 0) return m_SurfPair[i];
+	for (size_t i = 0; i<(int)m_FaceSet.size(); ++i) if (m_FaceSet[i]->GetName() == name) return m_FaceSet[i];
 	return 0;
 }
+
+//-----------------------------------------------------------------------------
+FESurfacePair* FEMesh::FindSurfacePair(const std::string& name)
+{
+	for (size_t i = 0; i<m_SurfPair.size(); ++i) if (m_SurfPair[i]->GetName() == name) return m_SurfPair[i];
+	return 0;
+}
+
+//-----------------------------------------------------------------------------
+int FEMesh::Domains() { return (int)m_Domain.size(); }
+
+//-----------------------------------------------------------------------------
+FEDomain& FEMesh::Domain(int n) { return *m_Domain[n]; }
 
 //-----------------------------------------------------------------------------
 void FEMesh::AddDomain(FEDomain* pd)
 { 
+	int N = (int)m_Domain.size();
+	pd->SetID(N);
 	m_Domain.push_back(pd); 
 	if (m_LUT) delete m_LUT; m_LUT = 0;
 }
@@ -1152,192 +526,25 @@ FEDomain* FEMesh::FindDomain(const std::string& name)
 	return 0;
 }
 
-//-----------------------------------------------------------------------------
-int FEMesh::Faces(FEElement& el)
+FEDomain* FEMesh::FindDomain(int domId)
 {
-	switch (el.Type())
-	{
-	case FE_HEX8G8:
-	case FE_HEX8RI:
-	case FE_HEX8G1:
-    case FE_HEX20G8:
-	case FE_HEX20G27:
-	case FE_HEX27G27: return 6;
-	case FE_PENTA6G6:
-    case FE_PENTA15G8:
-    case FE_PENTA15G21:
-	case FE_PYRA5G8: return 5;
-	case FE_TET4G4:
-	case FE_TET10G4:
-	case FE_TET10G8:
-	case FE_TET10GL11:
-	case FE_TET15G8:
-	case FE_TET15G11:
-	case FE_TET15G15:
-	case FE_TET20G15:
-	case FE_TET4G1: return 4;
-    case FE_SHELL_QUAD4G8:
-    case FE_SHELL_QUAD4G12:
-    case FE_SHELL_QUAD8G18:
-    case FE_SHELL_QUAD8G27:
-    case FE_SHELL_TRI3G6:
-    case FE_SHELL_TRI3G9:
-    case FE_SHELL_TRI6G14:
-    case FE_SHELL_TRI6G21: return 1;
-	default:
-		assert(false);
-	}
-
+	for (size_t i = 0; i<m_Domain.size(); ++i) if (m_Domain[i]->GetID() == domId) return m_Domain[i];
 	return 0;
 }
 
 //-----------------------------------------------------------------------------
-//! This function returns the face connectivity from a certain element
-
-int FEMesh::GetFace(FEElement& el, int n, int* nf)
+//! return an element
+FEElement* FEMesh::Element(int n)
 {
-	int nn = -1;
-	int* en = &el.m_node[0];
-	switch (el.Type())
+	if (n < 0) return nullptr;
+	for (int i = 0; i < Domains(); ++i)
 	{
-	case FE_HEX8G8:
-	case FE_HEX8RI:
-	case FE_HEX8G1:
-		nn = 4;
-		switch (n)
-		{
-		case 0: nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[5]; nf[3] = en[4]; break;
-		case 1: nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[6]; nf[3] = en[5]; break;
-		case 2: nf[0] = en[2]; nf[1] = en[3]; nf[2] = en[7]; nf[3] = en[6]; break;
-		case 3: nf[0] = en[3]; nf[1] = en[0]; nf[2] = en[4]; nf[3] = en[7]; break;
-		case 4: nf[0] = en[0]; nf[1] = en[3]; nf[2] = en[2]; nf[3] = en[1]; break;
-		case 5: nf[0] = en[4]; nf[1] = en[5]; nf[2] = en[6]; nf[3] = en[7]; break;
-		}
-		break;
-	case FE_PENTA6G6:
-		switch(n)
-		{
-		case 0: nn = 4; nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[4]; nf[3] = en[3]; break;
-		case 1: nn = 4; nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[5]; nf[3] = en[4]; break;
-		case 2: nn = 4; nf[0] = en[0]; nf[1] = en[3]; nf[2] = en[5]; nf[3] = en[2]; break;
-		case 3: nn = 3; nf[0] = en[0]; nf[1] = en[2]; nf[2] = en[1]; nf[3] = en[1]; break;
-		case 4: nn = 3; nf[0] = en[3]; nf[1] = en[4]; nf[2] = en[5]; nf[3] = en[5]; break;
-		}
-		break;
-    case FE_PENTA15G8:
-    case FE_PENTA15G21:
-        switch(n)
-        {
-            case 0: nn = 8; nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[4]; nf[3] = en[3]; nf[4] = en[ 6]; nf[5] = en[13]; nf[6] = en[ 9]; nf[7] = en[12]; break;
-            case 1: nn = 8; nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[5]; nf[3] = en[4]; nf[4] = en[ 7]; nf[5] = en[14]; nf[6] = en[10]; nf[7] = en[13]; break;
-            case 2: nn = 8; nf[0] = en[0]; nf[1] = en[3]; nf[2] = en[5]; nf[3] = en[2]; nf[4] = en[12]; nf[5] = en[11]; nf[6] = en[14]; nf[7] = en[ 8]; break;
-            case 3: nn = 6; nf[0] = en[0]; nf[1] = en[2]; nf[2] = en[1]; nf[3] = en[8]; nf[4] = en[ 7]; nf[5] = en[ 6]; break;
-            case 4: nn = 6; nf[0] = en[3]; nf[1] = en[4]; nf[2] = en[5]; nf[3] = en[9]; nf[4] = en[10]; nf[5] = en[11]; break;
-        }
-        break;
-	case FE_PYRA5G8:
-		switch (n)
-		{
-			case 0: nn = 3; nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[4]; break;
-			case 1: nn = 3; nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[4]; break;
-			case 2: nn = 3; nf[0] = en[2]; nf[1] = en[3]; nf[2] = en[4]; break;
-			case 3: nn = 3; nf[0] = en[3]; nf[1] = en[0]; nf[2] = en[4]; break;
-			case 4: nn = 4; nf[0] = en[3]; nf[1] = en[2]; nf[2] = en[1]; nf[3] = en[0]; break;
-		}
-		break;
-    case FE_TET4G4:
-	case FE_TET4G1:
-		nn = 3;
-		switch (n)
-		{
-		case 0: nf[0] = en[0]; nf[1] = en[1]; nf[2] = nf[3] = en[3]; break;
-		case 1: nf[0] = en[1]; nf[1] = en[2]; nf[2] = nf[3] = en[3]; break;
-		case 2: nf[0] = en[2]; nf[1] = en[0]; nf[2] = nf[3] = en[3]; break;
-		case 3: nf[0] = en[2]; nf[1] = en[1]; nf[2] = nf[3] = en[0]; break;
-		}
-		break;
-	case FE_TET10G4:
-	case FE_TET10G8:
-	case FE_TET10GL11:
-		nn = 6;
-		switch(n)
-		{
-		case 0: nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[3]; nf[3] = en[4]; nf[4] = en[8]; nf[5] = en[7]; break;
-		case 1: nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[3]; nf[3] = en[5]; nf[4] = en[9]; nf[5] = en[8]; break;
-		case 2: nf[0] = en[2]; nf[1] = en[0]; nf[2] = en[3]; nf[3] = en[6]; nf[4] = en[7]; nf[5] = en[9]; break;
-		case 3: nf[0] = en[2]; nf[1] = en[1]; nf[2] = en[0]; nf[3] = en[5]; nf[4] = en[4]; nf[5] = en[6]; break;
-		}
-		break;
-	case FE_TET15G8:
-	case FE_TET15G11:
-	case FE_TET15G15:
-		nn = 7;
-		switch(n)
-		{
-		case 0: nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[3]; nf[3] = en[4]; nf[4] = en[8]; nf[5] = en[7]; nf[6] = en[11]; break;
-		case 1: nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[3]; nf[3] = en[5]; nf[4] = en[9]; nf[5] = en[8]; nf[6] = en[12]; break;
-		case 2: nf[0] = en[2]; nf[1] = en[0]; nf[2] = en[3]; nf[3] = en[6]; nf[4] = en[7]; nf[5] = en[9]; nf[6] = en[13]; break;
-		case 3: nf[0] = en[2]; nf[1] = en[1]; nf[2] = en[0]; nf[3] = en[5]; nf[4] = en[4]; nf[5] = en[6]; nf[6] = en[10]; break;
-		}
-		break;
-	case FE_TET20G15:
-		nn = 10;
-		switch(n)
-		{
-		case 0: nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[3]; nf[3] = en[4]; nf[4] = en[5]; nf[5] = en[12]; nf[6] = en[13]; nf[7] = en[10]; nf[8] = en[11]; nf[9] = en[16]; break;
-		case 1: nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[3]; nf[3] = en[6]; nf[4] = en[7]; nf[5] = en[14]; nf[6] = en[15]; nf[7] = en[13]; nf[8] = en[14]; nf[9] = en[17]; break;
-		case 2: nf[0] = en[2]; nf[1] = en[0]; nf[2] = en[3]; nf[3] = en[9]; nf[4] = en[8]; nf[5] = en[10]; nf[6] = en[11]; nf[7] = en[14]; nf[8] = en[15]; nf[9] = en[18]; break;
-		case 3: nf[0] = en[2]; nf[1] = en[1]; nf[2] = en[0]; nf[3] = en[7]; nf[4] = en[6]; nf[5] = en[ 5]; nf[6] = en[ 4]; nf[7] = en[10]; nf[8] = en[ 8]; nf[9] = en[19]; break;
-		}
-		break;
-    case FE_HEX20G8:
-	case FE_HEX20G27:
-		nn = 8;
-		switch(n)
-		{
-		case 0: nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[5]; nf[3] = en[4]; nf[4] = en[ 8]; nf[5] = en[17]; nf[6] = en[12]; nf[7] = en[16]; break;
-		case 1: nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[6]; nf[3] = en[5]; nf[4] = en[ 9]; nf[5] = en[18]; nf[6] = en[13]; nf[7] = en[17]; break;
-		case 2: nf[0] = en[2]; nf[1] = en[3]; nf[2] = en[7]; nf[3] = en[6]; nf[4] = en[10]; nf[5] = en[19]; nf[6] = en[14]; nf[7] = en[18]; break;
-		case 3: nf[0] = en[3]; nf[1] = en[0]; nf[2] = en[4]; nf[3] = en[7]; nf[4] = en[11]; nf[5] = en[16]; nf[6] = en[15]; nf[7] = en[19]; break;
-		case 4: nf[0] = en[0]; nf[1] = en[3]; nf[2] = en[2]; nf[3] = en[1]; nf[4] = en[11]; nf[5] = en[10]; nf[6] = en[ 9]; nf[7] = en[ 8]; break;
-		case 5: nf[0] = en[4]; nf[1] = en[5]; nf[2] = en[6]; nf[3] = en[7]; nf[4] = en[12]; nf[5] = en[13]; nf[6] = en[14]; nf[7] = en[15]; break;
-		}
-		break;
-	case FE_HEX27G27:
-		nn = 9;
-		switch(n)
-		{
-		case 0: nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[5]; nf[3] = en[4]; nf[4] = en[ 8]; nf[5] = en[17]; nf[6] = en[12]; nf[7] = en[16]; nf[8] = en[20]; break;
-		case 1: nf[0] = en[1]; nf[1] = en[2]; nf[2] = en[6]; nf[3] = en[5]; nf[4] = en[ 9]; nf[5] = en[18]; nf[6] = en[13]; nf[7] = en[17]; nf[8] = en[21]; break;
-		case 2: nf[0] = en[2]; nf[1] = en[3]; nf[2] = en[7]; nf[3] = en[6]; nf[4] = en[10]; nf[5] = en[19]; nf[6] = en[14]; nf[7] = en[18]; nf[8] = en[22]; break;
-		case 3: nf[0] = en[3]; nf[1] = en[0]; nf[2] = en[4]; nf[3] = en[7]; nf[4] = en[11]; nf[5] = en[16]; nf[6] = en[15]; nf[7] = en[19]; nf[8] = en[23]; break;
-		case 4: nf[0] = en[0]; nf[1] = en[3]; nf[2] = en[2]; nf[3] = en[1]; nf[4] = en[11]; nf[5] = en[10]; nf[6] = en[ 9]; nf[7] = en[ 8]; nf[8] = en[24]; break;
-		case 5: nf[0] = en[4]; nf[1] = en[5]; nf[2] = en[6]; nf[3] = en[7]; nf[4] = en[12]; nf[5] = en[13]; nf[6] = en[14]; nf[7] = en[15]; nf[8] = en[25]; break;
-		}
-		break;
-    case FE_SHELL_QUAD4G8:
-    case FE_SHELL_QUAD4G12:
-        nn = 4;
-		nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[2]; nf[3] = en[3];
-		break;
-    case FE_SHELL_QUAD8G18:
-    case FE_SHELL_QUAD8G27:
-        nn = 8;
-        nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[2]; nf[3] = en[3]; nf[4] = en[4]; nf[5] = en[5]; nf[6] = en[6]; nf[7] = en[7];
-        break;
-    case FE_SHELL_TRI3G6:
-    case FE_SHELL_TRI3G9:
-        nn = 3;
-		nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[2];
-		break;
-    case FE_SHELL_TRI6G14:
-    case FE_SHELL_TRI6G21:
-        nn = 6;
-        nf[0] = en[0]; nf[1] = en[1]; nf[2] = en[2]; nf[3] = en[3]; nf[4] = en[4]; nf[5] = en[5];
-        break;
+		FEDomain& dom = Domain(i);
+		int NEL = dom.Elements();
+		if (n < NEL) return &dom.ElementRef(n); 
+		else n -= NEL;
 	}
-
-	return nn;
+	return nullptr;
 }
 
 //-----------------------------------------------------------------------------
@@ -1378,6 +585,20 @@ FEElement* FEMesh::FindElementFromID(int nid)
 }
 */
 
+
+//-----------------------------------------------------------------------------
+//! See if all elements are of a particular shape
+bool FEMesh::IsType(FE_Element_Shape eshape)
+{
+	FEElementList elemList(*this);
+	for (FEElementList::iterator it = elemList.begin(); it != elemList.end(); ++it)
+	{
+		FEElement& el = *it;
+		if (el.Shape() != eshape) return false;
+	}
+	return true;
+}
+
 //-----------------------------------------------------------------------------
 // Find the element in which point y lies
 FESolidElement* FEMesh::FindSolidElement(vec3d y, double r[3])
@@ -1395,30 +616,21 @@ FESolidElement* FEMesh::FindSolidElement(vec3d y, double r[3])
 	return 0;
 }
 
+//-----------------------------------------------------------------------------
+void FEMesh::ClearDomains()
+{
+	int N = Domains();
+	for (int i = 0; i < N; ++i) delete m_Domain[i];
+	m_Domain.clear();
+	if (m_LUT) delete m_LUT; m_LUT = 0;
+}
 
 //-----------------------------------------------------------------------------
-//! This function finds all the domains that have a certain material
-void FEMesh::DomainListFromMaterial(vector<int>& lmat, vector<int>& ldom)
+//! Rebuild the LUT
+void FEMesh::RebuildLUT()
 {
-	// make sure the list is empty
-	if (ldom.empty() == false) ldom.clear();
-
-	// loop over all domains
-	int ND = (int) m_Domain.size();
-	int NM = (int) lmat.size();
-	for (int i=0; i<ND; ++i)
-	{
-		FEDomain& di = *m_Domain[i];
-		int dmat = di.GetMaterial()->GetID();
-		for (int j=0; j<NM; ++j)
-		{
-			if (dmat == lmat[j])
-			{
-				ldom.push_back(i);
-				break;
-			}
-		}
-	}
+	if (m_LUT) delete m_LUT;
+	m_LUT = new FEElementLUT(*this);
 }
 
 //-----------------------------------------------------------------------------
@@ -1443,7 +655,7 @@ FESurface* FEMesh::ElementBoundarySurface(bool boutside, bool binside)
 	for (int i=0; i<NE; ++i, ++it)
 	{
 		FEElement& el = *it;
-		int nf = Faces(el);
+		int nf = el.Faces();
 		for (int j=0; j<nf; ++j)
 		{
 			FEElement* pen = EEL.Neighbor(i, j);
@@ -1452,7 +664,7 @@ FESurface* FEMesh::ElementBoundarySurface(bool boutside, bool binside)
 		}
 	}
 	// create the surface
-	FESurface* ps = new FESurface(this);
+	FESurface* ps = fecore_alloc(FESurface, GetFEModel());
 	if (NF == 0) return ps;
 	ps->Create(NF);
 
@@ -1463,7 +675,7 @@ FESurface* FEMesh::ElementBoundarySurface(bool boutside, bool binside)
 	for (int i=0; i<NE; ++i, ++it)
 	{
 		FEElement& el = *it;
-		int nf = Faces(el);
+		int nf = el.Faces();
 		for (int j=0; j<nf; ++j)
 		{
 			FEElement* pen = EEL.Neighbor(i, j);
@@ -1471,34 +683,22 @@ FESurface* FEMesh::ElementBoundarySurface(bool boutside, bool binside)
 				((pen != 0) && (el.GetID() < pen->GetID()) && binside ))
 			{
 				FESurfaceElement& se = ps->Element(NF++);
-				GetFace(el, j, face);
+				int faceNodes = el.GetFace(j, face);
 
-				switch (el.Shape())
+				switch (faceNodes)
 				{
-				case ET_HEX8:
-					se.SetType(FE_QUAD4G4); 
-					break;
-				case ET_HEX20:
-                    se.SetType(FE_QUAD8G9);
-                    break;
-				case ET_HEX27:
-					se.SetType(FE_QUAD9G9);
-					break;
-				case ET_TET4:
-					se.SetType(FE_TRI3G1); 
-					break;
-				case ET_TET10:
-				case ET_TET15:
-                    se.SetType(FE_TRI6G7);
-                    break;
+				case 4: se.SetType(FE_QUAD4G4); break;
+				case 8: se.SetType(FE_QUAD8G9); break;
+				case 9: se.SetType(FE_QUAD9G9); break;
+				case 3: se.SetType(FE_TRI3G1 ); break;
+				case 6: se.SetType(FE_TRI6G7 ); break;
+				case 7: se.SetType(FE_TRI7G7); break;
 				default:
 					assert(false);
 				}
 				
-				// TODO: 
-				// element IDs are global numbers. This is hack that may not always work!!
-				se.m_elem[0] = el.GetID() - 1;
-				if (pen) se.m_elem[1] = pen->GetID() - 1;
+				se.m_elem[0] = &el;
+				if (pen) se.m_elem[1] = pen;
 				
 				int nn = se.Nodes();
 				for (int k=0; k<nn; ++k)
@@ -1535,19 +735,19 @@ FESurface* FEMesh::ElementBoundarySurface(std::vector<FEDomain*> domains, bool b
 		for (int j = 0; j < domains[i]->Elements(); j++)
 		{
 			FEElement& el = domains[i]->ElementRef(j);
-			int nf = Faces(el);
+			int nf = el.Faces();
 			for (int k = 0; k<nf; ++k)
 			{
 				FEElement* pen = EEL.Neighbor(el.GetID()-1, k);
 				if ((pen == nullptr) && boutside) ++NF;
-				else if (pen && (std::find(domains.begin(), domains.end(), pen->GetDomain()) == domains.end()) && boutside) ++NF;
-				if ((pen != nullptr) && (el.GetID() < pen->GetID()) && binside && (std::find(domains.begin(), domains.end(), pen->GetDomain()) != domains.end())) ++NF;
+				else if (pen && (std::find(domains.begin(), domains.end(), pen->GetMeshPartition()) == domains.end()) && boutside) ++NF;
+				if ((pen != nullptr) && (el.GetID() < pen->GetID()) && binside && (std::find(domains.begin(), domains.end(), pen->GetMeshPartition()) != domains.end())) ++NF;
 			}
 		}
 	}
 
 	// create the surface
-	FESurface* ps = new FESurface(this);
+	FESurface* ps = fecore_alloc(FESurface, GetFEModel());
 	if (NF == 0) return ps;
 	ps->Create(NF);
 
@@ -1559,43 +759,31 @@ FESurface* FEMesh::ElementBoundarySurface(std::vector<FEDomain*> domains, bool b
 		for (int j = 0; j < domains[i]->Elements(); j++)
 		{
 			FEElement& el = domains[i]->ElementRef(j);
-			int nf = Faces(el);
+			int nf = el.Faces();
 			for (int k = 0; k < nf; ++k)
 			{
 				FEElement* pen = EEL.Neighbor(el.GetID()-1, k);
 				if (((pen == nullptr) && boutside) ||
-					(pen && (std::find(domains.begin(), domains.end(), pen->GetDomain()) == domains.end()) && boutside) ||
-					((pen != nullptr) && (el.GetID() < pen->GetID()) && binside && (std::find(domains.begin(), domains.end(), pen->GetDomain()) != domains.end())))
+					(pen && (std::find(domains.begin(), domains.end(), pen->GetMeshPartition()) == domains.end()) && boutside) ||
+					((pen != nullptr) && (el.GetID() < pen->GetID()) && binside && (std::find(domains.begin(), domains.end(), pen->GetMeshPartition()) != domains.end())))
 				{
 					FESurfaceElement& se = ps->Element(NF++);
-					GetFace(el, k, face);
+					int faceNodes = el.GetFace(k, face);
 
-					switch (el.Shape())
+					switch (faceNodes)
 					{
-					case ET_HEX8:
-						se.SetType(FE_QUAD4G4);
-						break;
-					case ET_HEX20:
-						se.SetType(FE_QUAD8G9);
-						break;
-					case ET_HEX27:
-						se.SetType(FE_QUAD9G9);
-						break;
-					case ET_TET4:
-						se.SetType(FE_TRI3G1);
-						break;
-					case ET_TET10:
-					case ET_TET15:
-						se.SetType(FE_TRI6G7);
-						break;
+					case 4: se.SetType(FE_QUAD4G4); break;
+					case 8: se.SetType(FE_QUAD8G9); break;
+					case 9: se.SetType(FE_QUAD9G9); break;
+					case 3: se.SetType(FE_TRI3G1 ); break;
+					case 6: se.SetType(FE_TRI6G7 ); break;
+					case 7: se.SetType(FE_TRI7G7 ); break;
 					default:
 						assert(false);
 					}
 
-					// TODO: 
-					// element IDs are global numbers. This is hack that may not always work!!
-					se.m_elem[0] = el.GetID() - 1;
-					if (pen) se.m_elem[1] = pen->GetID() - 1;
+					se.m_elem[0] = &el;
+					if (pen) se.m_elem[1] = pen;
 
 					int nn = se.Nodes();
 					for (int p = 0; p < nn; ++p)
@@ -1674,4 +862,179 @@ FEElement* FEElementLUT::Find(int nid)
 {
 	if ((nid < m_minID) || (nid > m_maxID)) return 0;
 	return m_elem[nid - m_minID];
+}
+
+// update the domains of the mesh
+void FEMesh::Update(const FETimeInfo& tp)
+{
+	for (int i = 0; i<Domains(); ++i)
+	{
+		FEDomain& dom = Domain(i);
+		if (dom.IsActive()) dom.Update(tp);
+	}
+}
+
+
+//-----------------------------------------------------------------------------
+void FEMesh::ClearDataMaps()
+{
+	for (int i = 0; i<(int)m_DataMap.size(); ++i) delete m_DataMap[i];
+	m_DataMap.clear();
+}
+
+//-----------------------------------------------------------------------------
+void FEMesh::AddDataMap(FEDataMap* map)
+{
+	m_DataMap.push_back(map);
+}
+
+//-----------------------------------------------------------------------------
+FEDataMap* FEMesh::FindDataMap(const std::string& mapName)
+{
+	for (int i = 0; i<(int)m_DataMap.size(); ++i)
+	{
+		if (m_DataMap[i]->GetName() == mapName) return m_DataMap[i];
+	}
+	return 0;
+}
+
+//-----------------------------------------------------------------------------
+int FEMesh::DataMaps() const
+{
+	return (int)m_DataMap.size();
+}
+
+//-----------------------------------------------------------------------------
+FEDataMap* FEMesh::GetDataMap(int i)
+{
+	return m_DataMap[i];
+}
+
+//==============================================================================
+FEElementIterator::FEElementIterator(FEMesh* mesh, FEElementSet* elemSet) : m_mesh(mesh), m_eset(elemSet)
+{
+	reset();
+}
+
+void FEElementIterator::reset()
+{
+	assert(m_mesh);
+	m_el = nullptr;
+	m_dom = -1;
+	m_index = -1;
+	if (m_eset)
+	{
+		if (m_eset->Elements())
+		{
+			m_index = 0;
+			m_el = &m_eset->Element(0);
+		}
+	}
+	else if (m_mesh && (m_mesh->Domains() > 0))
+	{
+		FEDomain& dom = m_mesh->Domain(0);
+		if (dom.Elements())
+		{
+			m_dom = 0;
+			m_index = 0;
+			m_el = &dom.ElementRef(0);
+		}
+	}
+}
+
+void FEElementIterator::operator++()
+{
+	if (m_el == nullptr)
+	{
+		assert(false);
+		return;
+	}
+
+	if (m_eset)
+	{
+		m_index++;
+		if (m_index < m_eset->Elements())
+		{
+			m_el = &m_eset->Element(m_index);
+		}
+		else
+		{
+			m_el = nullptr;
+		}
+	}
+	else if (m_mesh)
+	{
+		m_index++;
+		FEDomain& dom = m_mesh->Domain(m_dom);
+		if (m_index >= dom.Elements())
+		{
+			m_dom++;
+			if (m_dom < m_mesh->Domains())
+			{
+				FEDomain& dom2 = m_mesh->Domain(m_dom);
+				if (dom2.Elements())
+				{
+					m_index = 0;
+					m_el = &dom2.ElementRef(0);
+				}
+				else
+				{
+					m_el = nullptr;
+				}
+			}
+			else
+			{
+				m_el = nullptr;
+			}
+		}
+		else m_el = &dom.ElementRef(m_index);
+	}
+	else
+	{
+		assert(false);
+		m_el = nullptr;
+	}
+}
+
+// create a copy of this mesh
+void FEMesh::CopyFrom(FEMesh& mesh)
+{
+	Clear();
+
+	int N0 = mesh.Nodes();
+	CreateNodes(N0);
+	for (int i = 0; i < N0; ++i)
+	{
+		Node(i) = mesh.Node(i);
+	}
+
+	// now allocate domains
+	ClearDomains();
+	for (int i = 0; i < mesh.Domains(); ++i)
+	{
+		FEDomain& dom = mesh.Domain(i);
+		const char* sz = dom.GetTypeStr();
+
+		// create a new domain
+		FEDomain* pd = fecore_new<FEDomain>(sz, nullptr);
+		assert(pd);
+		pd->SetMesh(this);
+
+		// copy domain data
+		pd->CopyFrom(&dom);
+
+		// add it to the mesh
+		AddDomain(pd);
+	}
+	RebuildLUT();
+
+	// copy element sets
+	for (int i = 0; i < mesh.ElementSets(); ++i)
+	{
+		FEElementSet& eset = mesh.ElementSet(i);
+		FEElementSet* pset = new FEElementSet(GetFEModel());
+		pset->SetMesh(this);
+		pset->CopyFrom(eset);
+		AddElementSet(pset);
+	}
 }

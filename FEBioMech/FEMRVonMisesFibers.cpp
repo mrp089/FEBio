@@ -1,37 +1,54 @@
-// FEVonMisesFibers.cpp: implementation of the FEVonMisesFibers class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEMRVonMisesFibers.h"
 #include <fstream>
 
-// define the material point parameters
-BEGIN_PARAMETER_LIST(FEMRVonMisesMaterialPoint, FEMaterialPoint)
-	ADD_PARAMETER(m_kf, FE_PARAM_DOUBLE, "kf");
-	ADD_PARAMETER(m_tp, FE_PARAM_DOUBLE, "tp");
-END_PARAMETER_LIST();
-
-
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEMRVonMisesFibers, FEUncoupledMaterial)
-	ADD_PARAMETER(c1, FE_PARAM_DOUBLE, "c1");
-	ADD_PARAMETER(c2, FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETER(m_fib.m_c3, FE_PARAM_DOUBLE, "c3");
-	ADD_PARAMETER(m_fib.m_c4, FE_PARAM_DOUBLE, "c4");
-	ADD_PARAMETER(m_fib.m_c5, FE_PARAM_DOUBLE, "c5");
-	ADD_PARAMETER(m_fib.m_lam1, FE_PARAM_DOUBLE, "lam_max");
+BEGIN_FECORE_CLASS(FEMRVonMisesFibers, FEUncoupledMaterial)
+	ADD_PARAMETER(c1, "c1");
+	ADD_PARAMETER(c2, "c2");
+	ADD_PARAMETER(m_fib.m_c3, "c3");
+	ADD_PARAMETER(m_fib.m_c4, "c4");
+	ADD_PARAMETER(m_fib.m_c5, "c5");
+	ADD_PARAMETER(m_fib.m_lam1, "lam_max");
 	// Fiber Concentration Factor
-	ADD_PARAMETER(kf, FE_PARAM_DOUBLE, "kf");
+	ADD_PARAMETER(kf, "kf");
 	// Preferred fiber orientation IN RADIANS
-	ADD_PARAMETER(tp, FE_PARAM_DOUBLE, "tp");
+	ADD_PARAMETER(tp, "tp");
 	// Number of Gauss Integration Points 
-	ADD_PARAMETER(gipt, FE_PARAM_INT, "gipt");
+	ADD_PARAMETER(gipt, "gipt");
 	// Choice of von Mises distribution; 1: semi-circular von Mises distribution; = 2: constrained von Mises distribution
-	ADD_PARAMETER(vmc, FE_PARAM_INT, "vmc"); 
+	ADD_PARAMETER(vmc, "vmc"); 
 	// Exponent for the constrained von Mises distribution
-	ADD_PARAMETER(var_n, FE_PARAM_DOUBLE, "var_n"); 
-END_PARAMETER_LIST();
+	ADD_PARAMETER(var_n, "var_n"); 
+END_FECORE_CLASS();
 
 //=============================================================================
 FEMRVonMisesMaterialPoint::FEMRVonMisesMaterialPoint(FEMaterialPoint* mp) : FEMaterialPoint(mp)
@@ -51,18 +68,8 @@ FEMaterialPoint* FEMRVonMisesMaterialPoint::Copy()
 //-----------------------------------------------------------------------------
 void FEMRVonMisesMaterialPoint::Serialize(DumpStream& ar)
 {
-	if (m_pNext) m_pNext->Serialize(ar);
-
-	if (ar.IsSaving())
-	{
-		ar << m_kf;
-		ar << m_tp;
-	}
-	else
-	{
-		ar >> m_kf;
-		ar >> m_tp;
-	}
+	FEMaterialPoint::Serialize(ar);
+	ar & m_kf & m_tp;
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -146,12 +153,15 @@ double bessi1(double X)
 }
 
 //-----------------------------------------------------------------------------
-FEMRVonMisesFibers::FEMRVonMisesFibers(FEModel* pfem) : FEUncoupledMaterial(pfem), m_fib(pfem) {}
+FEMRVonMisesFibers::FEMRVonMisesFibers(FEModel* pfem) : FEUncoupledMaterial(pfem), m_fib(pfem) 
+{
+	m_fib.SetParent(this);
+}
 
 //-----------------------------------------------------------------------------
 FEMaterialPoint* FEMRVonMisesFibers::CreateMaterialPointData()
 {
-	FEMRVonMisesMaterialPoint* pt = new FEMRVonMisesMaterialPoint(m_fib.CreateMaterialPointData());
+	FEMRVonMisesMaterialPoint* pt = new FEMRVonMisesMaterialPoint(FEUncoupledMaterial::CreateMaterialPointData());
 	pt->m_kf = kf;
 	pt->m_tp = tp;
 	return pt;
@@ -176,7 +186,7 @@ mat3ds FEMRVonMisesFibers::DevStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 	
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!
@@ -262,22 +272,26 @@ mat3ds FEMRVonMisesFibers::DevStress(FEMaterialPoint& mp)
          wmg[j+8] = 0.06667134 * pas/2.0;
          wmg[j+9] = 0.06667134 * pas/2.0;
  	}
-	
+
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction : a0 is the fiber direction,  
 	// b0 a vector of the plane of the fibers perpendicular to a0
 	// (specified in mat_axis : a0 = unit(a) ; b0 = unit((a0^d0)^a0)
-	a0.x = pt.m_Q[0][0]; b0.x = pt.m_Q[0][1]; c0.x = pt.m_Q[0][2];
-	a0.y = pt.m_Q[1][0]; b0.y = pt.m_Q[1][1]; c0.y = pt.m_Q[1][2];
-	a0.z = pt.m_Q[2][0]; b0.z = pt.m_Q[2][1]; c0.z = pt.m_Q[2][2];	
+	a0.x = Q[0][0]; b0.x = Q[0][1]; c0.x = Q[0][2];
+	a0.y = Q[1][0]; b0.y = Q[1][1]; c0.y = Q[1][2];
+	a0.z = Q[2][0]; b0.z = Q[2][1]; c0.z = Q[2][2];
 
 	// Think of it as #gipt different fiber orientations that are distributed within a plane
 	// of coordinate system (a0,b0)
 	for(i=0;i<gipt;++i)
 	{
 		// vector describing the fibers which make an angle pp[i] with vector a0 in plane (a0,b0)
-		pt.m_Q[0][0] = cos(pp[i])*a0.x+sin(pp[i])*b0.x;
-		pt.m_Q[1][0] = cos(pp[i])*a0.y+sin(pp[i])*b0.y;
-		pt.m_Q[2][0] = cos(pp[i])*a0.z+sin(pp[i])*b0.z;
+		vec3d n0;
+		n0.x = cos(pp[i])*a0.x+sin(pp[i])*b0.x;
+		n0.y = cos(pp[i])*a0.y+sin(pp[i])*b0.y;
+		n0.z = cos(pp[i])*a0.z+sin(pp[i])*b0.z;
 
 		// probability of having a fiber along this vector 
 		if (vmc==1) // Semi-circular von Mises distribution
@@ -292,13 +306,8 @@ mat3ds FEMRVonMisesFibers::DevStress(FEMaterialPoint& mp)
 		
 		// add the fiber stress by Gauss integration : m_fib.Stress(mp) is the deviatoric stress due to the fibers in direction pp[i], 
 		// distribution is the probability of having a fiber in this direction, and wmg[i] is the Gauss Weight for integration
-		s += wmg[i]*distribution*m_fib.DevStress(mp);
+		s += wmg[i]*distribution*m_fib.DevFiberStress(mp, n0);
 	}
-
-	//the first column of Q was modified at every step of the previous loop and its true value was stored in a0:
-	pt.m_Q[0][0] = a0.x;
-	pt.m_Q[1][0] = a0.y;
-	pt.m_Q[2][0] = a0.z;	
 
 	return s;
 }
@@ -322,7 +331,7 @@ tens4ds FEMRVonMisesFibers::DevTangent(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	double I1 = B.tr();
@@ -422,20 +431,24 @@ tens4ds FEMRVonMisesFibers::DevTangent(FEMaterialPoint& mp)
 		wmg[j+8] = 0.06667134 * pas/2.0;
 		wmg[j+9] = 0.06667134 * pas/2.0;
  	}
-	
+
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	a0.x = pt.m_Q[0][0]; b0.x = pt.m_Q[0][1]; c0.x = pt.m_Q[0][2];
-	a0.y = pt.m_Q[1][0]; b0.y = pt.m_Q[1][1]; c0.y = pt.m_Q[1][2];
-	a0.z = pt.m_Q[2][0]; b0.z = pt.m_Q[2][1]; c0.z = pt.m_Q[2][2];
+	a0.x = Q[0][0]; b0.x = Q[0][1]; c0.x = Q[0][2];
+	a0.y = Q[1][0]; b0.y = Q[1][1]; c0.y = Q[1][2];
+	a0.z = Q[2][0]; b0.z = Q[2][1]; c0.z = Q[2][2];
 
 	// Think of it as #gipt different fiber orientations that are distributed within a plane of coordinate system (a0,b0)
 	//  and that all contribute to the tangent in proportion with the probability of having a fiber in this orientation
 	for(i=0;i<gipt;++i)
 	{
 	    // vector describing the fibers which make an angle pp[i] with vector a0 in plane (a0,b0)
-		pt.m_Q[0][0] = cos(pp[i])*a0.x+sin(pp[i])*b0.x;
-		pt.m_Q[1][0] = cos(pp[i])*a0.y+sin(pp[i])*b0.y;
-		pt.m_Q[2][0] = cos(pp[i])*a0.z+sin(pp[i])*b0.z;
+		vec3d n0;
+		n0.x = cos(pp[i])*a0.x+sin(pp[i])*b0.x;
+		n0.y = cos(pp[i])*a0.y+sin(pp[i])*b0.y;
+		n0.z = cos(pp[i])*a0.z+sin(pp[i])*b0.z;
 		
 		// probability of having a fiber along this vector 
 		if (vmc==1) // Semi-circular von Mises distribution
@@ -450,13 +463,8 @@ tens4ds FEMRVonMisesFibers::DevTangent(FEMaterialPoint& mp)
 		
 	// add the fiber stress by Gauss integration : m_fib.Tangent(mp) is the contribution to the tangent of the fibers in direction pp[i], 
 	// distribution is the probability of having a fiber in this direction, and wmg[i] is the Gauss Weight for integration
-		c += wmg[i]*distribution*m_fib.DevTangent(mp);
+		c += wmg[i]*distribution*m_fib.DevFiberTangent(mp, n0);
 	}
-
-	//the first column of Q was modified at every step of the previous loop and its true value was stored in a0:
-	pt.m_Q[0][0] = a0.x;
-	pt.m_Q[1][0] = a0.y;
-	pt.m_Q[2][0] = a0.z;	
 
 	return c;
 }

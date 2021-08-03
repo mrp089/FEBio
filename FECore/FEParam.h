@@ -1,13 +1,43 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "vec3d.h"
 #include "mat3d.h"
 #include <assert.h>
 #include <vector>
 #include "fecore_api.h"
+#include "ParamString.h"
 
 //-----------------------------------------------------------------------------
 class FEParamValidator;
 class DumpStream;
+class FEParamContainer;
 
 //-----------------------------------------------------------------------------
 // Different supported parameter types
@@ -23,20 +53,36 @@ enum FEParamType {
 	FE_PARAM_IMAGE_3D,
 	FE_PARAM_STRING,
 	FE_PARAM_DATA_ARRAY,
-	FE_PARAM_FUNC1D,
 	FE_PARAM_TENS3DRS,
+	FE_PARAM_STD_STRING,
+	FE_PARAM_STD_VECTOR_INT,
 	FE_PARAM_STD_VECTOR_DOUBLE,
-	FE_PARAM_MATH_DOUBLE
+	FE_PARAM_STD_VECTOR_VEC2D,
+	FE_PARAM_STD_VECTOR_STRING,
+	FE_PARAM_DOUBLE_MAPPED,
+	FE_PARAM_VEC3D_MAPPED,
+	FE_PARAM_MAT3D_MAPPED,
+	FE_PARAM_MAT3DS_MAPPED,
+	FE_PARAM_MATERIALPOINT
 };
 
 //-----------------------------------------------------------------------------
+// Parameter flags
+enum FEParamFlag {
+	FE_PARAM_ATTRIBUTE = 0x01,		// parameter will be read as attribute
+	FE_PARAM_USER      = 0x02		// user parameter (owned by parameter list)	
+};
+
+class FEParam;
+
+//-----------------------------------------------------------------------------
 // class describing the value of parameter
-class FECORE_API FEParamValue
+class FEParamValue
 {
 private:
 	void*			m_pv;		// pointer to variable data
-	FEParamType		m_itype;	// type of variable
-	int				m_ndim;		// dimension of array (or 1 for non-array types)
+	FEParamType		m_itype;	// type of variable (this is not the type of the param!)
+	FEParam*		m_param;	// the parameter (can be null if it is not a parameter)
 
 public:
 
@@ -44,29 +90,20 @@ public:
 	{
 		m_pv = 0;
 		m_itype = FE_PARAM_INVALID;
-		m_ndim = -1;
+		m_param = 0;
 	}
 
-	explicit FEParamValue(double& v)
+	explicit FEParamValue(FEParam* p, void* v, FEParamType itype)
 	{
-		m_pv = &v;
-		m_itype = FE_PARAM_DOUBLE;
-		m_ndim = 1;
-	}
-
-	explicit FEParamValue(vec3d& v)
-	{
-		m_pv = &v;
-		m_itype = FE_PARAM_VEC3D;
-		m_ndim = 1;
-	}
-
-	explicit FEParamValue(void* data, FEParamType itype, int dim = 1)
-	{
-		m_pv = data;
+		m_pv = v;
 		m_itype = itype;
-		m_ndim = dim;
+		m_param = p;
 	}
+
+	FEParamValue(double& v) : FEParamValue(0, &v, FE_PARAM_DOUBLE) {}
+	FEParamValue(vec2d&  v) : FEParamValue(0, &v, FE_PARAM_VEC2D) {}
+	FEParamValue(vec3d&  v) : FEParamValue(0, &v, FE_PARAM_VEC3D) {}
+	FEParamValue(mat3ds& v) : FEParamValue(0, &v, FE_PARAM_MAT3DS) {}
 
 	bool isValid() const { return (m_pv != 0); }
 
@@ -74,15 +111,12 @@ public:
 
 	void* data_ptr() const { return m_pv; }
 
-	int dim() const
-	{
-		return m_ndim;
-	}
+	FEParam* param() { return m_param; }
 
 	template <typename T> T& value() { return *((T*)m_pv); }
 	template <typename T> const T& value() const { return *((T*)m_pv); }
 
-	void Serialize(DumpStream& ar);
+	FECORE_API FEParamValue component(int n);
 };
 
 //-----------------------------------------------------------------------------
@@ -90,7 +124,11 @@ public:
 class FECORE_API FEParam
 {
 private:
-	FEParamValue	m_val;	// stores the value of the parameter
+	void*			m_pv;		// pointer to variable data
+	int				m_dim;		// dimension (in case data is array)
+	FEParamType		m_type;		// type of variable
+	unsigned int	m_flag;		// parameter flags
+	bool*			m_watch;	// parameter watch (set to true if read in)
 
 	const char*	m_szname;	// name of the parameter
 	const char*	m_szenum;	// enumerate values for ints
@@ -98,24 +136,14 @@ private:
 	// parameter validator
 	FEParamValidator*	m_pvalid;
 
-	// TODO: I want to look into the idea of generalizing this to "controllers". 
-	//       A controller would be anything that affects a parameter's value. Right now,
-	//       only load curves are used, but other controllers can be a mathematical expression,
-	//       or even a user-controlled interactive controller. 
-	int			m_nlc;		// load curve number for dynamic parameters (-1 for static)
-
-	// Can I put these two variables in a union?
-	double		m_scl;		// load curve scale factor
-	vec3d		m_vscl;		// scale factor for vectors
+	FEParamContainer* m_parent;	// parent object of parameter
 
 public:
 	// constructor
-	FEParam(void* pdata, FEParamType itype, int ndim, const char* szname);
+	FEParam(void* pdata, FEParamType itype, int ndim, const char* szname, bool* watch = nullptr);
 	FEParam(const FEParam& p);
+	~FEParam();
 	FEParam& operator = (const FEParam& p);
-
-	// get the value
-	FEParamValue& paramValue() { return m_val; }
 
 	// set the parameter's validator
 	void SetValidator(FEParamValidator* pvalid);
@@ -124,74 +152,72 @@ public:
 	bool is_valid() const;
 
 	// return the name of the parameter
-	const char* name() const { return m_szname; }
+	const char* name() const;
 
 	// return the enum values
-	const char* enums() const { return m_szenum; }
+	const char* enums() const;
 
 	// set the enum values (\0 separated. Make sure the end of the string has two \0's)
-	void SetEnums(const char* sz) { m_szenum = sz; }
+	void SetEnums(const char* sz);
 
 	// parameter dimension
-	int dim() const { return m_val.dim(); }
+	int dim() const;
 
 	// parameter type
-	FEParamType type() const { return m_val.type(); }
+	FEParamType type() const;
 
 	// data pointer
-	void* data_ptr() const { return m_val.data_ptr(); }
+	void* data_ptr() const;
 
-	// set the load curve ID and scale factor
-	void SetLoadCurve(int lc);
-	void SetLoadCurve(int lc, double s);
-	void SetLoadCurve(int lc, const vec3d& v );
-
-	// get the load curve ID (or -1 if none)
-	int GetLoadCurve() const { return m_nlc; }
-
-	// get the scale factors
-	FEParamValue GetScale() 
-	{ 
-		if (m_val.type() == FE_PARAM_DOUBLE)
-			return FEParamValue(m_scl); 
-		else if (m_val.type() == FE_PARAM_VEC3D)
-			return FEParamValue(m_vscl);
-		else return FEParamValue();
-	}
-	double& GetScaleDouble() { return m_scl; }
-	vec3d& GetScaleVec3d () { return m_vscl; }
+	// get the param value
+	FEParamValue paramValue(int i = -1);
 
 	// Copy the state of one parameter to this parameter.
 	// This requires that the parameters are compatible (i.e. same type, etc.)
 	bool CopyState(const FEParam& p);
 
+	void setParent(FEParamContainer* pc);
+	FEParamContainer* parent();
+
+	void SetFlags(unsigned int flags);
+	unsigned int GetFlags() const;
+
+	void SetWatch(bool b);
+
 public:
 	void Serialize(DumpStream& ar);
 
+	static void SaveClass(DumpStream& ar, FEParam* p);
+	static FEParam* LoadClass(DumpStream& ar, FEParam* p);
+
 public:
 	//! retrieves the value for a non-array item
-	template <class T> T& value() { return *((T*)m_val.data_ptr()); }
+	template <class T> T& value() { return *((T*) data_ptr()); }
 
 	//! retrieves the value for a non-array item
-	template <class T> T value() const { return *((T*)m_val.data_ptr()); }
+	template <class T> const T& value() const { return *((T*) data_ptr()); }
 
 	//! retrieves the value for an array item
-	template <class T> T* pvalue() { return (T*)m_val.data_ptr(); }
+	template <class T> T* pvalue() { return (T*) data_ptr(); }
 
 	//! retrieves the value for an array item
-	template <class T> T value(int i) const { return ((T*)m_val.data_ptr())[i]; }
+	template <class T> T& value(int i) { return ((T*)data_ptr())[i]; }
+	template <class T> T value(int i) const { return ((T*) data_ptr())[i]; }
 
 	//! retrieves pointer to element in array
 	template <class T> T* pvalue(int n);
 
 	//! override the template for char pointers
-	char* cvalue() { return (char*)m_val.data_ptr(); }
+	char* cvalue();
 };
 
 //-----------------------------------------------------------------------------
 //! Retrieves a pointer to element in array
 template<class T> inline T* FEParam::pvalue(int n)
 {
-	assert((n >= 0) && (n < m_val.dim()));
+	assert((n >= 0) && (n < m_dim));
 	return &(pvalue<T>()[n]);
 }
+
+//-----------------------------------------------------------------------------
+FECORE_API FEParamValue GetParameterComponent(const ParamString& paramName, FEParam* param);

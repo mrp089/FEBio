@@ -1,21 +1,50 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEDistanceConstraint.h"
-#include <FECore/FEModel.h>
+#include <FECore/FELinearSystem.h>
+#include "FEBioMech.h"
 #include <FECore/log.h>
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEDistanceConstraint, FENLConstraint);
-	ADD_PARAMETER(m_blaugon, FE_PARAM_BOOL  , "laugon" ); 
-	ADD_PARAMETER(m_atol   , FE_PARAM_DOUBLE, "augtol" );
-	ADD_PARAMETER(m_eps    , FE_PARAM_DOUBLE, "penalty");
-	ADD_PARAMETERV(m_node  , FE_PARAM_INT   , 2, "node");
-	ADD_PARAMETER(m_nminaug, FE_PARAM_DOUBLE, "minaug");
-	ADD_PARAMETER(m_nmaxaug, FE_PARAM_DOUBLE, "maxaug");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEDistanceConstraint, FENLConstraint);
+	ADD_PARAMETER(m_blaugon, "laugon" ); 
+	ADD_PARAMETER(m_atol   , "augtol" );
+	ADD_PARAMETER(m_eps    , "penalty");
+	ADD_PARAMETER(m_node   , 2, "node");
+	ADD_PARAMETER(m_nminaug, "minaug");
+	ADD_PARAMETER(m_nmaxaug, "maxaug");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! constructor
-FEDistanceConstraint::FEDistanceConstraint(FEModel* pfem) : FENLConstraint(pfem)
+FEDistanceConstraint::FEDistanceConstraint(FEModel* pfem) : FENLConstraint(pfem), m_dofU(pfem)
 {
 	m_eps = 0.0;
 	m_atol = 0.01;
@@ -27,9 +56,7 @@ FEDistanceConstraint::FEDistanceConstraint(FEModel* pfem) : FENLConstraint(pfem)
 	m_nminaug = 0;
 	m_nmaxaug = 10;
 
-	m_dofX = pfem->GetDOFIndex("x");
-	m_dofY = pfem->GetDOFIndex("y");
-	m_dofZ = pfem->GetDOFIndex("z");
+	m_dofU.AddVariable(FEBioMech::GetVariableName(FEBioMech::DISPLACEMENT));
 }
 
 //-----------------------------------------------------------------------------
@@ -67,7 +94,7 @@ void FEDistanceConstraint::Activate()
 }
 
 //-----------------------------------------------------------------------------
-void FEDistanceConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEDistanceConstraint::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	// get the FE mesh
 	FEMesh& mesh = GetFEModel()->GetMesh();
@@ -96,12 +123,12 @@ void FEDistanceConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 	// setup the LM vector
 	vector<int> lm(6);
-	lm[0] = nodea.m_ID[m_dofX];
-	lm[1] = nodea.m_ID[m_dofY];
-	lm[2] = nodea.m_ID[m_dofZ];
-	lm[3] = nodeb.m_ID[m_dofX];
-	lm[4] = nodeb.m_ID[m_dofY];
-	lm[5] = nodeb.m_ID[m_dofZ];
+	lm[0] = nodea.m_ID[m_dofU[0]];
+	lm[1] = nodea.m_ID[m_dofU[1]];
+	lm[2] = nodea.m_ID[m_dofU[2]];
+	lm[3] = nodeb.m_ID[m_dofU[0]];
+	lm[4] = nodeb.m_ID[m_dofU[1]];
+	lm[5] = nodeb.m_ID[m_dofU[2]];
 
 	// setup element vector
 	vector<int> en(2);
@@ -113,7 +140,7 @@ void FEDistanceConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FEDistanceConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEDistanceConstraint::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	// get the FE mesh
 	FEMesh& mesh = GetFEModel()->GetMesh();
@@ -143,7 +170,8 @@ void FEDistanceConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 	kab[1][2] = kab[2][1] = (m_eps*l0*rab.y*rab.z/l3);
 
 	// element stiffness matrix
-	matrix ke(6, 6);
+	FEElementMatrix ke;
+	ke.resize(6, 6);
 	ke.zero();
 	ke[0][0] = kab[0][0]; ke[0][1] = kab[0][1]; ke[0][2] = kab[0][2]; ke[0][3] = -kab[0][0]; ke[0][4] = -kab[0][1]; ke[0][5] = -kab[0][2];
 	ke[1][0] = kab[1][0]; ke[1][1] = kab[1][1]; ke[1][2] = kab[1][2]; ke[1][3] = -kab[1][0]; ke[1][4] = -kab[1][1]; ke[1][5] = -kab[1][2];
@@ -155,12 +183,12 @@ void FEDistanceConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 
 	// setup the LM vector
 	vector<int> lm(6);
-	lm[0] = nodea.m_ID[m_dofX];
-	lm[1] = nodea.m_ID[m_dofY];
-	lm[2] = nodea.m_ID[m_dofZ];
-	lm[3] = nodeb.m_ID[m_dofX];
-	lm[4] = nodeb.m_ID[m_dofY];
-	lm[5] = nodeb.m_ID[m_dofZ];
+	lm[0] = nodea.m_ID[m_dofU[0]];
+	lm[1] = nodea.m_ID[m_dofU[1]];
+	lm[2] = nodea.m_ID[m_dofU[2]];
+	lm[3] = nodeb.m_ID[m_dofU[0]];
+	lm[4] = nodeb.m_ID[m_dofU[1]];
+	lm[5] = nodeb.m_ID[m_dofU[2]];
 
 	// setup element vector
 	vector<int> en(2);
@@ -168,7 +196,9 @@ void FEDistanceConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 	en[1] = m_node[1] - 1;
 
 	// assemble element matrix in global stiffness matrix
-	psolver->AssembleStiffness(en, lm, ke);
+	ke.SetNodes(en);
+	ke.SetIndices(lm);
+	LS.Assemble(ke);
 }
 
 //-----------------------------------------------------------------------------
@@ -200,10 +230,10 @@ bool FEDistanceConstraint::Augment(int naug, const FETimeInfo& tp)
 	double err = fabs((Lm - m_Lm)/Lm);
 	if (err < m_atol) bconv = true;
 
-	felog.printf("\ndistance constraint:\n");
-	felog.printf("\tmultiplier= %lg (error = %lg / %lg)\n", Lm, err, m_atol);
-	felog.printf("\tforce     = %lg, %lg, %lg\n", Fc.x, Fc.y, Fc.z);
-	felog.printf("\tdistance  = %lg (L0 = %lg)\n", l, m_l0);
+	feLog("\ndistance constraint:\n");
+	feLog("\tmultiplier= %lg (error = %lg / %lg)\n", Lm, err, m_atol);
+	feLog("\tforce     = %lg, %lg, %lg\n", Fc.x, Fc.y, Fc.z);
+	feLog("\tdistance  = %lg (L0 = %lg)\n", l, m_l0);
 
 	// check convergence
 	if (m_nminaug > naug) bconv = false;
@@ -222,13 +252,13 @@ void FEDistanceConstraint::BuildMatrixProfile(FEGlobalMatrix& M)
 	FEMesh& mesh = GetFEModel()->GetMesh();
 	vector<int> lm(6);
 	FENode& n0 = mesh.Node(m_node[0] - 1);
-	lm[0] = n0.m_ID[m_dofX];
-	lm[1] = n0.m_ID[m_dofY];
-	lm[2] = n0.m_ID[m_dofZ];
+	lm[0] = n0.m_ID[m_dofU[0]];
+	lm[1] = n0.m_ID[m_dofU[1]];
+	lm[2] = n0.m_ID[m_dofU[2]];
 	FENode& n1 = mesh.Node(m_node[1] - 1);
-	lm[3] = n1.m_ID[m_dofX];
-	lm[4] = n1.m_ID[m_dofY];
-	lm[5] = n1.m_ID[m_dofZ];
+	lm[3] = n1.m_ID[m_dofU[0]];
+	lm[4] = n1.m_ID[m_dofU[1]];
+	lm[5] = n1.m_ID[m_dofU[2]];
     M.build_add(lm);
 }
 
@@ -236,25 +266,11 @@ void FEDistanceConstraint::BuildMatrixProfile(FEGlobalMatrix& M)
 void FEDistanceConstraint::Serialize(DumpStream& ar)
 {
 	FENLConstraint::Serialize(ar);
-	if (ar.IsSaving())
-	{
-		ar << m_Lm; 
-	}
-	else
-	{
-		ar >> m_Lm;
-	}
+	ar & m_Lm; 
 }
 
 //-----------------------------------------------------------------------------
 void FEDistanceConstraint::Reset()
 {
 	m_Lm = 0.0;
-}
-
-//-----------------------------------------------------------------------------
-// This function is called when the FE model's state needs to be updated.
-void FEDistanceConstraint::Update(int niter, const FETimeInfo& tp)
-{
-
 }

@@ -1,14 +1,32 @@
-// FEMooneyRivlin.h: interface for the FEMooneyRivlin class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FEARRUDABOYCE_H__D75E80FD_0E25_4A12_9539_044C9DC4CB41__INCLUDED_)
-#define AFX_FEARRUDABOYCE_H__D75E80FD_0E25_4A12_9539_044C9DC4CB41__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "FEUncoupledMaterial.h"
 
 //-----------------------------------------------------------------------------
@@ -20,7 +38,7 @@ public:
 	FEArrudaBoyce(FEModel* pfem) : FEUncoupledMaterial(pfem) {}
 
 public:
-	double	m_mu;	//!< shear modulus
+	FEParamDouble	m_mu;	//!< shear modulus
 	double	m_N;	//!< Nr of links in chain
 
 public:
@@ -34,7 +52,5 @@ public:
 	virtual double DevStrainEnergyDensity(FEMaterialPoint& mp) override;
     
 	// declare the parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
-
-#endif // !defined(AFX_FEARRUDABOYCE_H__D75E80FD_0E25_4A12_9539_044C9DC4CB41__INCLUDED_)

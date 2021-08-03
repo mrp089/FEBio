@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEDamageTransIsoMooneyRivlin.h"
 
@@ -13,8 +41,6 @@ FEMaterialPoint* FETIMRDamageMaterialPoint::Copy()
 void FETIMRDamageMaterialPoint::Init()
 {
 	FEMaterialPoint::Init();
-
-	FEElasticMaterialPoint& pt = *m_pNext->ExtractData<FEElasticMaterialPoint>();
 
 	// intialize data to zero
 	m_MEmax = 0;
@@ -36,33 +62,25 @@ void FETIMRDamageMaterialPoint::Update(const FETimeInfo& timeInfo)
 
 void FETIMRDamageMaterialPoint::Serialize(DumpStream& ar)
 {
-	if (ar.IsSaving())
-	{
-		ar << m_MEtrial << m_MEmax << m_Dm;
-		ar << m_FEtrial << m_FEmax << m_Df;
-	}
-	else
-	{
-		ar >> m_MEtrial >> m_MEmax >> m_Dm;
-		ar >> m_FEtrial >> m_FEmax >> m_Df;
-	}
 	FEMaterialPoint::Serialize(ar);
+	ar & m_MEtrial & m_MEmax & m_Dm;
+	ar & m_FEtrial & m_FEmax & m_Df;
 }
 
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEDamageTransIsoMooneyRivlin, FEUncoupledMaterial)
-	ADD_PARAMETER2(m_c1, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "c1");
-	ADD_PARAMETER(m_c2, FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETER(m_c3, FE_PARAM_DOUBLE, "c3");
-	ADD_PARAMETER2(m_c4, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "c4");
-	ADD_PARAMETER(m_Mbeta, FE_PARAM_DOUBLE, "Mbeta");
-	ADD_PARAMETER(m_Msmin, FE_PARAM_DOUBLE, "Msmin");
-	ADD_PARAMETER(m_Msmax, FE_PARAM_DOUBLE, "Msmax");
-	ADD_PARAMETER(m_Fbeta, FE_PARAM_DOUBLE, "Fbeta");
-	ADD_PARAMETER(m_Fsmin, FE_PARAM_DOUBLE, "Fsmin");
-	ADD_PARAMETER(m_Fsmax, FE_PARAM_DOUBLE, "Fsmax");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEDamageTransIsoMooneyRivlin, FEUncoupledMaterial)
+	ADD_PARAMETER(m_c1, FE_RANGE_GREATER(0.0), "c1");
+	ADD_PARAMETER(m_c2, "c2");
+	ADD_PARAMETER(m_c3, "c3");
+	ADD_PARAMETER(m_c4, FE_RANGE_GREATER(0.0), "c4");
+	ADD_PARAMETER(m_Mbeta, "Mbeta");
+	ADD_PARAMETER(m_Msmin, "Msmin");
+	ADD_PARAMETER(m_Msmax, "Msmax");
+	ADD_PARAMETER(m_Fbeta, "Fbeta");
+	ADD_PARAMETER(m_Fsmin, "Fsmin");
+	ADD_PARAMETER(m_Fsmax, "Fsmax");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEDamageTransIsoMooneyRivlin::FEDamageTransIsoMooneyRivlin(FEModel* pfem) : FEUncoupledMaterial(pfem)
@@ -101,12 +119,11 @@ mat3ds FEDamageTransIsoMooneyRivlin::MatrixStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!
 	double I1 = B.tr();
-	double I2 = 0.5*(I1*I1 - B2.tr());
 
 	// --- TODO: put strain energy derivatives here ---
 	//
@@ -135,11 +152,11 @@ mat3ds FEDamageTransIsoMooneyRivlin::FiberStress(FEMaterialPoint &mp)
 	double J = pt.m_J;
 	double Jm13 = pow(J, -1.0/3.0);
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q.col(0);
 
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;
@@ -197,7 +214,7 @@ tens4ds FEDamageTransIsoMooneyRivlin::MatrixTangent(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	double I1 = B.tr();
@@ -249,14 +266,13 @@ tens4ds FEDamageTransIsoMooneyRivlin::FiberTangent(FEMaterialPoint &mp)
 	mat3d& F = pt.m_F;
 	double J = pt.m_J;
 	double Jm13 = pow(J, -1.0/3.0);
-	double Jm23 = Jm13*Jm13;
 	double Ji = 1.0/J;
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get initial local material axis
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q.col(0);
 
 	// calculate current local material axis
 	vec3d a = F*a0;
@@ -329,7 +345,7 @@ double FEDamageTransIsoMooneyRivlin::MatrixStrainEnergyDensity(FEMaterialPoint& 
 	mat3ds B = pt.DevLeftCauchyGreen();
     
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
     
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!
@@ -355,12 +371,12 @@ double FEDamageTransIsoMooneyRivlin::FiberStrainEnergyDensity(FEMaterialPoint &m
 	mat3d& F = pt.m_F;
 	double J = pt.m_J;
 	double Jm13 = pow(J, -1.0/3.0);
-    
+
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q.col(0);
     
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;
@@ -388,7 +404,7 @@ double FEDamageTransIsoMooneyRivlin::MatrixDamage(FEMaterialPoint &mp)
 
 	// calculate right Cauchy-Green tensor
 	mat3ds C = pt.DevRightCauchyGreen();
-	mat3ds C2 = C*C;
+	mat3ds C2 = C.sqr();
 
 	// Invariants
 	double I1 = C.tr();
@@ -428,7 +444,7 @@ double FEDamageTransIsoMooneyRivlin::MatrixDamageDerive(FEMaterialPoint &mp)
 
 	// calculate right Cauchy-Green tensor
 	mat3ds C = pt.DevRightCauchyGreen();
-	mat3ds C2 = C*C;
+	mat3ds C2 = C.sqr();
 
 	// Invariants
 	double I1 = C.tr();
@@ -472,11 +488,11 @@ double FEDamageTransIsoMooneyRivlin::FiberDamage(FEMaterialPoint &mp)
 	double J = pt.m_J;
 	double Jm13 = pow(J, -1.0/3.0);
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q.col(0);
 
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;
@@ -527,11 +543,11 @@ double FEDamageTransIsoMooneyRivlin::FiberDamageDerive(FEMaterialPoint &mp)
 	double J = pt.m_J;
 	double Jm13 = pow(J, -1.0/3.0);
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q.col(0);
 
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;

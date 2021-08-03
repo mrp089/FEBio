@@ -1,21 +1,51 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include <FECore/FEMesh.h>
+#include <FECore/FENodeList.h>
+#include "febiomech_api.h"
 
 class FEModel;
 
-class FEPeriodicLinearConstraint
+class FEBIOMECH_API FEPeriodicLinearConstraint
 {
 	struct NodeSetPair
 	{
-		FENodeSet master;
-		FENodeSet slave;
+		FENodeList primary;
+		FENodeList secondary;
 	};
 
 public:
-	FEPeriodicLinearConstraint();
+	FEPeriodicLinearConstraint(FEModel* fem);
 	~FEPeriodicLinearConstraint();
 
-	void AddNodeSetPair(const FENodeSet& ms, const FENodeSet& ss, bool push_back = true);
+	void AddNodeSetPair(const FENodeList& ms, const FENodeList& ss, bool push_back = true);
 
 	void SetReferenceNode(int node) { m_refNode = node; }
 
@@ -26,7 +56,7 @@ public:
 	bool GenerateConstraints(FEModel* fem);
 
 private:
-	vector<NodeSetPair>	m_set;	// list of node set pairs
+	std::vector<NodeSetPair>	m_set;	// list of node set pairs
 	FENodeSet	m_exclude;		// nodes to exclude
-	int			m_refNode;		// reference slave node
+	int			m_refNode;		// reference node
 };

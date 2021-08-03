@@ -1,9 +1,38 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FELinearConstraintManager.h"
 #include "FEMesh.h"
 #include "FEModel.h"
 #include "FEAnalysis.h"
 #include "DumpStream.h"
+#include "FEDomain.h"
 
 //-----------------------------------------------------------------------------
 FELinearConstraintManager::FELinearConstraintManager(FEModel* fem) : m_fem(fem)
@@ -54,15 +83,22 @@ FELinearConstraint& FELinearConstraintManager::LinearConstraint(int i)
 }
 
 //-----------------------------------------------------------------------------
+//! remove a linear constraint
+void FELinearConstraintManager::RemoveLinearConstraint(int i)
+{
+	FELinearConstraint& lc = m_LinC[i];
+	if (lc.IsActive()) lc.Deactivate();
+	m_LinC.erase(m_LinC.begin() + i);
+}
+
+//-----------------------------------------------------------------------------
 void FELinearConstraintManager::Serialize(DumpStream& ar)
 {
 	if (ar.IsShallow()) return;
 
 	if (ar.IsSaving())
 	{
-		ar << (int)m_LinC.size();
-		vector<FELinearConstraint>::iterator it = m_LinC.begin();
-		for (int i = 0; i<(int)m_LinC.size(); ++i, ++it) it->Serialize(ar);
+		ar << m_LinC;
 
 		int nr = m_LCT.rows();
 		int nc = m_LCT.columns();
@@ -75,21 +111,15 @@ void FELinearConstraintManager::Serialize(DumpStream& ar)
 	else
 	{
 		FEModel& fem = ar.GetFEModel();
+
 		// linear constraints
-		int n = 0;
-		ar >> n;
-		FELinearConstraint LC(&fem);
-		for (int i = 0; i<n; ++i)
-		{
-			LC.Serialize(ar);
-			m_LinC.push_back(LC);
-		}
+		ar >> m_LinC;
 
 		int nr, nc;
 		ar >> nr >> nc;
-		m_LCT.resize(nr, nc);
 		if (nr*nc > 0)
 		{
+			m_LCT.resize(nr, nc);
 			ar.read(&m_LCT(0,0), sizeof(int), nr*nc);
 		}
 	}
@@ -124,8 +154,11 @@ void FELinearConstraintManager::BuildMatrixProfile(FEGlobalMatrix& G)
 			dom.UnpackLM(el, elm);
 			int ne = (int)elm.size();
 
+			// keep a list of the constraints this element connects to
+			vector<int> constraintList;
+
 			// see if this element connects to the 
-			// master node of a linear constraint ...
+			// parent node of a linear constraint ...
 			int m = el.Nodes();
 			for (int j = 0; j<m; ++j)
 			{	
@@ -138,13 +171,14 @@ void FELinearConstraintManager::BuildMatrixProfile(FEGlobalMatrix& G)
 						// ... it does so we need to connect the 
 						// element to the linear constraint
 						FELinearConstraint* plc = &m_LinC[n];
+						constraintList.push_back(n);
 						
-						int ns = (int)plc->slave.size();
+						int ns = (int)plc->m_childDof.size();
 
 						lm.resize(ne + ns);
 						for (int l = 0; l<ne; ++l) lm[l] = elm[l];
 
-						vector<FELinearConstraint::DOF>::iterator is = plc->slave.begin();
+						vector<FELinearConstraint::DOF>::iterator is = plc->m_childDof.begin();
 						for (int l = ne; l<ne + ns; ++l, ++is) 
 						{
 							int neq = mesh.Node(is->node).m_ID[is->dof];
@@ -155,20 +189,51 @@ void FELinearConstraintManager::BuildMatrixProfile(FEGlobalMatrix& G)
 					}
 				}
 			}
+
+			// This replaces the commented out section below, which sets up the connectivity 
+			// for the constraint block of the stiffness matrix. 
+			// The problem is that this will only work for linear constraints that are connected
+			// the element, so not for constraints connected to contact "elements". Howerver, I
+			// don't think this was working anyway, so this is okay for now.
+			// TODO: Replace this with a more generic algorithm that looks at the matrix profile 
+			// directly instead of element by element. 
+			if (constraintList.empty() == false)
+			{
+				// do the constraint term
+				int n = 0;
+				for (int i = 0; i<constraintList.size(); ++i) n += (int)m_LinC[constraintList[i]].m_childDof.size();
+				lm.resize(n);
+				n = 0;
+				for (int i = 0; i<constraintList.size(); ++i)
+				{
+					FELinearConstraint& lc = m_LinC[constraintList[i]];
+					int ni = (int)lc.m_childDof.size();
+					for (int j = 0; j<ni; ++j)
+					{
+						FELinearConstraint::DOF& sj = lc.m_childDof[j];
+						int neq = mesh.Node(sj.node).m_ID[sj.dof];
+						lm[n++] = neq;
+					}
+				}
+				G.build_add(lm);
+			}
 		}
 	}
 
 	// do the constraint term
-	vector<FELinearConstraint>::iterator ic = m_LinC.begin();
+	// NOTE: This block was replaced by the section above which reduces the size
+	// of the stiffness matrix, but might be less generic (altough not entirely sure
+	// about that). 
+/*	vector<FELinearConstraint>::iterator ic = m_LinC.begin();
 	int n = 0;
-	for (int i = 0; i<nlin; ++i, ++ic) n += (int) ic->slave.size();
+	for (int i = 0; i<nlin; ++i, ++ic) n += (int) ic->m_childDof.size();
 	lm.resize(n);
 	ic = m_LinC.begin();
 	n = 0;
 	for (int i = 0; i<nlin; ++i, ++ic)
 	{
-		int ni = (int)ic->slave.size();
-		vector<FELinearConstraint::DOF>::iterator is = ic->slave.begin();
+		int ni = (int)ic->m_childDof.size();
+		vector<FELinearConstraint::DOF>::iterator is = ic->m_childDof.begin();
 		for (int j = 0; j<ni; ++j, ++is) 
 		{
 			int neq = mesh.Node(is->node).m_ID[is->dof];
@@ -176,6 +241,7 @@ void FELinearConstraintManager::BuildMatrixProfile(FEGlobalMatrix& G)
 		}
 	}
 	G.build_add(lm);
+*/
 }
 
 //-----------------------------------------------------------------------------
@@ -184,50 +250,6 @@ void FELinearConstraintManager::BuildMatrixProfile(FEGlobalMatrix& G)
 //! not constraint)
 bool FELinearConstraintManager::Initialize()
 {
-	int nlin = LinearConstraints();
-	if (nlin == 0) return true;
-
-	// ensure that none of the master nodes are slave nodes in any of the active linear constraints
-	for (int i=0; i<nlin; ++i)
-	{
-		FELinearConstraint& lci = m_LinC[i];
-		if (lci.IsActive())
-		{
-			FELinearConstraint::DOF& masterDOF = lci.master;
-			for (int j=0; j<nlin; j++)
-			{
-				FELinearConstraint& lcj = m_LinC[j];
-				if (lcj.IsActive())
-				{
-					int n = lcj.slave.size();
-					for (int k=0; k<n; ++k)
-					{
-						FELinearConstraint::DOF& slaveDOF = lcj.slave[k];
-						if ((slaveDOF.node == masterDOF.node) && (slaveDOF.dof == masterDOF.dof)) 
-						{
-							return false;
-						}
-					}
-
-					// also make sure the master dof is not repeated
-					if (i != j)
-					{
-						if ((lci.master.node == lcj.master.node) && (lci.master.dof == lcj.master.dof)) 
-						{
-							return false;
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// initialize the lookup table
-	InitTable();
-
-	// set the prescribed value array
-	m_up.assign(m_LinC.size(), 0.0);
-
 	return true;
 }
 
@@ -238,14 +260,14 @@ void FELinearConstraintManager::PrepStep()
 	for (int i=0; i<m_LinC.size(); ++i)
 	{
 		FELinearConstraint& lc = m_LinC[i];
-		FENode& node = mesh.Node(lc.master.node);
-		double u = node.get(lc.master.dof);
+		FENode& node = mesh.Node(lc.m_parentDof.node);
+		double u = node.get(lc.m_parentDof.dof);
 
 		double v = 0;
-		for (int j=0; j<lc.slave.size(); ++j)
+		for (int j=0; j<lc.m_childDof.size(); ++j)
 		{
-			FENode& nj = mesh.Node(lc.slave[j].node);
-			v += lc.slave[j].val* nj.get(lc.slave[j].dof);
+			FENode& nj = mesh.Node(lc.m_childDof[j].node);
+			v += lc.m_childDof[j].val* nj.get(lc.m_childDof[j].dof);
 		}
 
 		m_up[i] = v + lc.m_off - u;
@@ -260,14 +282,15 @@ void FELinearConstraintManager::InitTable()
 	DOFS& fedofs = m_fem->GetDOFS();
 	int MAX_NDOFS = fedofs.GetTotalDOFS();
 	m_LCT.resize(mesh.Nodes(), MAX_NDOFS, -1);
+	m_LCT.set(-1);
 
 	vector<FELinearConstraint>::iterator ic = m_LinC.begin();
 	int nlin = LinearConstraints();
 	for (int i = 0; i<nlin; ++i, ++ic)
 	{
 		FELinearConstraint& lc = *ic;
-		int n = lc.master.node;
-		int m = lc.master.dof;
+		int n = lc.m_parentDof.node;
+		int m = lc.m_parentDof.dof;
 
 		m_LCT(n, m) = i;
 	}
@@ -275,8 +298,35 @@ void FELinearConstraintManager::InitTable()
 
 //-----------------------------------------------------------------------------
 // This gets called during model activation, i.e. activation of permanent model components.
-void FELinearConstraintManager::Activate()
+bool FELinearConstraintManager::Activate()
 {
+	int nlin = LinearConstraints();
+	if (nlin == 0) return true;
+
+	// initialize the lookup table
+	InitTable();
+
+	// ensure that none of the parent nodes are child nodes in any of the active linear constraints
+	for (int i = 0; i<nlin; ++i)
+	{
+		FELinearConstraint& lci = m_LinC[i];
+		if (lci.IsActive())
+		{
+			int n = (int)lci.m_childDof.size();
+			for (int k = 0; k<n; ++k)
+			{
+				FELinearConstraint::DOF& childDOF = lci.m_childDof[k];
+				int n = m_LCT(childDOF.node, childDOF.dof);
+				if (n != -1)
+				{
+					return false;
+				}
+			}
+		}
+	}
+
+	// set the prescribed value array
+	m_up.assign(m_LinC.size(), 0.0);
 	if (m_LinC.size())
 	{
 		vector<FELinearConstraint>::iterator il = m_LinC.begin();
@@ -285,6 +335,8 @@ void FELinearConstraintManager::Activate()
 			if (il->IsActive()) il->Activate();
 		}
 	}
+
+	return true;
 }
 
 //-----------------------------------------------------------------------------
@@ -294,30 +346,34 @@ void FELinearConstraintManager::AssembleResidual(vector<double>& R, vector<int>&
 
 	int ndof = (int)fe.size();
 	int ndn = ndof / (int)en.size();
+	const int nodes = (int)en.size();
 
 	// loop over all degrees of freedom of this element
 	for (int i = 0; i<ndof; ++i)
 	{
-		// see if this dof belongs to a linear constraint
-		int l = m_LCT(en[i / ndn], i%ndn);
-		if (l >= 0)
-		{
-			// if so, get the linear constraint
-			FELinearConstraint& lc = m_LinC[l];
-			assert(elm[i] == -1);
-
-			// now loop over all "slave" nodes and
-			// add the contribution to the residual
-			int ns = (int)lc.slave.size();
-			vector<FELinearConstraint::DOF>::iterator is = lc.slave.begin();
-			for (int j = 0; j<ns; ++j, ++is)
+		int nodei = i / ndn;
+		if (nodei < nodes) {
+			// see if this dof belongs to a linear constraint
+			int l = m_LCT(en[nodei], i%ndn);
+			if (l >= 0)
 			{
-				int I = mesh.Node(is->node).m_ID[is->dof];
-				if (I >= 0)
+				// if so, get the linear constraint
+				FELinearConstraint& lc = m_LinC[l];
+				assert(elm[i] == -1);
+
+				// now loop over all child nodes and
+				// add the contribution to the residual
+				int ns = (int)lc.m_childDof.size();
+				vector<FELinearConstraint::DOF>::iterator is = lc.m_childDof.begin();
+				for (int j = 0; j < ns; ++j, ++is)
 				{
-					double A = is->val;
+					int I = mesh.Node(is->node).m_ID[is->dof];
+					if (I >= 0)
+					{
+						double A = is->val;
 #pragma omp atomic
-					R[I] += A*fe[i];
+						R[I] += A*fe[i];
+					}
 				}
 			}
 		}
@@ -325,12 +381,13 @@ void FELinearConstraintManager::AssembleResidual(vector<double>& R, vector<int>&
 }
 
 //-----------------------------------------------------------------------------
-void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<double>& R, vector<double>& ui, vector<int>& en, vector<int>& elm, matrix& ke)
+void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<double>& R, vector<double>& ui, const vector<int>& en, const vector<int>& lmi, const vector<int>& lmj, const matrix& ke)
 {
 	FEMesh& mesh = m_fem->GetMesh();
 
 	int ndof = ke.rows();
 	int ndn = ndof / (int)en.size();
+	const int nodes = (int)en.size();
 
 	SparseMatrix& K = *(&G);
 
@@ -338,23 +395,24 @@ void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<doub
 	// and correct for linear constraints
 	for (int i = 0; i<ndof; ++i)
 	{
-		int li = m_LCT(en[i / ndn], i%ndn);
-		for (int j = 0; j<ndof; ++j)
+		int nodei = i / ndn;
+		int li = (nodei < nodes ? m_LCT(en[nodei], i%ndn) : -1);
+		for (int j = 0; j < ndof; ++j)
 		{
-			int lj = m_LCT(en[j / ndn], j%ndn);
-
+			int nodej = j / ndn;
+			int lj = (nodej < nodes ? m_LCT(en[nodej], j%ndn) : -1);
 			if ((li >= 0) && (lj < 0))
 			{
 				// dof i is constrained
 				FELinearConstraint& Li = m_LinC[li];
 
-				assert(elm[i] == -1);
+				assert(lmi[i] == -1);
 
-				vector<FELinearConstraint::DOF>::iterator is = Li.slave.begin();
-				for (int k = 0; k<(int)Li.slave.size(); ++k, ++is)
+				vector<FELinearConstraint::DOF>::iterator is = Li.m_childDof.begin();
+				for (int k = 0; k < (int)Li.m_childDof.size(); ++k, ++is)
 				{
 					int I = mesh.Node(is->node).m_ID[is->dof];
-					int J = elm[j];
+					int J = lmj[j];
 					double kij = is->val*ke[i][j];
 					if ((J >= 0) && (I >= 0)) K.add(I, J, kij);
 					else
@@ -370,13 +428,13 @@ void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<doub
 				// dof j is constrained
 				FELinearConstraint& Lj = m_LinC[lj];
 
-				assert(elm[j] == -1);
+				assert(lmj[j] == -1);
 
-				vector<FELinearConstraint::DOF>::iterator js = Lj.slave.begin();
+				vector<FELinearConstraint::DOF>::iterator js = Lj.m_childDof.begin();
 
-				for (int k = 0; k<(int)Lj.slave.size(); ++k, ++js)
+				for (int k = 0; k < (int)Lj.m_childDof.size(); ++k, ++js)
 				{
-					int I = elm[i];
+					int I = lmi[i];
 					int J = mesh.Node(js->node).m_ID[js->dof];
 					double kij = js->val*ke[i][j];
 					if ((J >= 0) && (I >= 0)) K.add(I, J, kij);
@@ -391,8 +449,8 @@ void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<doub
 				// adjust right-hand side for inhomogeneous linear constraints
 				if (Lj.m_off != 0.0)
 				{
-					double ri = ke[i][j]*m_up[lj];
-					int I = elm[i];
+					double ri = ke[i][j] * m_up[lj];
+					int I = lmi[i];
 					if (I >= 0) R[i] -= ri;
 				}
 			}
@@ -402,16 +460,16 @@ void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<doub
 				FELinearConstraint& Li = m_LinC[li];
 				FELinearConstraint& Lj = m_LinC[lj];
 
-				vector<FELinearConstraint::DOF>::iterator is = Li.slave.begin();
-				vector<FELinearConstraint::DOF>::iterator js = Lj.slave.begin();
+				vector<FELinearConstraint::DOF>::iterator is = Li.m_childDof.begin();
+				vector<FELinearConstraint::DOF>::iterator js = Lj.m_childDof.begin();
 
-				assert(elm[i] == -1);
-				assert(elm[j] == -1);
+				assert(lmi[i] == -1);
+				assert(lmj[j] == -1);
 
-				for (int k = 0; k<(int)Li.slave.size(); ++k, ++is)
+				for (int k = 0; k < (int)Li.m_childDof.size(); ++k, ++is)
 				{
-					js = Lj.slave.begin();
-					for (int l = 0; l<(int)Lj.slave.size(); ++l, ++js)
+					js = Lj.m_childDof.begin();
+					for (int l = 0; l < (int)Lj.m_childDof.size(); ++l, ++js)
 					{
 						int I = mesh.Node(is->node).m_ID[is->dof];
 						int J = mesh.Node(js->node).m_ID[js->dof];;
@@ -430,8 +488,8 @@ void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<doub
 				// adjust for inhomogeneous linear constraints
 				if (Lj.m_off != 0.0)
 				{
-					is = Li.slave.begin();
-					for (int k = 0; k<(int)Li.slave.size(); ++k, ++is)
+					is = Li.m_childDof.begin();
+					for (int k = 0; k < (int)Li.m_childDof.size(); ++k, ++is)
 					{
 						int I = mesh.Node(is->node).m_ID[is->dof];
 						double ri = is->val * ke[i][j] * m_up[lj];
@@ -444,7 +502,7 @@ void FELinearConstraintManager::AssembleStiffness(FEGlobalMatrix& G, vector<doub
 }
 
 //-----------------------------------------------------------------------------
-// This updates the nodal degrees of freedom of the master nodes.
+// This updates the nodal degrees of freedom of the parent nodes.
 void FELinearConstraintManager::Update()
 {
 	FEMesh& mesh = m_fem->GetMesh();
@@ -456,17 +514,17 @@ void FELinearConstraintManager::Update()
 
 		// evaluate the linear constraint
 		double d = 0;
-		int ns = (int)lc.slave.size();
-		vector<FELinearConstraint::DOF>::const_iterator si = lc.slave.begin();
+		int ns = (int)lc.m_childDof.size();
+		vector<FELinearConstraint::DOF>::const_iterator si = lc.m_childDof.begin();
 		for (int i = 0; i<ns; ++i, ++si)
 		{
-			FENode& slaveNode = mesh.Node(si->node);
-			d += si->val*slaveNode.get(si->dof);
+			FENode& childNode = mesh.Node(si->node);
+			d += si->val*childNode.get(si->dof);
 		}
 
-		// assign to master node
-		FENode& masterNode = mesh.Node(lc.master.node);
-		masterNode.set(lc.master.dof, d + lc.m_off);
+		// assign to parent node
+		FENode& parentNode = mesh.Node(lc.m_parentDof.node);
+		parentNode.set(lc.m_parentDof.dof, d + lc.m_off);
 	}
 
 	m_up.assign(m_LinC.size(), 0.0);

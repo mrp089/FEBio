@@ -3,9 +3,9 @@
 CC = icpc
 
 # Remove -DHAVE_LEVMAR and $(LEV_LIB) from LIBS if not linking with the Lourakis levmar routine.
-DEF = -DLINUX -DMKL_ISS -DPARDISO -DHAVE_ZLIB -DHAVE_GSL -DSVN
+DEF = -DLINUX -DMKL_ISS -DPARDISO -DHAVE_ZLIB -DSVN
 
-FLG = -O3 -fPIC -fopenmp -static-intel -no-intel-extensions -std=c++11
+FLG = -g -O3 -fPIC -fopenmp -static-intel -no-intel-extensions -std=c++11 -static-libstdc++
 
 # Intel Compiler
 INTELROOT = $(subst /mkl,,$(MKLROOT))/compiler
@@ -22,7 +22,7 @@ MKL_LIB += $(INTEL_LIB)/libiomp5.a -pthread -lz
 #LEV_LIB = -llevmar
 
 # GSL library
-GSL_LIB = -lgsl -lgslcblas
+#GSL_LIB = -lgsl
 
 # SuperLU library
 SUPERLU_INC = /home/sci/rawlins/Projects/SuperLU/4.3/SRC/

@@ -1,18 +1,49 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
+#include <limits>
 #include "FE2DTransIsoMooneyRivlin.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FE2DTransIsoMooneyRivlin, FEUncoupledMaterial)
-	ADD_PARAMETER2(m_c1, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "c1");
-	ADD_PARAMETER(m_c2, FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETERV(m_w, FE_PARAM_DOUBLE, 2, "w");
-	ADD_PARAMETER(m_c3, FE_PARAM_DOUBLE, "c3");
-	ADD_PARAMETER(m_c4, FE_PARAM_DOUBLE, "c4");
-	ADD_PARAMETER(m_c5, FE_PARAM_DOUBLE, "c5");
-	ADD_PARAMETER2(m_lam1, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(1.0), "lam_max");
-	ADD_PARAMETERV(m_a, FE_PARAM_DOUBLE, 2, "a");
-	ADD_PARAMETER(m_ac, FE_PARAM_DOUBLE, "active_contraction");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FE2DTransIsoMooneyRivlin, FEUncoupledMaterial)
+	ADD_PARAMETER(m_c1, FE_RANGE_GREATER(0.0), "c1");
+	ADD_PARAMETER(m_c2, "c2");
+	ADD_PARAMETER(m_w, 2, "w");
+	ADD_PARAMETER(m_c3, "c3");
+	ADD_PARAMETER(m_c4, "c4");
+	ADD_PARAMETER(m_c5, "c5");
+	ADD_PARAMETER(m_lam1, FE_RANGE_GREATER_OR_EQUAL(1.0), "lam_max");
+	ADD_PARAMETER(m_a, 2, "a");
+	ADD_PARAMETER(m_ac, "active_contraction");
+	ADD_PARAMETER(m_fiber, "fiber");
+	ADD_PARAMETER(m_epsf, "epsilon_scale");
+END_FECORE_CLASS();
 
 double FE2DTransIsoMooneyRivlin::m_cth[FE2DTransIsoMooneyRivlin::NSTEPS];
 double FE2DTransIsoMooneyRivlin::m_sth[FE2DTransIsoMooneyRivlin::NSTEPS];
@@ -32,7 +63,6 @@ FE2DTransIsoMooneyRivlin::FE2DTransIsoMooneyRivlin(FEModel* pfem) : FEUncoupledM
 	if (bfirst)
 	{
 		double ph;
-		const double PI = 4.0*atan(1.0);
 		for (int n=0; n<NSTEPS; ++n)
 		{
 			ph = 2.0*PI*n / (double) NSTEPS;
@@ -49,6 +79,10 @@ FE2DTransIsoMooneyRivlin::FE2DTransIsoMooneyRivlin(FEModel* pfem) : FEUncoupledM
 	m_ac = 0;
 
 	m_w[0] = m_w[1] = 1;
+
+	m_fiber = vec3d(1, 0, 0);
+
+	m_epsf = 0.;
 }
 
 //-----------------------------------------------------------------------------
@@ -60,6 +94,12 @@ mat3ds FE2DTransIsoMooneyRivlin::DevStress(FEMaterialPoint& mp)
 
 	const double third = 1.0/3.0;
 
+	// get the "fiber" direction
+	vec3d r = m_fiber(mp); r.unit();
+
+	// setup a rotation
+	quatd q(vec3d(1, 0, 0), r);
+
 	// deformation gradient
 	mat3d &F = pt.m_F;
 	double J = pt.m_J;
@@ -69,7 +109,7 @@ mat3ds FE2DTransIsoMooneyRivlin::DevStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of deviatoric B, not of B!
@@ -90,9 +130,8 @@ mat3ds FE2DTransIsoMooneyRivlin::DevStress(FEMaterialPoint& mp)
 	// Next, we calculate the fiber contribution. For this material
 	// the fibers lie randomly in a plane that is perpendicular to the transverse
 	// axis. We therefor need to integrate over this plane.
-	const double PI = 4.0*atan(1.0);
 	double w, wtot = 0;
-	vec3d a0, a, v;
+	vec3d v;
 	double lam, lamd, I4, W4;
 	mat3ds Tf; Tf.zero();
 	mat3ds N;
@@ -104,12 +143,10 @@ mat3ds FE2DTransIsoMooneyRivlin::DevStress(FEMaterialPoint& mp)
 		v.x = 0;
 
 		// calculate the global material fiber vector
-		a0 = pt.m_Q*v;
+		vec3d a0 = q*v;
 
 		// calculate the global spatial fiber vector
-		a.x = F[0][0]*a0.x + F[0][1]*a0.y + F[0][2]*a0.z;
-		a.y = F[1][0]*a0.x + F[1][1]*a0.y + F[1][2]*a0.z;
-		a.z = F[2][0]*a0.x + F[2][1]*a0.y + F[2][2]*a0.z;
+		vec3d a = F*a0;
 
 		// normalize material axis and store fiber stretch
 		lam = a.unit();
@@ -168,6 +205,12 @@ tens4ds FE2DTransIsoMooneyRivlin::DevTangent(FEMaterialPoint& mp)
 {
 	FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
 
+	// get the "fiber" direction
+	vec3d r = m_fiber(mp); r.unit();
+
+	// setup a rotation
+	quatd q(vec3d(1, 0, 0), r);
+
 	// deformation gradient
 	mat3d &F = pt.m_F;
 	double J = pt.m_J;
@@ -182,7 +225,7 @@ tens4ds FE2DTransIsoMooneyRivlin::DevTangent(FEMaterialPoint& mp)
 	mat3ds C = pt.DevRightCauchyGreen();
 
 	// square of C
-	mat3ds C2 = C*C;
+	mat3ds C2 = C.sqr();
 
 	// Invariants of C
 	double I1 = C.tr();
@@ -192,8 +235,7 @@ tens4ds FE2DTransIsoMooneyRivlin::DevTangent(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	// (we commented out the components we don't need)
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// strain energy derivatives
 	double W1 = m_c1;
@@ -221,15 +263,16 @@ tens4ds FE2DTransIsoMooneyRivlin::DevTangent(FEMaterialPoint& mp)
 
 	tens4ds c = dyad1s(devs, I)*(-2.0/3.0) + (I4 - IxI/3.0)*(4.0/3.0*Ji*WC) + cw;
 
+	double eps = m_epsf * std::numeric_limits<double>::epsilon();
+
 	// --- F I B E R   C O N T R I B U T I O N ---
 
 	// Next, we add the fiber contribution. Since the fibers lie
 	// randomly perpendicular to the transverse axis, we need
 	// to integrate over that plane
-	const double PI = 4.0*atan(1.0);
 	double lam, lamd;
 	double In, Wl, Wll;
-	vec3d a0, a, v;
+	vec3d v;
 	double w, wtot = 0;
 	tens4ds cf, cfw; cf.zero();
 	mat3ds N2;
@@ -243,12 +286,10 @@ tens4ds FE2DTransIsoMooneyRivlin::DevTangent(FEMaterialPoint& mp)
 		v.x = 0;
 
 		// calculate the global material fiber vector
-		a0 = pt.m_Q*v;
+		vec3d a0 = q*v;
 
 		// calculate the global spatial fiber vector
-		a.x = F[0][0]*a0.x + F[0][1]*a0.y + F[0][2]*a0.z;
-		a.y = F[1][0]*a0.x + F[1][1]*a0.y + F[1][2]*a0.z;
-		a.z = F[2][0]*a0.x + F[2][1]*a0.y + F[2][2]*a0.z;
+		vec3d a = F*a0;
 
 		// normalize material axis and store fiber stretch
 		lam = a.unit();
@@ -258,7 +299,7 @@ tens4ds FE2DTransIsoMooneyRivlin::DevTangent(FEMaterialPoint& mp)
 		In = lamd*lamd;
 
 		// Wi = dW/dIi
-		if (lamd >= 1)
+		if (lamd >= 1 + eps)
 		{
 			double lamdi = 1.0/lamd;
 			double W4, W44;

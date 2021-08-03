@@ -1,6 +1,30 @@
-// FERestartImport.cpp: implementation of the FERestartImport class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FERestartImport.h"
@@ -8,7 +32,6 @@
 #include "FECore/FEAnalysis.h"
 #include "FECore/FEModel.h"
 #include "FECore/DumpFile.h"
-#include "FECore/FEDataLoadCurve.h"
 #include "FEBioLoadDataSection.h"
 #include "FEBioStepSection.h"
 
@@ -23,24 +46,10 @@ void FERestartControlSection::Parse(XMLTag& tag)
 		if      (tag == "time_steps"        ) tag.value(pstep->m_ntime);
 		else if (tag == "final_time"        ) tag.value(pstep->m_final_time);
 		else if (tag == "step_size"         ) tag.value(pstep->m_dt0);
-		else if (tag == "restart" ) 
-		{
-//			const char* szf = tag.AttributeValue("file", true);
-//			if (szf) strcpy(m_szdmp, szf);
-			char szval[256];
-			tag.value(szval);
-			if		(strcmp(szval, "DUMP_DEFAULT"    ) == 0) {} // don't change the restart level
-			else if (strcmp(szval, "DUMP_NEVER"      ) == 0) pstep->SetDumpLevel(FE_DUMP_NEVER);
-			else if (strcmp(szval, "DUMP_MAJOR_ITRS" ) == 0) pstep->SetDumpLevel(FE_DUMP_MAJOR_ITRS);
-			else if (strcmp(szval, "DUMP_STEP"       ) == 0) pstep->SetDumpLevel(FE_DUMP_STEP);
-			else if (strcmp(szval, "0" ) == 0) pstep->SetDumpLevel(FE_DUMP_NEVER);		// for backward compatibility only
-			else if (strcmp(szval, "1" ) == 0) pstep->SetDumpLevel(FE_DUMP_MAJOR_ITRS); // for backward compatibility only
-			else throw XMLReader::InvalidValue(tag);
-		}
 		else if (tag == "time_stepper")
 		{
-			pstep->m_bautostep = true;
-			FETimeStepController& tc = pstep->m_timeController;
+			if (pstep->m_timeController == nullptr) pstep->m_timeController = fecore_alloc(FETimeStepController, &fem);
+			FETimeStepController& tc = *pstep->m_timeController;
 			++tag;
 			do
 			{
@@ -94,12 +103,12 @@ FERestartImport::~FERestartImport()
 
 //-----------------------------------------------------------------------------
 
-bool FERestartImport::Parse(const char* szfile)
+bool FERestartImport::Load(FEModel& fem, const char* szfile)
 {
 	// open the XML file
 	if (m_xml.Open(szfile) == false) return errf("FATAL ERROR: Failed opening restart file %s\n", szfile);
 
-	FEModel& fem = *GetFEModel();
+	m_builder = new FEModelBuilder(fem);
 
 	m_szdmp[0] = 0;
 
@@ -115,6 +124,7 @@ bool FERestartImport::Parse(const char* szfile)
 	SetFileVerion(0x0205);
 
 	// loop over child tags
+	bool ret = true;
 	try
 	{
 		// find the root element
@@ -148,23 +158,26 @@ bool FERestartImport::Parse(const char* szfile)
 		// read the archive
 		fem.Serialize(ar);
 
+		// set the module name
+		GetBuilder()->SetModuleName(fem.GetModuleName());
+
 		// read the rest of the restart input file
-		m_map.Parse(tag);
+		ret = ParseFile(tag);
 	}
 	catch (XMLReader::Error& e)
 	{
-		fprintf(stderr, "FATAL ERROR: %s (line %d)\n", e.GetErrorString(), m_xml.GetCurrentLine());
-		return false;
+		fprintf(stderr, "FATAL ERROR: %s\n", e.what());
+		ret = false;
 	}
 	catch (...)
 	{
 		fprintf(stderr, "FATAL ERROR: unrecoverable error (line %d)\n", m_xml.GetCurrentLine());
-		return false;
+		ret = false;
 	}
 
 	// close the XML file
 	m_xml.Close();
 
 	// we're done!
-	return true;
+	return ret;
 }

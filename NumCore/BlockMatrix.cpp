@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "BlockMatrix.h"
 #include <assert.h>
@@ -26,7 +54,7 @@ BlockMatrix::~BlockMatrix()
 //
 //! TODO: I want to put the partition information in the matrix profile structure
 //!       so that the Create function can be used to create all the blocks.
-void BlockMatrix::Partition(const vector<int>& part)
+void BlockMatrix::Partition(const vector<int>& part, Matrix_Type mtype, int offset)
 {
 	// copy the partitions, but store equation numbers instead of number of equations
 	const int n = (int)part.size();
@@ -52,9 +80,14 @@ void BlockMatrix::Partition(const vector<int>& part)
 			// Note the parameters in the constructors.
 			// This is because we are using Pardiso for this
 			if (i==j)
-				Bij.pA = new CompactSymmMatrix(1);
+			{
+				if (mtype == REAL_SYMMETRIC)
+					Bij.pA = new CompactSymmMatrix(offset);
+				else
+					Bij.pA = new CRSSparseMatrix(offset);
+			}
 			else
-				Bij.pA = new CRSSparseMatrix(1);
+				Bij.pA = new CRSSparseMatrix(offset);
 			
 			ncol += part[j];
 		}
@@ -81,7 +114,7 @@ void BlockMatrix::Create(SparseMatrixProfile& MP)
 
 //-----------------------------------------------------------------------------
 //! assemble a matrix into the sparse matrix
-void BlockMatrix::Assemble(matrix& ke, std::vector<int>& lm)
+void BlockMatrix::Assemble(const matrix& ke, const std::vector<int>& lm)
 {
 	int I, J;
 	const int N = ke.rows();
@@ -99,7 +132,7 @@ void BlockMatrix::Assemble(matrix& ke, std::vector<int>& lm)
 
 //-----------------------------------------------------------------------------
 //! assemble a matrix into the sparse matrix
-void BlockMatrix::Assemble(matrix& ke, std::vector<int>& lmi, std::vector<int>& lmj)
+void BlockMatrix::Assemble(const matrix& ke, const std::vector<int>& lmi, const std::vector<int>& lmj)
 {
 	int I, J;
 	const int N = ke.rows();
@@ -200,7 +233,7 @@ void BlockMatrix::Zero()
 
 //-----------------------------------------------------------------------------
 //! multiply with vector
-void BlockMatrix::mult_vector(double* x, double* r)
+bool BlockMatrix::mult_vector(double* x, double* r)
 {
 	int nr = Rows();
 	vector<double> tmp(nr, 0);
@@ -219,6 +252,31 @@ void BlockMatrix::mult_vector(double* x, double* r)
 
 			int nj = bij.Rows();
 			for (int k=0; k<nj; ++k) r[n0 + k] += tmp[n0 + k];
+		}
+	}
+
+	return true;
+}
+
+//! row and column scale
+void BlockMatrix::scale(const vector<double>& L, const vector<double>& R)
+{
+	vector<double> Li, Rj;
+	for (int n = 0; n < m_Block.size(); ++n)
+	{
+		BLOCK& bn = m_Block[n];
+		if (bn.pA)
+		{
+			int NR = bn.Rows();
+			int NC = bn.Cols();
+
+			Li.resize(NR);
+			Rj.resize(NC);
+
+			for (int i = 0; i < NR; ++i) Li[i] = L[i + bn.nstart_row];
+			for (int i = 0; i < NC; ++i) Rj[i] = R[i + bn.nstart_col];
+
+			bn.pA->scale(Li, Rj);
 		}
 	}
 }

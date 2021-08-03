@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FEElasticMaterial.h"
 
@@ -26,10 +54,13 @@ public:
 	//! constructor
 	FEUncoupledMaterial(FEModel* pfem);
 
+	//! initialization
+	bool Init() override;
+
 public:
 
 //----------------->
-	// The following four functions need to be overloaded
+	// The following functions need to be overloaded
 	// for each material derived from this class.
 
 	//! Deviatoric Cauchy stress
@@ -41,12 +72,14 @@ public:
 	//! Deviatoric strain energy density
 	virtual double DevStrainEnergyDensity(FEMaterialPoint& mp) { return 0; }
     
+public:
 	//! strain energy density U(J)
     virtual double U(double J) {
         switch (m_npmodel) {
             case 0: return 0.5*m_K*pow(log(J),2); break;    // FEBio default
             case 1: return 0.25*m_K*(J*J - 2.0*log(J) - 1.0); break;    // NIKE3D's Ogden material
             case 2: return 0.5*m_K*(J-1)*(J-1); break;      // ABAQUS
+            case 3: return 0.5*m_K*((J*J-1)/2-log(J)); break;      // ABAQUS - GOH
             default: { assert(false); return 0; }
         }
     }
@@ -56,6 +89,7 @@ public:
             case 0: return m_K*log(J)/J; break;
             case 1: return 0.5*m_K*(J - 1.0/J); break;
             case 2: return m_K*(J-1); break;
+            case 3: return 0.5*m_K*(J-1.0/J); break;
 			default: { assert(false); return 0; }
 		}
     }
@@ -66,10 +100,12 @@ public:
             case 0: return m_K*(1-log(J))/(J*J); break;
             case 1: return 0.5*m_K*(1 + 1.0/(J*J)); break;
             case 2: return m_K; break;
+            case 3: return 0.5*m_K*(1+1.0/(J*J)); break;
 			default: { assert(false); return 0; }
 		}
     }
 
+public:
 	// incompressibility constraint fnc and derivs
 	double h  (double J) { return log(J); }
 	double hp (double J) { return 1.0 / J; }
@@ -77,25 +113,20 @@ public:
 
 public:
 	//! total Cauchy stress (do not overload!)
-	mat3ds Stress(FEMaterialPoint& mp) override;
+	mat3ds Stress(FEMaterialPoint& mp) final;
 
 	//! total spatial tangent (do not overload!)
-	tens4dss Tangent(FEMaterialPoint& mp) override;
+	tens4dss Tangent(FEMaterialPoint& mp) final;
 
 	//! calculate strain energy (do not overload!)
-	double StrainEnergyDensity(FEMaterialPoint& pt) override;
+	double StrainEnergyDensity(FEMaterialPoint& pt) final;
 
 	// Create material point data
 	FEMaterialPoint* CreateMaterialPointData() override;
     
 public:
-	double	m_K;		//!< bulk modulus
+	double	m_K;			//!< bulk modulus
+	int     m_npmodel;      //!< pressure model for U(J)
 
-	bool	m_blaugon;		//!< augmented lagrangian flag
-	double	m_augtol;		//!< augmented lagrangian tolerance
-	int		m_naugmin;		//!< minimum number of augmentations
-	int		m_naugmax;		//!< max number of augmentations
-    int     m_npmodel;      //!< pressure model for U(J)
-
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

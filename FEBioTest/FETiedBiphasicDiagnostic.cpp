@@ -1,16 +1,38 @@
-//
-//  FETiedBiphasicDiagnostic.cpp
-//  FEBioTest
-//
-//  Created by Gerard Ateshian on 1/29/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FETiedBiphasicDiagnostic.h"
 #include "FEBioMix/FEBiphasicSolver.h"
 #include "FEBioMix/FEBiphasicSolidDomain.h"
 #include "FEBioMix/FETiedBiphasicInterface.h"
 #include "FEBioMech/FEResidualVector.h"
+#include <FECore/log.h>
 
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
@@ -23,10 +45,10 @@ FETiedBiphasicDiagnostic::FETiedBiphasicDiagnostic(FEModel& fem) : FEDiagnostic(
     FEAnalysis* pstep = new FEAnalysis(&fem);
     
     // create a new solver
-    FESolver* pnew_solver = fecore_new<FESolver>(FESOLVER_ID, "biphasic", &fem);
+    FESolver* pnew_solver = fecore_new<FESolver>("biphasic", &fem);
     assert(pnew_solver);
-    pnew_solver->m_bsymm = false;
-    pstep->SetFESolver(pnew_solver);
+	pnew_solver->m_msymm = REAL_UNSYMMETRIC;
+	pstep->SetFESolver(pnew_solver);
     
     fem.AddStep(pstep);
     fem.SetCurrentStep(pstep);
@@ -46,20 +68,20 @@ void FETiedBiphasicDiagnostic::print_matrix(matrix& m)
     int N = m.rows();
     int M = m.columns();
     
-    felog.printf("\n    ");
-    for (i=0; i<N; ++i) felog.printf("%15d ", i);
-    felog.printf("\n----");
-    for (i=0; i<N; ++i) felog.printf("----------------", i);
+    feLog("\n    ");
+    for (i=0; i<N; ++i) feLog("%15d ", i);
+	feLog("\n----");
+    for (i=0; i<N; ++i) feLog("----------------", i);
     
     for (i=0; i<N; ++i)
     {
-        felog.printf("\n%2d: ", i);
+		feLog("\n%2d: ", i);
         for (j=0; j<M; ++j)
         {
-            felog.printf("%15lg ", m[i][j]);
+			feLog("%15lg ", m[i][j]);
         }
     }
-    felog.printf("\n");
+	feLog("\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -70,20 +92,20 @@ void FETiedBiphasicDiagnostic::print_matrix(SparseMatrix& m)
 	int N = m.Rows();
     int M = m.Columns();
     
-    felog.printf("\n    ");
-    for (i=0; i<N; ++i) felog.printf("%15d ", i);
-    felog.printf("\n----");
-    for (i=0; i<N; ++i) felog.printf("----------------", i);
+	feLog("\n    ");
+    for (i=0; i<N; ++i) feLog("%15d ", i);
+	feLog("\n----");
+    for (i=0; i<N; ++i) feLog("----------------", i);
     
     for (i=0; i<N; ++i)
     {
-        felog.printf("\n%2d: ", i);
+		feLog("\n%2d: ", i);
         for (j=0; j<M; ++j)
         {
-            felog.printf("%15lg ", m.get(i,j));
+			feLog("%15lg ", m.get(i,j));
         }
     }
-    felog.printf("\n");
+	feLog("\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -102,7 +124,7 @@ bool FETiedBiphasicDiagnostic::Init()
 bool FETiedBiphasicDiagnostic::Run()
 {
     // get the solver
-    FEModel& fem = GetFEModel();
+    FEModel& fem = *GetFEModel();
     FEMesh& mesh = fem.GetMesh();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
@@ -112,23 +134,22 @@ bool FETiedBiphasicDiagnostic::Run()
     pstep->m_final_time = dt;
     pstep->Activate();
     FEBiphasicSolver& solver = static_cast<FEBiphasicSolver&>(*pstep->GetFESolver());
-    solver.m_bsymm = false;
+    solver.m_msymm = REAL_UNSYMMETRIC;
     solver.Init();
     
     // make sure contact data is up to data
-    solver.UpdateContact();
+    fem.Update();
     
     // create the stiffness matrix
     solver.CreateStiffness(true);
     
     // get the stiffness matrix
-    FEGlobalMatrix& K = solver.GetStiffnessMatrix();
+    FEGlobalMatrix& K = *solver.GetStiffnessMatrix();
     SparseMatrix& K0 = *K;
     
     // build the stiffness matrix
     K.Zero();
-    solver.ContactStiffness();
-    
+
     print_matrix(K0);
     
     // calculate the derivative of the residual
@@ -161,7 +182,7 @@ bool FETiedBiphasicDiagnostic::Run()
     
     print_matrix(Kd);
     
-    felog.printf("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+	feLog("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
     
     return (kmax < 1e-3);
 }
@@ -170,7 +191,7 @@ bool FETiedBiphasicDiagnostic::Run()
 void FETiedBiphasicDiagnostic::deriv_residual(matrix& K)
 {
     // get the solver
-    FEModel& fem = GetFEModel();
+    FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
 	fem.GetTime().timeIncrement = pstep->m_dt0 = dt;
@@ -191,7 +212,7 @@ void FETiedBiphasicDiagnostic::deriv_residual(matrix& K)
     int N = mesh.Nodes();
     int ndof = N*ndpn;
     
-    solver.UpdateContact();
+    solver.UpdateModel();
     
     // first calculate the initial residual
     vector<double> R0; R0.assign(ndof, 0);
@@ -211,13 +232,13 @@ void FETiedBiphasicDiagnostic::deriv_residual(matrix& K)
         
         switch (nj)
         {
-            case 0: node.inc(dof_x, dx); node.m_rt.x += dx; break;
-            case 1: node.inc(dof_y, dx); node.m_rt.y += dx; break;
-            case 2: node.inc(dof_z, dx); node.m_rt.z += dx; break;
-            case 3: node.inc(dof_p, dx); break;
+            case 0: node.add(dof_x, dx); node.m_rt.x += dx; break;
+            case 1: node.add(dof_y, dx); node.m_rt.y += dx; break;
+            case 2: node.add(dof_z, dx); node.m_rt.z += dx; break;
+            case 3: node.add(dof_p, dx); break;
         }
         
-        solver.UpdateContact();
+        solver.UpdateModel();
         
         zero(R1);
         FEResidualVector RHS1(fem, R1, dummy);
@@ -225,13 +246,13 @@ void FETiedBiphasicDiagnostic::deriv_residual(matrix& K)
         
         switch (nj)
         {
-            case 0: node.dec(dof_x, dx); node.m_rt.x -= dx; break;
-            case 1: node.dec(dof_y, dx); node.m_rt.y -= dx; break;
-            case 2: node.dec(dof_z, dx); node.m_rt.z -= dx; break;
-            case 3: node.dec(dof_p, dx); break;
+            case 0: node.sub(dof_x, dx); node.m_rt.x -= dx; break;
+            case 1: node.sub(dof_y, dx); node.m_rt.y -= dx; break;
+            case 2: node.sub(dof_z, dx); node.m_rt.z -= dx; break;
+            case 3: node.sub(dof_p, dx); break;
         }
         
-        solver.UpdateContact();
+        solver.UpdateModel();
         
         for (i=0; i<ndof; ++i) K(i,j) = (R0[i] - R1[i])/dx;
     }
@@ -249,9 +270,9 @@ FEDiagnosticScenario* FETiedBiphasicDiagnostic::CreateScenario(const std::string
 // Biphasic Contact Tangent Diagnostic for hex8 Elements
 //////////////////////////////////////////////////////////////////////
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FETiedBiphasicTangentHex8, FETiedBiphasicScenario)
-ADD_PARAMETER(m_dt      , FE_PARAM_DOUBLE, "time_step"     );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETiedBiphasicTangentHex8, FETiedBiphasicScenario)
+	ADD_PARAMETER(m_dt, "time_step"     );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FETiedBiphasicTangentHex8::FETiedBiphasicTangentHex8(FEDiagnostic* pdia) : FETiedBiphasicScenario(pdia)
@@ -274,7 +295,7 @@ bool FETiedBiphasicTangentHex8::Init()
         1, 1, 1, 1, 1, 1, 1, 1
     };
     
-    FEModel& fem = GetDiagnostic()->GetFEModel();
+    FEModel& fem = *GetDiagnostic()->GetFEModel();
     FEMesh& mesh = fem.GetMesh();
     
     // --- create the geometry ---
@@ -304,7 +325,7 @@ bool FETiedBiphasicTangentHex8::Init()
     // get the one-and-only domain
     FEBiphasicSolidDomain* pbd = new FEBiphasicSolidDomain(&fem);
     pbd->SetMaterial(pm);
-    pbd->Create(2, FE_HEX8G8);
+    pbd->Create(2, FEElementLibrary::GetElementSpecFromType(FE_HEX8G8));
     pbd->SetMatID(0);
     mesh.AddDomain(pbd);
     
@@ -363,9 +384,9 @@ bool FETiedBiphasicTangentHex8::Init()
 // Tied Biphasic Interface Tangent Diagnostic for hex20 Elements
 //////////////////////////////////////////////////////////////////////
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FETiedBiphasicTangentHex20, FETiedBiphasicScenario)
-ADD_PARAMETER(m_dt      , FE_PARAM_DOUBLE, "time_step"     );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETiedBiphasicTangentHex20, FETiedBiphasicScenario)
+	ADD_PARAMETER(m_dt, "time_step"     );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FETiedBiphasicTangentHex20::FETiedBiphasicTangentHex20(FEDiagnostic* pdia) : FETiedBiphasicScenario(pdia)
@@ -414,7 +435,7 @@ bool FETiedBiphasicTangentHex20::Init()
         3,    15,    20,     8,    10,    17,    12,     5
     };
     
-    FEModel& fem = GetDiagnostic()->GetFEModel();
+    FEModel& fem = *GetDiagnostic()->GetFEModel();
     FEMesh& mesh = fem.GetMesh();
     
     // --- create the geometry ---
@@ -444,7 +465,7 @@ bool FETiedBiphasicTangentHex20::Init()
     // get the one-and-only domain
     FEBiphasicSolidDomain* pbd = new FEBiphasicSolidDomain(&fem);
     pbd->SetMaterial(pm);
-    pbd->Create(2, FE_HEX20G27);
+    pbd->Create(2, FEElementLibrary::GetElementSpecFromType(FE_HEX20G27));
     pbd->SetMatID(0);
     mesh.AddDomain(pbd);
     

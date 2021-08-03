@@ -1,10 +1,30 @@
-//
-//  FEElasticANSShellDomain.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 12/20/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEElasticANSShellDomain.h"
@@ -15,11 +35,15 @@
 #include <FECore/FEAnalysis.h>
 #include <math.h>
 #include <FECore/FESolidDomain.h>
+#include <FECore/FELinearSystem.h>
+#include "FEBioMech.h"
 
 //-----------------------------------------------------------------------------
-FEElasticANSShellDomain::FEElasticANSShellDomain(FEModel* pfem) : FESSIShellDomain(pfem), FEElasticDomain(pfem)
+FEElasticANSShellDomain::FEElasticANSShellDomain(FEModel* pfem) : FESSIShellDomain(pfem), FEElasticDomain(pfem), m_dofSA(pfem), m_dofR(pfem), m_dof(pfem)
 {
     m_pMat = 0;
+	m_dofSA.AddVariable(FEBioMech::GetVariableName(FEBioMech::SHELL_ACCELERATION));
+	m_dofR.AddVariable(FEBioMech::GetVariableName(FEBioMech::RIGID_ROTATION));
 }
 
 //-----------------------------------------------------------------------------
@@ -31,65 +55,17 @@ FEElasticANSShellDomain& FEElasticANSShellDomain::operator = (FEElasticANSShellD
 }
 
 //-----------------------------------------------------------------------------
-void FEElasticANSShellDomain::SetMaterial(FEMaterial* pmat)
+//! get the total dof list
+const FEDofList& FEElasticANSShellDomain::GetDOFList() const
 {
-    m_pMat = dynamic_cast<FESolidMaterial*>(pmat);
+	return m_dof;
 }
 
 //-----------------------------------------------------------------------------
-bool FEElasticANSShellDomain::Init()
+void FEElasticANSShellDomain::SetMaterial(FEMaterial* pmat)
 {
-    // initialize base class
-	FESSIShellDomain::Init();
-    
-    // error flag (set true on error)
-    bool bmerr = false;
-    
-    // get the elements material
-    if (m_pMat)
-    {
-        FEElasticMaterial* pme = m_pMat->GetElasticMaterial();
-        if (pme)
-        {
-            // assign local coordinate system to each integration point
-            for (size_t i=0; i<m_Elem.size(); ++i)
-            {
-                FEShellElement& el = m_Elem[i];
-                for (int n=0; n<el.GaussPoints(); ++n) pme->SetLocalCoordinateSystem(el, n, *(el.GetMaterialPoint(n)));
-            }
-        }
-    }
-    
-    // check for initially inverted shells
-    for (int i=0; i<Elements(); ++i)
-    {
-        FEShellElementNew& el = ShellElement(i);
-        int neln = el.Nodes();
-        int nint = el.GaussPoints();
-        el.m_E.resize(nint, mat3ds(0, 0, 0, 0, 0, 0));
-        
-        for (int n=0; n<nint; ++n)
-        {
-            double J0 = detJ0(el, n);
-            if (J0 <= 0)
-            {
-                felog.printf("**************************** E R R O R ****************************\n");
-                felog.printf("Negative jacobian detected at integration point %d of element %d\n", n+1, el.GetID());
-                felog.printf("Jacobian = %lg\n", J0);
-                felog.printf("Did you use the right node numbering?\n");
-                felog.printf("Nodes:");
-                for (int l=0; l<el.Nodes(); ++l)
-                {
-                    felog.printf("%d", el.m_node[l]+1);
-                    if (l+1 != el.Nodes()) felog.printf(","); else felog.printf("\n");
-                }
-                felog.printf("*******************************************************************\n\n");
-                bmerr = true;
-            }
-        }
-    }
-    
-    return (bmerr == false);
+	FEDomain::SetMaterial(pmat);
+    m_pMat = dynamic_cast<FESolidMaterial*>(pmat);
 }
 
 //-----------------------------------------------------------------------------
@@ -102,15 +78,15 @@ void FEElasticANSShellDomain::Activate()
         {
             if (node.m_rid < 0)
             {
-                node.m_ID[m_dofX] = DOF_ACTIVE;
-                node.m_ID[m_dofY] = DOF_ACTIVE;
-                node.m_ID[m_dofZ] = DOF_ACTIVE;
+                node.set_active(m_dofU[0]);
+                node.set_active(m_dofU[1]);
+                node.set_active(m_dofU[2]);
                 
                 if (node.HasFlags(FENode::SHELL))
                 {
-                    node.m_ID[m_dofSX] = DOF_ACTIVE;
-                    node.m_ID[m_dofSY] = DOF_ACTIVE;
-                    node.m_ID[m_dofSZ] = DOF_ACTIVE;
+                    node.set_active(m_dofSU[0]);
+                    node.set_active(m_dofSU[1]);
+                    node.set_active(m_dofSU[2]);
                 }
             }
         }
@@ -277,8 +253,6 @@ void FEElasticANSShellDomain::BodyForce(FEGlobalVector& R, FEBodyForce& BF)
 
 void FEElasticANSShellDomain::ElementBodyForce(FEBodyForce& BF, FEShellElementNew& el, vector<double>& fe)
 {
-    double dens = m_pMat->Density();
-    
     // integration weights
     double* gw = el.GaussWeights();
     double eta;
@@ -291,7 +265,8 @@ void FEElasticANSShellDomain::ElementBodyForce(FEBodyForce& BF, FEShellElementNe
     for (int n=0; n<nint; ++n)
     {
         FEMaterialPoint& mp = *el.GetMaterialPoint(n);
-        
+		double dens = m_pMat->Density(mp);
+
         // calculate the jacobian
         detJt = detJ0(el, n)*gw[n];
         
@@ -322,7 +297,6 @@ void FEElasticANSShellDomain::ElementBodyForce(FEBodyForce& BF, FEShellElementNe
 void FEElasticANSShellDomain::InertialForces(FEGlobalVector& R, vector<double>& F)
 {
     FESolidMaterial* pme = dynamic_cast<FESolidMaterial*>(GetMaterial()); assert(pme);
-    double d = pme->Density();
     
     const int MN = FEElement::MAX_NODES;
     vec3d at[MN], aqt[MN];
@@ -349,14 +323,16 @@ void FEElasticANSShellDomain::InertialForces(FEGlobalVector& R, vector<double>& 
         for (int i=0; i<neln; ++i)
         {
             at[i] = m_pMesh->Node(el.m_node[i]).m_at;
-            aqt[i] = m_pMesh->Node(el.m_node[i]).get_vec3d(m_dofSAX, m_dofSAY, m_dofSAZ);
+            aqt[i] = m_pMesh->Node(el.m_node[i]).get_vec3d(m_dofSA[0], m_dofSA[1], m_dofSA[2]);
         }
         
         // evaluate the element inertial force vector
         for (int n=0; n<nint; ++n)
         {
+			FEMaterialPoint& mp = *el.GetMaterialPoint(n);
+
             double J0 = detJ0(el, n)*el.GaussWeights()[n];
-            
+			double d = pme->Density(mp);
             // get the acceleration for this integration point
             a = evaluate(el, at, aqt, n);
             
@@ -393,9 +369,6 @@ void FEElasticANSShellDomain::ElementBodyForceStiffness(FEBodyForce& BF, FEShell
     int i, j, i6, j6;
     int neln = el.Nodes();
     
-    // don't forget to multiply with the density
-    double dens = m_pMat->Density();
-    
     // jacobian
     double detJ;
     double *M;
@@ -410,7 +383,8 @@ void FEElasticANSShellDomain::ElementBodyForceStiffness(FEBodyForce& BF, FEShell
     {
         FEMaterialPoint& mp = *el.GetMaterialPoint(n);
         detJ = detJ0(el, n)*gw[n];
-        
+		double dens = m_pMat->Density(mp);
+
         // get the stiffness
         K = BF.stiffness(mp)*dens*detJ;
         
@@ -455,51 +429,46 @@ void FEElasticANSShellDomain::ElementBodyForceStiffness(FEBodyForce& BF, FEShell
 
 //-----------------------------------------------------------------------------
 
-void FEElasticANSShellDomain::StiffnessMatrix(FESolver* psolver)
+void FEElasticANSShellDomain::StiffnessMatrix(FELinearSystem& LS)
 {
     // repeat over all shell elements
     int NS = (int)m_Elem.size();
 #pragma omp parallel for shared (NS)
     for (int iel=0; iel<NS; ++iel)
     {
-        matrix ke;
-        vector<int> lm;
-        
-        FEShellElement& el = m_Elem[iel];
-        
+		FEShellElement& el = m_Elem[iel];
+
         // create the element's stiffness matrix
-        int ndof = 6*el.Nodes();
+		FEElementMatrix ke(el);
+		int ndof = 6*el.Nodes();
         ke.resize(ndof, ndof);
         
         // calculate the element stiffness matrix
         ElementStiffness(iel, ke);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
-        
-        // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
-        
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
+
+		// assemble element matrix in global stiffness matrix
+		LS.Assemble(ke);
     }
 }
 
 //-----------------------------------------------------------------------------
-void FEElasticANSShellDomain::MassMatrix(FESolver* psolver, double scale)
+void FEElasticANSShellDomain::MassMatrix(FELinearSystem& LS, double scale)
 {
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
 #pragma omp parallel for shared (NE)
     for (int iel=0; iel<NE; ++iel)
     {
-        // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
 		FEShellElementNew& el = m_Elem[iel];
-        
+
         // create the element's stiffness matrix
-        int ndof = 6*el.Nodes();
+		FEElementMatrix ke(el);
+		int ndof = 6*el.Nodes();
         ke.resize(ndof, ndof);
         ke.zero();
         
@@ -507,30 +476,28 @@ void FEElasticANSShellDomain::MassMatrix(FESolver* psolver, double scale)
         ElementMassMatrix(el, ke, scale);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
 //-----------------------------------------------------------------------------
-void FEElasticANSShellDomain::BodyForceStiffness(FESolver* psolver, FEBodyForce& bf)
+void FEElasticANSShellDomain::BodyForceStiffness(FELinearSystem& LS, FEBodyForce& bf)
 {
     // repeat over all shell elements
     int NE = (int)m_Elem.size();
 #pragma omp parallel for shared (NE)
     for (int iel=0; iel<NE; ++iel)
     {
-        // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
 		FEShellElementNew& el = m_Elem[iel];
         
         // create the element's stiffness matrix
-        int ndof = 6*el.Nodes();
+		FEElementMatrix ke(el);
+		int ndof = 6*el.Nodes();
         ke.resize(ndof, ndof);
         ke.zero();
         
@@ -538,11 +505,12 @@ void FEElasticANSShellDomain::BodyForceStiffness(FESolver* psolver, FEBodyForce&
         ElementBodyForceStiffness(bf, el, ke);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
@@ -770,12 +738,12 @@ void FEElasticANSShellDomain::ElementMassMatrix(FEShellElementNew& el, matrix& k
     // weights at gauss points
     const double *gw = el.GaussWeights();
     
-    // density
-    double D = m_pMat->Density();
-    
     // calculate element stiffness matrix
     for (int n=0; n<nint; ++n)
     {
+		FEMaterialPoint& mp = *el.GetMaterialPoint(n);
+		double D = m_pMat->Density(mp);
+
         // shape functions
         double* M = el.H(n);
         
@@ -828,8 +796,6 @@ void FEElasticANSShellDomain::ElementBodyForce(FEModel& fem, FEShellElementNew& 
         FEBodyForce* pbf = dynamic_cast<FEBodyForce*>(fem.GetBodyLoad(nf));
         if (pbf)
         {
-            double dens0 = m_pMat->Density();
-            
             // integration weights
             double* gw = el.GaussWeights();
             double eta;
@@ -843,6 +809,8 @@ void FEElasticANSShellDomain::ElementBodyForce(FEModel& fem, FEShellElementNew& 
             {
                 FEMaterialPoint& mp = *el.GetMaterialPoint(n);
                 FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
+
+				double dens0 = m_pMat->Density(mp);
                 
                 // calculate density in current configuration
                 double dens = dens0/pt.m_J;
@@ -919,6 +887,9 @@ void FEElasticANSShellDomain::Update(const FETimeInfo& tp)
             // get the deformation gradient and determinant
             pt.m_J = defgrad(el, pt.m_F, n);
             
+            // update specialized material points
+            m_pMat->UpdateSpecializedMaterialPoints(mp, tp);
+            
             // calculate the stress at this material point
             mat3ds S = m_pMat->PK2Stress(mp, el.m_E[n]);
             pt.m_s = (pt.m_F*S*pt.m_F.transpose()).sym()/pt.m_J;
@@ -942,19 +913,19 @@ void FEElasticANSShellDomain::UnpackLM(FEElement& el, vector<int>& lm)
         vector<int>& id = node.m_ID;
         
         // first the displacement dofs
-        lm[6*i  ] = id[m_dofX];
-        lm[6*i+1] = id[m_dofY];
-        lm[6*i+2] = id[m_dofZ];
+        lm[6*i  ] = id[m_dofU[0]];
+        lm[6*i+1] = id[m_dofU[1]];
+        lm[6*i+2] = id[m_dofU[2]];
         
-        // next the rotational dofs
-        lm[6*i+3] = id[m_dofSX];
-        lm[6*i+4] = id[m_dofSY];
-        lm[6*i+5] = id[m_dofSZ];
+        // next the shell displacement dofs
+        lm[6*i+3] = id[m_dofSU[0]];
+        lm[6*i+4] = id[m_dofSU[1]];
+        lm[6*i+5] = id[m_dofSU[2]];
         
         // rigid rotational dofs
-        lm[6*N + 3*i  ] = id[m_dofRU];
-        lm[6*N + 3*i+1] = id[m_dofRV];
-        lm[6*N + 3*i+2] = id[m_dofRW];
+        lm[6*N + 3*i  ] = id[m_dofR[0]];
+        lm[6*N + 3*i+1] = id[m_dofR[1]];
+        lm[6*N + 3*i+2] = id[m_dofR[2]];
     }
 }
 

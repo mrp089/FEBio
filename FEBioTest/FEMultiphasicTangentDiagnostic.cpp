@@ -1,28 +1,50 @@
-//
-//  FEMultiphasicTangentDiagnostic.cpp
-//  FEBio2
-//
-//  Created by Gerard Ateshian on 8/21/15.
-//  Copyright (c) 2015 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEMultiphasicTangentDiagnostic.h"
 #include "FETangentDiagnostic.h"
 #include "FEBioMix/FEMultiphasicSolver.h"
 #include "FEBioMix/FEMultiphasicSolidDomain.h"
-#include "FECore/BC.h"
+#include <FECore/FEPrescribedDOF.h>
+#include <FECore/FEFixedBC.h>
 #include "FECore/FEInitialCondition.h"
-#include "FECore/FEDataLoadCurve.h"
+#include <FECore/FELoadCurve.h>
 #include "FECore/log.h"
 
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEMultiphasicTangentUniaxial, FEDiagnosticScenario)
-	ADD_PARAMETER(m_strain       , FE_PARAM_DOUBLE, "solid_strain"  );
-	ADD_PARAMETER(m_pressure     , FE_PARAM_DOUBLE, "fluid_pressure");
-	ADD_PARAMETER(m_dt           , FE_PARAM_DOUBLE, "time_step"     );
-	ADD_PARAMETER(m_concentration, FE_PARAM_DOUBLE, "solute_concentration");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEMultiphasicTangentUniaxial, FEDiagnosticScenario)
+	ADD_PARAMETER(m_strain       , "solid_strain"  );
+	ADD_PARAMETER(m_pressure     , "fluid_pressure");
+	ADD_PARAMETER(m_dt           , "time_step"     );
+	ADD_PARAMETER(m_concentration, "solute_concentration");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEMultiphasicTangentUniaxial::FEMultiphasicTangentUniaxial(FEDiagnostic* pdia) : FEMultiphasicScenario(pdia)
@@ -50,7 +72,7 @@ bool FEMultiphasicTangentUniaxial::Init()
     };
     
     // get the material
-	FEModel& fem = GetDiagnostic()->GetFEModel();
+	FEModel& fem = *GetDiagnostic()->GetFEModel();
 
     FEMaterial* pmat = fem.GetMaterial(0);
     FEMultiphasic* pmp = dynamic_cast<FEMultiphasic*>(pmat);
@@ -73,36 +95,48 @@ bool FEMultiphasicTangentUniaxial::Init()
     m.CreateNodes(8);
 	m.SetDOFS(MAX_DOFS);
 
+	// create a node set
+	FENodeSet* iset = new FENodeSet(&fem);
+	for (int i = 0; i < 8; ++i) iset->Add(i);
+
 	// add initial conditions
 	for (isol = 0; isol<nsol; ++isol) {
-		FEInitialBC* pic = new FEInitialBC(&fem);
-		pic->SetDOF(dof_c + isol);
-		for (i=0; i<8; ++i) pic->Add(i, m_concentration);
+
+		FEInitialDOF* pic = new FEInitialDOF(&fem, dof_c + isol, iset);
+		pic->SetValue(m_concentration);
+
 		fem.AddInitialCondition(pic);
 	}
 
-	FEInitialBC* pip = new FEInitialBC(&fem);
-	pip->SetDOF(dof_p);
-	for (i=0; i<8; ++i) pip->Add(i, pe);
+	FEInitialDOF* pip = new FEInitialDOF(&fem, dof_p, iset);
+	pip->SetValue(pe);
 	fem.AddInitialCondition(pip);
 
 	// add boundary conditions
-    for (i=0; i<8; ++i)
+	FENodeSet* nset[3];
+	nset[0] = new FENodeSet(&fem);
+	nset[1] = new FENodeSet(&fem);
+	nset[2] = new FENodeSet(&fem);
+	for (i=0; i<8; ++i)
     {
         FENode& n = m.Node(i);
         n.m_rt = n.m_rp = n.m_r0 = r[i];
         n.m_rid = -1;
         
         // set displacement BC's
-        if (BC[i][0] == -1) fem.AddFixedBC(i, dof_x);
-        if (BC[i][1] == -1) fem.AddFixedBC(i, dof_y);
-        if (BC[i][2] == -1) fem.AddFixedBC(i, dof_z);
+        if (BC[i][0] == -1) nset[0]->Add(i);
+        if (BC[i][1] == -1) nset[1]->Add(i);
+        if (BC[i][2] == -1) nset[2]->Add(i);
     }
-    
+
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_x, nset[0]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_y, nset[1]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_z, nset[2]));
+
     // create a multiphasic domain
     FEMultiphasicSolidDomain* pd = new FEMultiphasicSolidDomain(&fem);
 	pd->SetMaterial(pmat);
-    pd->Create(1, FE_HEX8G8);
+    pd->Create(1, FEElementLibrary::GetElementSpecFromType(FE_HEX8G8));
 	pd->SetMatID(0);
     m.AddDomain(pd);
     FESolidElement& el = pd->Element(0);
@@ -115,29 +149,30 @@ bool FEMultiphasicTangentUniaxial::Init()
     double d = sqrt(2*m_strain+1) - 1;
     
     // Add a loadcurve
-	FELoadCurve* plc = new FELinearRamp(1.0, 0.0);
-    fem.AddLoadCurve(plc);
-    
+	FELoadCurve* plc = new FELoadCurve(&fem);
+	plc->Add(0.0, 0.0);
+	plc->Add(1.0, 1.0);
+	fem.AddLoadController(plc);
+
     // Add a prescribed displacement BC along X
-    int nd[4] = {1, 2, 5, 6};
-	FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem);
-    fem.AddPrescribedBC(pdc);
-    pdc->SetDOF(dof_x).SetScale(d, 0);
-    for (i = 0; i<4; ++i) pdc->AddNode(nd[i]);
-    
+	FENodeSet* dc = new FENodeSet(&fem);
+	dc->Add({ 1, 2, 5, 6 });
+
+	FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem, dof_x, dc);
+	pdc->SetScale(d, 0);
+	fem.AddBoundaryCondition(pdc);
+	
     // Add a prescribed fluid pressure BC
-	FEPrescribedDOF* ppc = new FEPrescribedDOF(&fem);
-    fem.AddPrescribedBC(ppc);
-    ppc->SetDOF(dof_p).SetScale(pe, 0);
-    for (i = 0; i<4; ++i) ppc->AddNode(nd[i]);
-    
+	FEPrescribedDOF* ppc = new FEPrescribedDOF(&fem, dof_p, dc);
+	ppc->SetScale(pe, 0);
+	fem.AddBoundaryCondition(ppc);
+
     // Add prescribed solute concentration BC
     for (i=0; i<nsol; ++i) {
-		FEPrescribedDOF* psc = new FEPrescribedDOF(&fem);
-        fem.AddPrescribedBC(psc);
-        psc->SetDOF(dof_c+i).SetScale(m_concentration, 0);
-        for (i = 0; i<4; ++i) psc->AddNode(nd[i]);
-    }
+		FEPrescribedDOF* psc = new FEPrescribedDOF(&fem, dof_c + i, dc);
+		psc->SetScale(m_concentration, 0);
+		fem.AddBoundaryCondition(psc);
+	}
 
 	return true;
 }
@@ -155,9 +190,9 @@ FEMultiphasicTangentDiagnostic::FEMultiphasicTangentDiagnostic(FEModel& fem) : F
 	FEAnalysis* pstep = new FEAnalysis(&fem);
 
 	// create a new solver
-	FESolver* pnew_solver = fecore_new<FESolver>(FESOLVER_ID, "multiphasic", &fem);
+	FESolver* pnew_solver = fecore_new<FESolver>("multiphasic", &fem);
 	assert(pnew_solver);
-	pnew_solver->m_bsymm = false;
+	pnew_solver->m_msymm = REAL_UNSYMMETRIC;
 	pstep->SetFESolver(pnew_solver);
 
 	fem.AddStep(pstep);
@@ -191,20 +226,20 @@ void FEMultiphasicTangentDiagnostic::print_matrix(matrix& m)
     int N = m.rows();
     int M = m.columns();
     
-    felog.printf("\n    ");
-    for (i=0; i<N; ++i) felog.printf("%15d ", i);
-    felog.printf("\n----");
-    for (i=0; i<N; ++i) felog.printf("----------------", i);
+    feLog("\n    ");
+    for (i=0; i<N; ++i) feLog("%15d ", i);
+	feLog("\n----");
+    for (i=0; i<N; ++i) feLog("----------------", i);
     
     for (i=0; i<N; ++i)
     {
-        felog.printf("\n%2d: ", i);
+		feLog("\n%2d: ", i);
         for (j=0; j<M; ++j)
         {
-            felog.printf("%15lg ", m[i][j]);
+			feLog("%15lg ", m[i][j]);
         }
     }
-    felog.printf("\n");
+	feLog("\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -213,9 +248,7 @@ void FEMultiphasicTangentDiagnostic::print_matrix(matrix& m)
 // of the element residual.
 bool FEMultiphasicTangentDiagnostic::Run()
 {
-	Logfile::MODE oldmode = felog.SetMode(Logfile::LOG_FILE);
-    
-    FEModel& fem = GetFEModel();
+    FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
 	fem.GetTime().timeIncrement = pstep->m_dt0 = dt;
@@ -224,13 +257,13 @@ bool FEMultiphasicTangentDiagnostic::Run()
     pstep->m_final_time = dt;
 
     // solve the problem
-	felog.SetMode(Logfile::LOG_NEVER);
+	fem.BlockLog();
     if (fem.Solve() == false)
 	{
-		felog.SetMode(oldmode);
+		fem.UnBlockLog();
 		return false;
 	}
-	felog.SetMode(Logfile::LOG_FILE);
+	fem.UnBlockLog();
     
     // get the material
     FEMaterial* pmat = fem.GetMaterial(0);
@@ -256,7 +289,7 @@ bool FEMultiphasicTangentDiagnostic::Run()
             if (fabs(k0[i][j]) > k0max) k0max = fabs(k0[i][j]);
     
     // print the element stiffness matrix
-    felog.printf("\nActual stiffness matrix:\n");
+	feLog("\nActual stiffness matrix:\n");
     print_matrix(k0);
     
     // now calculate the derivative of the residual
@@ -264,11 +297,11 @@ bool FEMultiphasicTangentDiagnostic::Run()
     deriv_residual(k1);
     
     // print the approximate element stiffness matrix
-    felog.printf("\nApproximate stiffness matrix:\n");
+	feLog("\nApproximate stiffness matrix:\n");
     print_matrix(k1);
     
     // finally calculate the difference matrix
-    felog.printf("\n");
+	feLog("\n");
     matrix kd(ndpn*N, ndpn*N);
     double kmax = 0, kij;
     int i0 = -1, j0 = -1, i, j;
@@ -286,12 +319,10 @@ bool FEMultiphasicTangentDiagnostic::Run()
         }
     
     // print the difference
-    felog.printf("\ndifference matrix:\n");
+	feLog("\ndifference matrix:\n");
     print_matrix(kd);
     
-    felog.SetMode(oldmode);
-    
-    felog.printf("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+	feLog("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
     
     return (kmax < 1e-4);
 }
@@ -304,7 +335,7 @@ void FEMultiphasicTangentDiagnostic::deriv_residual(matrix& ke)
     int i, j, nj;
     
     // get the solver
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
 	fem.GetTime().timeIncrement = pstep->m_dt0 = dt;
@@ -352,29 +383,29 @@ void FEMultiphasicTangentDiagnostic::deriv_residual(matrix& ke)
         
         switch (nj)
         {
-            case 0: node.inc(dof_x, dx); node.m_rt.x += dx; break;
-            case 1: node.inc(dof_y, dx); node.m_rt.y += dx; break;
-            case 2: node.inc(dof_z, dx); node.m_rt.z += dx; break;
-            case 3: node.inc(dof_p, dx); break;
-            default: node.inc(dof_c + nj-4, dx); break;
+            case 0: node.add(dof_x, dx); node.m_rt.x += dx; break;
+            case 1: node.add(dof_y, dx); node.m_rt.y += dx; break;
+            case 2: node.add(dof_z, dx); node.m_rt.z += dx; break;
+            case 3: node.add(dof_p, dx); break;
+            default: node.add(dof_c + nj-4, dx); break;
         }
         
         
-		solver.UpdateModel();
+		fem.Update();
         
         zero(f1);
         md.ElementInternalForce(el, f1);
         
         switch (nj)
         {
-            case 0: node.dec(dof_x, dx); node.m_rt.x -= dx; break;
-            case 1: node.dec(dof_y, dx); node.m_rt.y -= dx; break;
-            case 2: node.dec(dof_z, dx); node.m_rt.z -= dx; break;
-            case 3: node.dec(dof_p, dx); break;
-            default: node.dec(dof_c + nj-4, dx); break;
+            case 0: node.sub(dof_x, dx); node.m_rt.x -= dx; break;
+            case 1: node.sub(dof_y, dx); node.m_rt.y -= dx; break;
+            case 2: node.sub(dof_z, dx); node.m_rt.z -= dx; break;
+            case 3: node.sub(dof_p, dx); break;
+            default: node.sub(dof_c + nj-4, dx); break;
         }
         
-		solver.UpdateModel();
+		fem.Update();
         
         for (i=0; i<ndpn*N; ++i) ke[i][j] = -(f1[i] - f0[i])/dx;
     }

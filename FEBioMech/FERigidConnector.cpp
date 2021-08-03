@@ -1,16 +1,41 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
 #include "stdafx.h"
 #include "FERigidConnector.h"
-#include "FECore/FERigidSystem.h"
-#include "FECore/FERigidBody.h"
-#include "FECore/FEModel.h"
+#include "FERigidBody.h"
+#include "FEMechModel.h"
+#include "FERigidMaterial.h"
 #include <FECore/FEMaterial.h>
 #include <FECore/log.h>
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FERigidConnector, FENLConstraint);
-	ADD_PARAMETER(m_nRBa, FE_PARAM_INT   , "body_a"        );
-	ADD_PARAMETER(m_nRBb, FE_PARAM_INT   , "body_b"        );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidConnector, FENLConstraint);
+	ADD_PARAMETER(m_nRBa, "body_a"        );
+	ADD_PARAMETER(m_nRBb, "body_b"        );
+END_FECORE_CLASS();
 
 int FERigidConnector::m_ncount = 0;
 
@@ -32,27 +57,26 @@ bool FERigidConnector::Init()
 
 	// When the rigid spring is read in, the ID's correspond to the rigid materials.
 	// Now we want to make the ID's refer to the rigid body ID's
-	FEModel& fem = *GetFEModel();
-	FEMaterial* pm = fem.GetMaterial(m_nRBa - 1);
-	if (pm->IsRigid() == false)
+	FEMechModel& fem = static_cast<FEMechModel&>(*GetFEModel());
+	FERigidMaterial* pm = dynamic_cast<FERigidMaterial*>(fem.GetMaterial(m_nRBa - 1));
+	if (pm == nullptr)
 	{
-		felog.printbox("FATAL ERROR", "Rigid connector %d (spring) does not connect two rigid bodies\n", m_nID + 1);
+		feLogError("Rigid connector %d (spring) does not connect two rigid bodies\n", m_nID + 1);
 		return false;
 	}
 	m_nRBa = pm->GetRigidBodyID();
 
-	pm = fem.GetMaterial(m_nRBb - 1);
-	if (pm->IsRigid() == false)
+	pm = dynamic_cast<FERigidMaterial*>(fem.GetMaterial(m_nRBb - 1));
+	if (pm == nullptr)
 	{
-		felog.printbox("FATAL ERROR", "Rigid connector %d (spring) does not connect two rigid bodies\n", m_nID);
+		feLogError("Rigid connector %d (spring) does not connect two rigid bodies\n", m_nID);
 		return false;
 	}
 	m_nRBb = pm->GetRigidBodyID();
 
 	// get the actual rigid bodies
-	FERigidSystem& rs = *fem.GetRigidSystem();
-	m_rbA = rs.Object(m_nRBa);
-	m_rbB = rs.Object(m_nRBb);
+	m_rbA = fem.GetRigidBody(m_nRBa);
+	m_rbB = fem.GetRigidBody(m_nRBb);
 
 	return true;
 }
@@ -74,21 +98,15 @@ void FERigidConnector::BuildMatrixProfile(FEGlobalMatrix& M)
 void FERigidConnector::Serialize(DumpStream& ar)
 {
 	FENLConstraint::Serialize(ar);
-	if (ar.IsSaving())
-	{
-        ar << m_nID;
-        ar << m_nRBa << m_nRBb;
-        ar << m_F << m_M;
-	}
-	else
-	{
-        ar >> m_nID;
-        ar >> m_nRBa >> m_nRBb;
-        ar >> m_F >> m_M;
+    ar & m_nID;
+    ar & m_nRBa & m_nRBb;
+    ar & m_F & m_M;
 
+	if (ar.IsLoading())
+	{
 		// get the actual rigid bodies
-		FERigidSystem& rs = *GetFEModel()->GetRigidSystem();
-		m_rbA = rs.Object(m_nRBa);
-		m_rbB = rs.Object(m_nRBb);
+		FEMechModel& fem = static_cast<FEMechModel&>(*GetFEModel());
+		m_rbA = fem.GetRigidBody(m_nRBa);
+		m_rbB = fem.GetRigidBody(m_nRBb);
 	}
 }

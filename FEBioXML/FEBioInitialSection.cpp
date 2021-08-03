@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBioInitialSection.h"
 #include "FECore/FEModel.h"
@@ -5,6 +33,8 @@
 #include <FECore/FEInitialCondition.h>
 #include <FECore/FECoreKernel.h>
 #include <FECore/FEMaterial.h>
+#include <FEBioMech/FERigidMaterial.h>
+#include <FEBioMech/FEInitialVelocity.h>
 
 //-----------------------------------------------------------------------------
 void FEBioInitialSection::Parse(XMLTag& tag)
@@ -24,15 +54,17 @@ void FEBioInitialSection::Parse(XMLTag& tag)
 	{
 		if (tag == "velocity")
 		{
-			const int dof_VX = dofs.GetDOF("vx");
-			const int dof_VY = dofs.GetDOF("vy");
-			const int dof_VZ = dofs.GetDOF("vz");
-			FEInitialBCVec3D* pic = dynamic_cast<FEInitialBCVec3D*>(fecore_new<FEInitialCondition>(FEIC_ID, "init_bc_vec3d", &fem));
-			pic->SetDOF(dof_VX, dof_VY, dof_VZ);
+			FEInitialVelocity* pic = dynamic_cast<FEInitialVelocity*>(fecore_new<FEInitialCondition>("velocity", &fem));
 
 			// add it to the model
 			GetBuilder()->AddInitialCondition(pic);
 
+			// create a node set
+			FENodeSet* nset = fecore_alloc(FENodeSet, &fem);
+			fem.GetMesh().AddNodeSet(nset);
+			pic->SetNodeSet(nset);
+
+			std::vector<vec3d> values;
 			++tag;
 			do
 			{
@@ -41,18 +73,23 @@ void FEBioInitialSection::Parse(XMLTag& tag)
 					int nid = ReadNodeID(tag);
 					vec3d v;
 					value(tag, v);
-
-					pic->Add(nid, v);
+					nset->Add(nid);
+					values.push_back(v);
 				}
 				else throw XMLReader::InvalidTag(tag);
 				++tag;
 			}
 			while (!tag.isend());
+
+			// TODO: Fix this! I need to add a mechanism again for setting mapped data.
+			pic->SetValue(values[0]);
+//			for (int i = 0; i < values.size(); ++i) pic->SetValue(i, values[i]);
+
 		}
 		else if (tag == "ic")
 		{
 			const char* sztype = tag.AttributeValue("type");
-			FEInitialCondition* pic = dynamic_cast<FEInitialCondition*>(fecore_new<FEInitialCondition>(FEIC_ID, sztype, &fem));
+			FEInitialCondition* pic = fecore_new<FEInitialCondition>(sztype, &fem);
 
 			if (tag.isleaf() == false)
 			{
@@ -99,11 +136,18 @@ void FEBioInitialSection::Parse(XMLTag& tag)
 			if (ndof == -1) throw XMLReader::InvalidTag(tag);
 
 			// allocate initial condition
-			FEInitialBC* pic = dynamic_cast<FEInitialBC*>(fecore_new<FEInitialCondition>(FEIC_ID, "init_bc", &fem));
+			FEInitialDOF* pic = dynamic_cast<FEInitialDOF*>(fecore_new<FEInitialCondition>("init_dof", &fem));
 			pic->SetDOF(ndof);
 
 			// add it to the model
 			GetBuilder()->AddInitialCondition(pic);
+
+			// create a node set
+			FENodeSet* nset = new FENodeSet(&fem);
+			fem.GetMesh().AddNodeSet(nset);
+			pic->SetNodeSet(nset);
+
+			std::vector<double> vals;
 
 			// read the node list and values
 			++tag;
@@ -114,12 +158,17 @@ void FEBioInitialSection::Parse(XMLTag& tag)
 					int nid = ReadNodeID(tag);
 					double p;
 					value(tag, p);
-					pic->Add(nid, p);
+					nset->Add(nid);
+					vals.push_back(p);
 				}
 				else throw XMLReader::InvalidTag(tag);
 				++tag;
 			}
 			while (!tag.isend());
+
+			// TODO: Fix this! I need to add a mechanism again for setting mapped data.
+			pic->SetValue(vals[0]);
+//			for (int i = 0; i < vals.size(); ++i) pic->SetValue(i, vals[i]);
 		}
 		++tag;
 	}
@@ -155,9 +204,9 @@ void FEBioInitialSection25::Parse(XMLTag& tag)
 			if (pns == 0) throw XMLReader::InvalidTag(tag);
 
 			// allocate initial condition
-			FEInitialBC* pic = dynamic_cast<FEInitialBC*>(fecore_new<FEInitialCondition>(FEIC_ID, "init_bc", &fem));
+			FEInitialDOF* pic = dynamic_cast<FEInitialDOF*>(fecore_new<FEInitialCondition>("init_dof", &fem));
 			pic->SetDOF(ndof);
-			pic->SetNodes(*pns);
+			pic->SetNodeSet(pns);
 
 			// add it to the model
 			GetBuilder()->AddInitialCondition(pic);
@@ -168,7 +217,18 @@ void FEBioInitialSection25::Parse(XMLTag& tag)
 		else if (tag == "ic")
 		{
 			const char* sztype = tag.AttributeValue("type");
-			FEInitialCondition* pic = dynamic_cast<FEInitialCondition*>(fecore_new<FEInitialCondition>(FEIC_ID, sztype, &fem));
+			FEInitialCondition* pic = fecore_new<FEInitialCondition>(sztype, &fem);
+
+			FENodalIC* nic = dynamic_cast<FENodalIC*>(pic);
+			if (nic)
+			{
+				// get the node set
+				const char* szset = tag.AttributeValue("node_set");
+				FENodeSet* pns = mesh.FindNodeSet(szset);
+				if (pns == 0) throw XMLReader::InvalidTag(tag);
+
+				nic->SetNodeSet(pns);
+			}
 
 			ReadParameterList(tag, pic);
 			
@@ -183,8 +243,8 @@ void FEBioInitialSection25::Parse(XMLTag& tag)
 			if ((nmat <= 0) || (nmat > fem.Materials())) throw XMLReader::InvalidAttributeValue(tag, "mat", szm);
 
 			// make sure this is a valid rigid material
-			FEMaterial* pm = fem.GetMaterial(nmat - 1);
-			if (pm->IsRigid() == false) throw XMLReader::InvalidAttributeValue(tag, "mat", szm);
+			FERigidMaterial* pm = dynamic_cast<FERigidMaterial*>(fem.GetMaterial(nmat - 1));
+			if (pm == 0) throw XMLReader::InvalidAttributeValue(tag, "mat", szm);
 
 			++tag;
 			do
@@ -196,12 +256,12 @@ void FEBioInitialSection25::Parse(XMLTag& tag)
 					value(tag, v);
 
 					// create the initial condition
-					FERigidBodyVelocity* pic = new FERigidBodyVelocity(&fem);
+					FERigidBodyVelocity* pic = fecore_alloc(FERigidBodyVelocity, &fem);
 					pic->m_rid = nmat;
 					pic->m_vel = v;
 
 					// add this initial condition to the current step
-					GetBuilder()->AddRigidBodyVelocity(pic);
+					GetBuilder()->AddRigidIC(pic);
 				}
 				else if (tag == "initial_angular_velocity")
 				{
@@ -210,12 +270,12 @@ void FEBioInitialSection25::Parse(XMLTag& tag)
 					value(tag, w);
 
 					// create the initial condition
-					FERigidBodyAngularVelocity* pic = new FERigidBodyAngularVelocity(&fem);
+					FERigidBodyAngularVelocity* pic = fecore_alloc(FERigidBodyAngularVelocity, &fem);
 					pic->m_rid = nmat;
 					pic->m_w = w;
 
 					// add this initial condition to the current step
-					GetBuilder()->AddRigidBodyAngularVelocity(pic);
+					GetBuilder()->AddRigidIC(pic);
 				}
 
 				++tag;

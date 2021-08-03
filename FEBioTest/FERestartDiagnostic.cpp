@@ -1,3 +1,32 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FERestartDiagnostics.h"
 #include <FEBioLib/FEBioModel.h>
 #include <FECore/FEAnalysis.h>
@@ -23,7 +52,7 @@ bool restart_test_cb(FEModel* pfem, unsigned int nwen, void* pd)
 		DumpFile ar(*pfem);
 		if (ar.Create(ptask->m_szdmp) == false)
 		{
-			felog.printf("FAILED CREATING RESTART DUMP FILE.\n");
+			feLogErrorEx(pfem, "FAILED CREATING RESTART DUMP FILE.\n");
 			return false;
 		}
 		
@@ -44,7 +73,7 @@ bool restart_test_cb(FEModel* pfem, unsigned int nwen, void* pd)
 	ptask->m_bok = true;
 
 	// suppress the error output
-	felog.SetMode(Logfile::LOG_NEVER);
+	pfem->BlockLog();
 
 	return false;
 }
@@ -53,20 +82,15 @@ bool restart_test_cb(FEModel* pfem, unsigned int nwen, void* pd)
 // initialize the diagnostic
 bool FERestartDiagnostic::Init(const char* sz)
 {
-	FEModel& fem = *GetFEModel();
+	FEBioModel& fem = dynamic_cast<FEBioModel&>(*GetFEModel());
 
 	// copy the file name (if any)
 	if (sz && (sz[0] != 0)) strcpy(m_szdmp, sz);
 
-	// Make sure that restart flags are off for all steps
+	// Make sure that restart flag is off.
 	// This is because we are hijacking restart and we don't
 	// want regular restart to interfere.
-	int NS = fem.Steps();
-	for (int i=0; i<NS; ++i)
-	{
-		FEAnalysis* ps = fem.GetStep(i);
-		ps->m_ndump = FE_DUMP_NEVER;
-	}
+	fem.SetDumpLevel(FE_DUMP_NEVER);
 
 	// Add the restart callback
 	fem.AddCallback(restart_test_cb, CB_MAJOR_ITERS, this);
@@ -79,30 +103,35 @@ bool FERestartDiagnostic::Init(const char* sz)
 // run the diagnostic
 bool FERestartDiagnostic::Run()
 {
-	FEBioModel& fem = dynamic_cast<FEBioModel&>(*GetFEModel());
+	FEBioModel* fem = dynamic_cast<FEBioModel*>(GetFEModel());
 
-	while (fem.Solve() == false)
+	while (fem->Solve() == false)
 	{
+		// reset output mode (it was turned off in restart_test_cb)
+		fem->UnBlockLog();
+
 		if (m_bok)
 		{
+			feLogEx(fem, "Reading restart file...");
 			if (m_bfile)
 			{
 				// reopen the dump file for readin
-				DumpFile ar(fem);
+				DumpFile ar(*fem);
 				if (ar.Open(m_szdmp) == false)
 				{
-					felog.printf("FAILED OPENING RESTART DUMP FILE.\n");
+					feLogErrorEx(fem, "FAILED OPENING RESTART DUMP FILE.\n");
 					return false;
 				}
 
-				fem.Serialize(ar);
+				fem->Serialize(ar);
 			}
 			else
 			{
 				m_dmp.Open(false, false);
-				fem.Serialize(m_dmp);
+				fem->Serialize(m_dmp);
 			}
 			m_bok = false;
+			feLogEx(fem, "done!\n");
 
 			// reopen the log file for appending
 /*			const char* szlog = fem.GetLogfileName();
@@ -112,8 +141,6 @@ bool FERestartDiagnostic::Run()
 				felog.open(szlog);
 			}
 */
-			// reset output mode
-			felog.SetMode(Logfile::LOG_FILE_AND_SCREEN);
 		}
 		else return false;
 	}

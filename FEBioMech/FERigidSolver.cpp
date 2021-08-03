@@ -1,19 +1,50 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FERigidSolver.h"
 #include "FESolidSolver2.h"
 #include "FERigidMaterial.h"
-#include <FECore/FERigidSystem.h>
-#include <FECore/FERigidBody.h>
+#include "FERigidBody.h"
 #include <FECore/FEModel.h>
-#include <FECore/RigidBC.h>
+#include "RigidBC.h"
 #include <FECore/FEAnalysis.h>
 #include <FECore/SparseMatrix.h>
 #include <FECore/log.h>
 #include <FECore/FEMaterial.h>
 #include <FECore/Archive.h>
+#include "FEMechModel.h"
+#include <FECore/FELinearSystem.h>
 
-FERigidSolver::FERigidSolver(FEModel* fem) : m_fem(fem)
+FERigidSolver::FERigidSolver(FEModel* fem)
 {
+	m_fem = dynamic_cast<FEMechModel*>(fem);
+
 	m_dofX = m_dofY = m_dofZ = -1;
 
 	m_bAllowMixedBCs = false;
@@ -22,11 +53,12 @@ FERigidSolver::FERigidSolver(FEModel* fem) : m_fem(fem)
 int FERigidSolver::InitEquations(int neq)
 {
 	// Next, we assign equation numbers to the rigid body degrees of freedom
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
-	int nrb = rigid.Objects();
+	if (m_fem == nullptr) return neq;
+
+	int nrb = m_fem->RigidBodies();
 	for (int i = 0; i<nrb; ++i)
 	{
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *m_fem->GetRigidBody(i);
 		for (int j = 0; j<6; ++j)
 		{
 			int bcj = RB.m_BC[j];
@@ -66,7 +98,7 @@ int FERigidSolver::InitEquations(int neq)
 		FENode& node = mesh.Node(i);
 		if (node.m_rid >= 0)
 		{
-			FERigidBody& RB = *rigid.Object(node.m_rid);
+			FERigidBody& RB = *m_fem->GetRigidBody(node.m_rid);
 			node.m_ID[m_dofX] = (RB.m_LM[0] >= 0 ? -RB.m_LM[0] - 2 : RB.m_LM[0]);
 			node.m_ID[m_dofY] = (RB.m_LM[1] >= 0 ? -RB.m_LM[1] - 2 : RB.m_LM[1]);
 			node.m_ID[m_dofZ] = (RB.m_LM[2] >= 0 ? -RB.m_LM[2] - 2 : RB.m_LM[2]);
@@ -92,55 +124,42 @@ int FERigidSolver::InitEquations(int neq)
 void FERigidSolver::Serialize(DumpStream& ar)
 {
 	if (ar.IsShallow()) return;
+	ar & m_dofX & m_dofY & m_dofZ;
+	ar & m_dofVX & m_dofVY & m_dofVZ;
+	ar & m_dofU & m_dofV & m_dofW;
+    ar & m_dofSX & m_dofSY & m_dofSZ;
+    ar & m_dofSVX & m_dofSVY & m_dofSVZ;
+	ar & m_bAllowMixedBCs;
+}
 
-	if (ar.IsSaving())
-	{
-		ar << m_dofX << m_dofY << m_dofZ;
-		ar << m_dofVX << m_dofVY << m_dofVZ;
-		ar << m_dofU << m_dofV << m_dofW;
-        ar << m_dofSX << m_dofSY << m_dofSZ;
-        ar << m_dofSVX << m_dofSVY << m_dofSVZ;
-		ar << m_bAllowMixedBCs;
-	}
-	else
-	{
-		ar >> m_dofX >> m_dofY >> m_dofZ;
-		ar >> m_dofVX >> m_dofVY >> m_dofVZ;
-		ar >> m_dofU >> m_dofV >> m_dofW;
-        ar >> m_dofSX >> m_dofSY >> m_dofSZ;
-        ar >> m_dofSVX >> m_dofSVY >> m_dofSVZ;
-		ar >> m_bAllowMixedBCs;
-	}
+//-----------------------------------------------------------------------------
+//! return the FEModel
+FEModel* FERigidSolver::GetFEModel()
+{
+	return m_fem;
 }
 
 //-----------------------------------------------------------------------------
 // \todo: eliminate need for ui parameter
 void FERigidSolver::PrepStep(const FETimeInfo& timeInfo, vector<double>& ui)
 {
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
-	int NO = rigid.Objects();
-	for (int i = 0; i<NO; ++i) rigid.Object(i)->Init();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	int NO = fem.RigidBodies();
+	for (int i = 0; i<NO; ++i) fem.GetRigidBody(i)->Init();
 
 	// calculate local rigid displacements
-	for (int i = 0; i<rigid.PrescribedBCs(); ++i)
+	for (int i = 0; i<fem.RigidPrescribedBCs(); ++i)
 	{
-		FERigidBodyDisplacement& DC = *rigid.PrescribedBC(i);
-		FERigidBody& RB = *rigid.Object(DC.id);
-		if (DC.IsActive())
-		{
-			int I = DC.bc;
-			int lc = DC.lc;
-			if (lc >= 0)
-			{
-				RB.m_dul[I] = DC.Value() - RB.m_Ut[DC.bc];
-			}
-		}
+		FERigidBodyDisplacement& DC = *fem.GetRigidPrescribedBC(i);
+		if (DC.IsActive()) DC.InitTimeStep();
 	}
 
 	// calculate global rigid displacements
 	for (int i = 0; i<NO; ++i)
 	{
-		FERigidBody* prb = rigid.Object(i);
+		FERigidBody* prb = fem.GetRigidBody(i);
 		if (prb)
 		{
 			FERigidBody& RB = *prb;
@@ -156,8 +175,22 @@ void FERigidSolver::PrepStep(const FETimeInfo& timeInfo, vector<double>& ui)
 						if (bpofr[0] && bpofr[1] && bpofr[2]) RB.m_bpofr = true;
 						else
 						{
-							felog.printf("FATAL ERROR: Rigid body rotations cannot mix prescribed and free components.\n");
-							felog.printf("Rigid body: %d, Material: %d\n", RB.m_nID, RB.GetMaterialID());
+							feLogError("Rigid body rotations cannot mix prescribed and free components.\nRigid body: %d, Material: %d\n", RB.m_nID, RB.GetMaterialID());
+							throw "FATAL ERROR";
+						}
+
+						// see if all or none prescribed dofs are relative
+						bool br[3] = { false, false, false };
+						for (int j = 3; j < 6; ++j)
+						{
+							FERigidBodyDisplacement* dc = RB.m_pDC[j];
+							if (dc && dc->GetRelativeFlag()) br[j - 3] = true;
+						}
+
+						bool bf = ((br[0] == br[1]) && (br[1] == br[2]) && (br[0] == br[2]));
+						if (bf==false)
+						{
+							feLogError("All or none rigid rotations must have relative flag set.\nRigid body: %d, Material: %d\n", RB.m_nID, RB.GetMaterialID());
 							throw "FATAL ERROR";
 						}
 					}
@@ -228,7 +261,7 @@ void FERigidSolver::PrepStep(const FETimeInfo& timeInfo, vector<double>& ui)
 	// store rigid displacements in Ui vector
 	for (int i = 0; i<NO; ++i)
 	{
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 		for (int j = 0; j<6; ++j)
 		{
 			int I = -RB.m_LM[j] - 2;
@@ -247,7 +280,7 @@ void FERigidSolver::PrepStep(const FETimeInfo& timeInfo, vector<double>& ui)
 			FENode& n = mesh.Node(i);
 			if (n.m_rid >= 0)
 			{
-				FERigidBody& rb = *rigid.Object(n.m_rid);
+				FERigidBody& rb = *fem.GetRigidBody(n.m_rid);
 				vec3d V = rb.m_vt;
 				vec3d W = rb.m_wt;
 				vec3d r = n.m_rt - rb.m_rt;
@@ -263,9 +296,9 @@ void FERigidSolver::PrepStep(const FETimeInfo& timeInfo, vector<double>& ui)
 	}
 
 	// store the current rigid body reaction forces
-	for (int i = 0; i<rigid.Objects(); ++i)
+	for (int i = 0; i<fem.RigidBodies(); ++i)
 	{
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 		RB.m_Fp = RB.m_Fr;
 		RB.m_Mp = RB.m_Mr;
 	}
@@ -273,32 +306,42 @@ void FERigidSolver::PrepStep(const FETimeInfo& timeInfo, vector<double>& ui)
 
 //-----------------------------------------------------------------------------
 //! This function calculates the rigid stiffness matrices
-void FERigidSolver::RigidStiffness(SparseMatrix& K, vector<double>& ui, vector<double>& F, vector<int>& en, vector<int>& elm, matrix& ke, double alpha)
+void FERigidSolver::RigidStiffness(SparseMatrix& K, vector<double>& ui, vector<double>& F, const FEElementMatrix& ke, double alpha)
 {
+	if (m_fem == nullptr) return;
+
+	const vector<int>& en = ke.Nodes();
     int n = (int)en.size();
     FEMesh& mesh = m_fem->GetMesh();
     
     bool bclamped_shell = false;
-    for (int j = 0; j<n; ++j) {
-        if (mesh.Node(en[j]).HasFlags(FENode::SHELL) && mesh.Node(en[j]).HasFlags(FENode::RIGID_CLAMP)) {
-            bclamped_shell = true;
-            break;
-        }
+    for (int j = 0; j<n; ++j) 
+	{
+		if (en[j] >= 0)
+		{
+			if (mesh.Node(en[j]).HasFlags(FENode::SHELL) && mesh.Node(en[j]).HasFlags(FENode::RIGID_CLAMP)) {
+				bclamped_shell = true;
+				break;
+			}
+		}
     }
     if (bclamped_shell)
-        RigidStiffnessShell(K, ui, F, en, elm, ke, alpha);
+        RigidStiffnessShell(K, ui, F, en, ke.RowIndices(), ke.ColumnsIndices(), ke, alpha);
     else
-        RigidStiffnessSolid(K, ui, F, en, elm, ke, alpha);
+        RigidStiffnessSolid(K, ui, F, en, ke.RowIndices(), ke.ColumnsIndices(), ke, alpha);
     return;
 }
 
 //-----------------------------------------------------------------------------
 //! This function calculates the rigid stiffness matrices
 //! correct stiffness matrix for rigid-solid interfaces
-void FERigidSolver::RigidStiffnessSolid(SparseMatrix& K, vector<double>& ui, vector<double>& F, vector<int>& en, vector<int>& elm, matrix& ke, double alpha)
+void FERigidSolver::RigidStiffnessSolid(SparseMatrix& K, vector<double>& ui, vector<double>& F, const vector<int>& en, const vector<int>& elmi, const std::vector<int>& elmj, const matrix& ke, double alpha)
 {
-    FERigidSystem& rigid = *m_fem->GetRigidSystem();
-    if (rigid.Objects() == 0) return;
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	if (fem.RigidBodies() == 0) return;
+	if (en.empty()) return;
     
     int i, j, k, l, n = (int)en.size();
     
@@ -325,225 +368,236 @@ void FERigidSolver::RigidStiffnessSolid(SparseMatrix& K, vector<double>& ui, vec
     // loop over columns
     for (j = 0; j<n; ++j)
     {
-        FENode& nodej = mesh.Node(en[j]);
-        if (nodej.m_rid >= 0)
-        {
-            // this is a rigid interface node
-            // get the rigid body this node is attached to
-            FERigidBody& RBj = *rigid.Object(nodej.m_rid);
-            
-            // get the rigid body equation nrs.
-            lmj = RBj.m_LM;
-            
-            // get the relative distance to the center of mass
-            zj = nodej.m_rt - RBj.m_rt;
-            Zj.skew(zj);
-            
-            // loop over rows
-            for (i = 0; i<n; ++i)
-            {
-                // get the element sub-matrix
-                for (k = 0; k<ndof; ++k)
-                    for (l = 0; l<ndof; ++l)
-                        kij[k][l] = ke[ndof*i + k][ndof*j + l];
-                
-                mat3d Kuu(kij[0][0], kij[0][1], kij[0][2],
-                          kij[1][0], kij[1][1], kij[1][2],
-                          kij[2][0], kij[2][1], kij[2][2]);
-                
-                FENode& nodei = mesh.Node(en[i]);
-                
-                if (nodei.m_rid >= 0)
-                {
-                    // node i is also a rigid body node
-                    // get the rigid body this node is attached to
-                    FERigidBody& RBi = *rigid.Object(nodei.m_rid);
-                    
-                    lmi = RBi.m_LM;
-                    
-                    // get the relative distance (use alpha rule)
-                    zi = (nodei.m_rt - RBi.m_rt)*alpha + (nodei.m_rp - RBi.m_rp)*(1 - alpha);
-                    Zi.skew(zi);
-                    
-                    mat3d M;
-                    
-                    // Kuu transformation to Krr
-                    M = Kuu*alpha;
-                    KR[0][0] = M[0][0]; KR[0][1] = M[0][1]; KR[0][2] = M[0][2];
-                    KR[1][0] = M[1][0]; KR[1][1] = M[1][1]; KR[1][2] = M[1][2];
-                    KR[2][0] = M[2][0]; KR[2][1] = M[2][1]; KR[2][2] = M[2][2];
-                    
-                    
-                    // Kuu transformation to Krq
-                    M = Kuu*Zj*(-alpha);
-                    KR[0][3] = M[0][0]; KR[0][4] = M[0][1]; KR[0][5] = M[0][2];
-                    KR[1][3] = M[1][0]; KR[1][4] = M[1][1]; KR[1][5] = M[1][2];
-                    KR[2][3] = M[2][0]; KR[2][4] = M[2][1]; KR[2][5] = M[2][2];
+		if (en[j] >= 0)
+		{
+			FENode& nodej = mesh.Node(en[j]);
+			if (nodej.m_rid >= 0)
+			{
+				// this is a rigid interface node
+				// get the rigid body this node is attached to
+				FERigidBody& RBj = *fem.GetRigidBody(nodej.m_rid);
 
-                    
-                    // Kuu transformation to Kqr
-                    M = Zi*Kuu*alpha;
-                    KR[3][0] = M[0][0]; KR[3][1] = M[0][1]; KR[3][2] = M[0][2];
-                    KR[4][0] = M[1][0]; KR[4][1] = M[1][1]; KR[4][2] = M[1][2];
-                    KR[5][0] = M[2][0]; KR[5][1] = M[2][1]; KR[5][2] = M[2][2];
+				// get the rigid body equation nrs.
+				lmj = RBj.m_LM;
 
-                    
-                    // Kuu transformation to Kqq
-                    M = Zi*Kuu*Zj*(-alpha);
-                    KR[3][3] = M[0][0]; KR[3][4] = M[0][1]; KR[3][5] = M[0][2];
-                    KR[4][3] = M[1][0]; KR[4][4] = M[1][1]; KR[4][5] = M[1][2];
-                    KR[5][3] = M[2][0]; KR[5][4] = M[2][1]; KR[5][5] = M[2][2];
-                    
-                    // add the stiffness components to the Krr matrix
-                    for (k = 0; k<6; ++k)
-                        for (l = 0; l<6; ++l)
-                        {
-                            J = lmj[k];
-                            I = lmi[l];
-                            
-                            if (I >= 0)
-                            {
-                                // multiply KR by alpha for alpha rule
-                                if (J < -1) F[I] -= KR[l][k]*ui[-J - 2];
-                                else if (J >= 0) K.add(I, J, KR[l][k]);
-                            }
-                        }
-                    
-                    // we still need to couple the non-rigid degrees of node i to the
-                    // rigid dofs of node j
-                    for (k = 3; k<ndof; ++k) {
-                        vec3d kpu(kij[k][0], kij[k][1], kij[k][2]);
-                        vec3d m = kpu*alpha;
-                        KF[k][0] = m.x; KF[k][1] = m.y; KF[k][2] = m.z;
-                        m = Zj*kpu*alpha;
-                        KF[k][3] = m.x; KF[k][4] = m.y; KF[k][5] = m.z;
-                    }
-                    
-                    for (k = 0; k<6; ++k)
-                        for (l = 3; l<ndof; ++l)
-                        {
-                            J = lmj[k];
-                            I = elm[ndof*i + l];
-                            
-                            if (I >= 0)
-                            {
-                                // multiply KF by alpha for alpha rule
-                                if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
-                                else if (J >= 0) K.add(I, J, KF[l][k]);
-                            }
-                        }
-                    
-                    // now the transpose location
-                    for (l = 3; l<ndof; ++l) {
-                        vec3d kup(kij[0][l], kij[1][l], kij[2][l]);
-                        vec3d m = Zi*kup;
-                        KF[l][0] = kup.x; KF[l][1] = kup.y; KF[l][2] = kup.z;
-                        KF[l][3] = m.x; KF[l][4] = m.y; KF[l][5] = m.z;
-                    }
-                    
-                    for (k = 0; k<6; ++k)
-                        for (l = 3; l<ndof; ++l)
-                        {
-                            J = elm[ndof*j + l];
-                            I = lmi[k];
-                            
-                            if (I >= 0)
-                            {
-                                if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
-                                else if (J >= 0) K.add(I, J, KF[l][k]);
-                            }
-                        }
-                    
-                }
-                else
-                {
-                    // node i is not a rigid body node
-                    // add the stiffness components to the Kfr matrix
-                    
-                    // Kij
-                    for (k = 0; k<ndof; ++k) {
-                        vec3d kpu(kij[k][0], kij[k][1], kij[k][2]);
-                        vec3d m = kpu*alpha;
-                        KF[k][0] = m.x; KF[k][1] = m.y; KF[k][2] = m.z;
-                        m = Zj*kpu*alpha;
-                        KF[k][3] = m.x; KF[k][4] = m.y; KF[k][5] = m.z;
-                    }
-                    
-                    for (k = 0; k<6; ++k)
-                        for (l = 0; l<ndof; ++l)
-                        {
-                            J = lmj[k];
-                            I = elm[ndof*i + l];
-                            
-                            if (I >= 0)
-                            {
-                                // multiply KF by alpha for alpha rule
-                                if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
-                                else if (J >= 0) K.add(I, J, KF[l][k]);
-                            }
-                        }
-                }
-            }
-        }
-        else
-        {
-            // loop over rows
-            for (i = 0; i<n; ++i)
-            {
-                FENode& nodei = mesh.Node(en[i]);
-                if (nodei.m_rid >= 0)
-                {
-                    // node i is a rigid body
-                    // get the rigid body this node is attached to
-                    FERigidBody& RBi = *rigid.Object(nodei.m_rid);
-                    
-                    // get the rigid body equation nrs.
-                    lmi = RBi.m_LM;
-                    
-                    // get the relative distance (use alpha rule)
-                    zi = (nodei.m_rt - RBi.m_rt)*alpha + (nodei.m_rp - RBi.m_rp)*(1 - alpha);
-                    Zi.skew(zi);
-                    
-                    // get the element sub-matrix
-                    for (k = 0; k<ndof; ++k)
-                        for (l = 0; l<ndof; ++l)
-                            kij[k][l] = ke[ndof*i + k][ndof*j + l];
-                    
-                    // add the stiffness components to the Krf matrix
-                    
-                    // Kij
-                    for (k = 0; k<ndof; ++k) {
-                        vec3d kup(kij[0][k], kij[1][k], kij[2][k]);
-                        vec3d m = Zi*kup;
-                        KF[k][0] = kup.x; KF[k][1] = kup.y; KF[k][2] = kup.z;
-                        KF[k][3] = m.x; KF[k][4] = m.y; KF[k][5] = m.z;
-                    }
-                    
-                    for (k = 0; k<6; ++k)
-                        for (l = 0; l<ndof; ++l)
-                        {
-                            I = lmi[k];
-                            J = elm[ndof*j + l];
-                            
-                            if (I >= 0)
-                            {
-                                if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
-                                else if (J >= 0) K.add(I, J, KF[l][k]);
-                            }
-                        }
-                }
-            }
-        }
+				// get the relative distance to the center of mass
+				zj = nodej.m_rt - RBj.m_rt;
+				Zj.skew(zj);
+
+				// loop over rows
+				for (i = 0; i < n; ++i)
+				{
+					// get the element sub-matrix
+					for (k = 0; k < ndof; ++k)
+						for (l = 0; l < ndof; ++l)
+							kij[k][l] = ke[ndof*i + k][ndof*j + l];
+
+					mat3d Kuu(kij[0][0], kij[0][1], kij[0][2],
+						kij[1][0], kij[1][1], kij[1][2],
+						kij[2][0], kij[2][1], kij[2][2]);
+
+					if (en[i] >= 0)
+					{
+						FENode& nodei = mesh.Node(en[i]);
+
+						if (nodei.m_rid >= 0)
+						{
+							// node i is also a rigid body node
+							// get the rigid body this node is attached to
+							FERigidBody& RBi = *fem.GetRigidBody(nodei.m_rid);
+
+							lmi = RBi.m_LM;
+
+							// get the relative distance (use alpha rule)
+							zi = (nodei.m_rt - RBi.m_rt)*alpha + (nodei.m_rp - RBi.m_rp)*(1 - alpha);
+							Zi.skew(zi);
+
+							mat3d M;
+
+							// Kuu transformation to Krr
+							M = Kuu * alpha;
+							KR[0][0] = M[0][0]; KR[0][1] = M[0][1]; KR[0][2] = M[0][2];
+							KR[1][0] = M[1][0]; KR[1][1] = M[1][1]; KR[1][2] = M[1][2];
+							KR[2][0] = M[2][0]; KR[2][1] = M[2][1]; KR[2][2] = M[2][2];
+
+
+							// Kuu transformation to Krq
+							M = Kuu * Zj*(-alpha);
+							KR[0][3] = M[0][0]; KR[0][4] = M[0][1]; KR[0][5] = M[0][2];
+							KR[1][3] = M[1][0]; KR[1][4] = M[1][1]; KR[1][5] = M[1][2];
+							KR[2][3] = M[2][0]; KR[2][4] = M[2][1]; KR[2][5] = M[2][2];
+
+
+							// Kuu transformation to Kqr
+							M = Zi * Kuu*alpha;
+							KR[3][0] = M[0][0]; KR[3][1] = M[0][1]; KR[3][2] = M[0][2];
+							KR[4][0] = M[1][0]; KR[4][1] = M[1][1]; KR[4][2] = M[1][2];
+							KR[5][0] = M[2][0]; KR[5][1] = M[2][1]; KR[5][2] = M[2][2];
+
+
+							// Kuu transformation to Kqq
+							M = Zi * Kuu*Zj*(-alpha);
+							KR[3][3] = M[0][0]; KR[3][4] = M[0][1]; KR[3][5] = M[0][2];
+							KR[4][3] = M[1][0]; KR[4][4] = M[1][1]; KR[4][5] = M[1][2];
+							KR[5][3] = M[2][0]; KR[5][4] = M[2][1]; KR[5][5] = M[2][2];
+
+							// add the stiffness components to the Krr matrix
+							for (k = 0; k < 6; ++k)
+								for (l = 0; l < 6; ++l)
+								{
+									J = lmj[k];
+									I = lmi[l];
+
+									if (I >= 0)
+									{
+										// multiply KR by alpha for alpha rule
+										if (J < -1) F[I] -= KR[l][k] * ui[-J - 2];
+										else if (J >= 0) K.add(I, J, KR[l][k]);
+									}
+								}
+
+							// we still need to couple the non-rigid degrees of node i to the
+							// rigid dofs of node j
+							for (k = 3; k < ndof; ++k) {
+								vec3d kpu(kij[k][0], kij[k][1], kij[k][2]);
+								vec3d m = kpu * alpha;
+								KF[k][0] = m.x; KF[k][1] = m.y; KF[k][2] = m.z;
+								m = Zj * kpu*alpha;
+								KF[k][3] = m.x; KF[k][4] = m.y; KF[k][5] = m.z;
+							}
+
+							for (k = 0; k < 6; ++k)
+								for (l = 3; l < ndof; ++l)
+								{
+									J = lmj[k];
+									I = elmi[ndof*i + l];
+
+									if (I >= 0)
+									{
+										// multiply KF by alpha for alpha rule
+										if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
+										else if (J >= 0) K.add(I, J, KF[l][k]);
+									}
+								}
+
+							// now the transpose location
+							for (l = 3; l < ndof; ++l) {
+								vec3d kup(kij[0][l], kij[1][l], kij[2][l]);
+								vec3d m = Zi * kup;
+								KF[l][0] = kup.x; KF[l][1] = kup.y; KF[l][2] = kup.z;
+								KF[l][3] = m.x; KF[l][4] = m.y; KF[l][5] = m.z;
+							}
+
+							for (k = 0; k < 6; ++k)
+								for (l = 3; l < ndof; ++l)
+								{
+									J = elmj[ndof*j + l];
+									I = lmi[k];
+
+									if (I >= 0)
+									{
+										if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
+										else if (J >= 0) K.add(I, J, KF[l][k]);
+									}
+								}
+
+						}
+						else
+						{
+							// node i is not a rigid body node
+							// add the stiffness components to the Kfr matrix
+
+							// Kij
+							for (k = 0; k < ndof; ++k) {
+								vec3d kpu(kij[k][0], kij[k][1], kij[k][2]);
+								vec3d m = kpu * alpha;
+								KF[k][0] = m.x; KF[k][1] = m.y; KF[k][2] = m.z;
+								m = Zj * kpu*alpha;
+								KF[k][3] = m.x; KF[k][4] = m.y; KF[k][5] = m.z;
+							}
+
+							for (k = 0; k < 6; ++k)
+								for (l = 0; l < ndof; ++l)
+								{
+									J = lmj[k];
+									I = elmi[ndof*i + l];
+
+									if (I >= 0)
+									{
+										// multiply KF by alpha for alpha rule
+										if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
+										else if (J >= 0) K.add(I, J, KF[l][k]);
+									}
+								}
+						}
+					}
+				}
+			}
+			else
+			{
+				// loop over rows
+				for (i = 0; i < n; ++i)
+				{
+					if (en[i] >= 0)
+					{
+						FENode& nodei = mesh.Node(en[i]);
+						if (nodei.m_rid >= 0)
+						{
+							// node i is a rigid body
+							// get the rigid body this node is attached to
+							FERigidBody& RBi = *fem.GetRigidBody(nodei.m_rid);
+
+							// get the rigid body equation nrs.
+							lmi = RBi.m_LM;
+
+							// get the relative distance (use alpha rule)
+							zi = (nodei.m_rt - RBi.m_rt)*alpha + (nodei.m_rp - RBi.m_rp)*(1 - alpha);
+							Zi.skew(zi);
+
+							// get the element sub-matrix
+							for (k = 0; k < ndof; ++k)
+								for (l = 0; l < ndof; ++l)
+									kij[k][l] = ke[ndof*i + k][ndof*j + l];
+
+							// add the stiffness components to the Krf matrix
+
+							// Kij
+							for (k = 0; k < ndof; ++k) {
+								vec3d kup(kij[0][k], kij[1][k], kij[2][k]);
+								vec3d m = Zi * kup;
+								KF[k][0] = kup.x; KF[k][1] = kup.y; KF[k][2] = kup.z;
+								KF[k][3] = m.x; KF[k][4] = m.y; KF[k][5] = m.z;
+							}
+
+							for (k = 0; k < 6; ++k)
+								for (l = 0; l < ndof; ++l)
+								{
+									I = lmi[k];
+									J = elmj[ndof*j + l];
+
+									if (I >= 0)
+									{
+										if (J < -1) F[I] -= KF[l][k] * ui[-J - 2];
+										else if (J >= 0) K.add(I, J, KF[l][k]);
+									}
+								}
+						}
+					}
+				}
+			}
+		}
     }
 }
 
 //-----------------------------------------------------------------------------
 //! This function calculates the rigid stiffness matrices
 //! correct stiffness matrix for rigid bodies accounting for rigid-body-deformable-shell interfaces
-void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vector<double>& F, vector<int>& en, vector<int>& elm, matrix& ke, double alpha)
+void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vector<double>& F, const vector<int>& en, const vector<int>& elmi, const vector<int>& elmj, const matrix& ke, double alpha)
 {
-    FERigidSystem& rigid = *m_fem->GetRigidSystem();
-    if (rigid.Objects() == 0) return;
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	if (fem.RigidBodies() == 0) return;
     
     int i, j, k, l, n = (int)en.size();
     
@@ -574,7 +628,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
         {
             // this is a rigid interface node
             // get the rigid body this node is attached to
-            FERigidBody& RBj = *rigid.Object(nodej.m_rid);
+            FERigidBody& RBj = *fem.GetRigidBody(nodej.m_rid);
             
             // get the rigid body equation nrs.
             lmj = RBj.m_LM;
@@ -584,7 +638,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
             Aj.skew(aj);
             
             // get the shell director
-            bj = aj - (nodej.m_d0 + nodej.get_vec3d(m_dofX, m_dofY, m_dofZ) - nodej.get_vec3d(m_dofSX, m_dofSY, m_dofSZ));
+            bj = aj - nodej.m_dt;
             Bj.skew(bj);
             
             // loop over rows
@@ -617,7 +671,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                 {
                     // node i is also a rigid body node
                     // get the rigid body this node is attached to
-                    FERigidBody& RBi = *rigid.Object(nodei.m_rid);
+                    FERigidBody& RBi = *fem.GetRigidBody(nodei.m_rid);
                     
                     lmi = RBi.m_LM;
                     
@@ -626,7 +680,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                     Ai.skew(ai);
                     
                     // get the shell director
-                    bi = ai - (nodei.m_d0 + nodei.get_vec3d(m_dofX, m_dofY, m_dofZ) - nodei.get_vec3d(m_dofSX, m_dofSY, m_dofSZ));
+                    bi = ai - nodei.m_dt;
                     Bi.skew(bi);
                     
                     mat3d M;
@@ -688,7 +742,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                         for (l = 6; l<ndof; ++l)
                         {
                             J = lmj[k];
-                            I = elm[ndof*i + l];
+                            I = elmi[ndof*i + l];
                             
                             if (I >= 0)
                             {
@@ -711,7 +765,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                     for (k = 0; k<6; ++k)
                         for (l = 6; l<ndof; ++l)
                         {
-                            J = elm[ndof*j + l];
+                            J = elmj[ndof*j + l];
                             I = lmi[k];
                             
                             if (I >= 0)
@@ -741,7 +795,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                         for (l = 0; l<ndof; ++l)
                         {
                             J = lmj[k];
-                            I = elm[ndof*i + l];
+                            I = elmi[ndof*i + l];
                             
                             if (I >= 0)
                             {
@@ -763,7 +817,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                 {
                     // node i is a rigid body
                     // get the rigid body this node is attached to
-                    FERigidBody& RBi = *rigid.Object(nodei.m_rid);
+                    FERigidBody& RBi = *fem.GetRigidBody(nodei.m_rid);
                     
                     // get the rigid body equation nrs.
                     lmi = RBi.m_LM;
@@ -773,7 +827,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                     Ai.skew(ai);
                     
                     // get the shell director
-                    bi = ai - (nodei.m_d0 + nodei.get_vec3d(m_dofX, m_dofY, m_dofZ) - nodei.get_vec3d(m_dofSX, m_dofSY, m_dofSZ));
+                    bi = ai - nodei.m_dt;
                     Bi.skew(bi);
                     
                     // get the element sub-matrix
@@ -797,7 +851,7 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
                         for (l = 0; l<ndof; ++l)
                         {
                             I = lmi[k];
-                            J = elm[ndof*j + l];
+                            J = elmj[ndof*j + l];
                             
                             if (I >= 0)
                             {
@@ -814,9 +868,11 @@ void FERigidSolver::RigidStiffnessShell(SparseMatrix& K, vector<double>& ui, vec
 //-----------------------------------------------------------------------------
 void FERigidSolver::AssembleResidual(int node_id, int dof, double f, vector<double>& R)
 {
-    FEMesh& mesh = m_fem->GetMesh();
-    FERigidSystem& rigid = *m_fem->GetRigidSystem();
- 
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	FEMesh& mesh = m_fem->GetMesh();
+	
     // get the equation number
     FENode& node = mesh.Node(node_id);
     int n = node.m_ID[dof];
@@ -826,7 +882,7 @@ void FERigidSolver::AssembleResidual(int node_id, int dof, double f, vector<doub
     else if (node.m_rid >= 0)
     {
         // this is a rigid body node
-        FERigidBody& RB = *rigid.Object(node.m_rid);
+        FERigidBody& RB = *fem.GetRigidBody(node.m_rid);
         
         // get the relative position
         vec3d a = node.m_rt - RB.m_rt;
@@ -852,7 +908,7 @@ void FERigidSolver::AssembleResidual(int node_id, int dof, double f, vector<doub
         }
 		if (node.HasFlags(FENode::SHELL) && node.HasFlags(FENode::RIGID_CLAMP)) {
             // get the shell director
-            vec3d d = node.m_d0 + node.get_vec3d(m_dofX, m_dofY, m_dofZ) - node.get_vec3d(m_dofSX, m_dofSY, m_dofSZ);
+            vec3d d = node.m_dt;
             vec3d b = a - d;
             if (dof == m_dofSX)
             {
@@ -879,11 +935,13 @@ void FERigidSolver::AssembleResidual(int node_id, int dof, double f, vector<doub
 //-----------------------------------------------------------------------------
 void FERigidSolver::Residual()
 {
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
-	int NRB = rigid.Objects();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	int NRB = fem.RigidBodies();
 	for (int i = 0; i<NRB; ++i)
 	{
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 		RB.m_Fr = RB.m_Mr = vec3d(0, 0, 0);
 	}
 }
@@ -891,14 +949,15 @@ void FERigidSolver::Residual()
 //-----------------------------------------------------------------------------
 void FERigidSolver::StiffnessMatrix(SparseMatrix& K, const FETimeInfo& tp)
 {
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
 
 	// we still need to set the diagonal elements to 1
 	// for the prescribed rigid body dofs.
-	int NRB = rigid.Objects();
+	int NRB = fem.RigidBodies();
 	for (int i = 0; i<NRB; ++i)
 	{
-		FERigidBody& rb = *rigid.Object(i);
+		FERigidBody& rb = *fem.GetRigidBody(i);
 		for (int j = 0; j<6; ++j)
 		if (rb.m_LM[j] < -1)
 		{
@@ -910,29 +969,31 @@ void FERigidSolver::StiffnessMatrix(SparseMatrix& K, const FETimeInfo& tp)
 
 //-----------------------------------------------------------------------------
 //! This function calculates the contribution to the mass matrix from the rigid bodies
-void FERigidSolver::RigidMassMatrix(FESolver* solver, const FETimeInfo& timeInfo)
+void FERigidSolver::RigidMassMatrix(FELinearSystem& LS, const FETimeInfo& timeInfo)
 {
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
 
 	// element stiffness matrix
 	vector<int> lm;
-	matrix ke;
+	FEElementMatrix ke;
 
 	// 6 dofs per rigid body
 	ke.resize(6, 6);
 
 	// Newmark integration rule
 	double dt = timeInfo.timeIncrement;
+    double alpham = timeInfo.alpham;
 	double beta = timeInfo.beta;
 	double gamma = timeInfo.gamma;
 	double a = 1. / (beta*dt*dt);
 
-	for (int i=0; i<rigid.Objects(); ++i)
+	for (int i=0; i<fem.RigidBodies(); ++i)
 	{
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 
 		// mass matrix
-		double M = RB.m_mass*a;
+		double M = RB.m_mass*a*alpham;
 
 		ke.zero();
 		ke[0][0] = M;
@@ -957,11 +1018,11 @@ void FERigidSolver::RigidMassMatrix(FESolver* solver, const FETimeInfo& timeInfo
 		mat3d T = mat3dd(1) + qhat / 2 + dyad(e*theta) / 4;
 
 		// skew-symmetric of angular momentum
-		mat3d Jw;
-		Jw.skew(Jt*RB.m_wt);
+		mat3d hhat;
+		hhat.skew(Jt*RB.m_wt);
 
 		// rotational inertia stiffness
-		mat3d K = (Jt*T)*a*gamma - Jw / dt;
+		mat3d K = ((Jt*T)/(beta*dt) - hhat/gamma)*(alpham/dt);
 
 		ke[3][3] = K(0, 0); ke[3][4] = K(0, 1); ke[3][5] = K(0, 2);
 		ke[4][3] = K(1, 0); ke[4][4] = K(1, 1); ke[4][5] = K(1, 2);
@@ -969,7 +1030,8 @@ void FERigidSolver::RigidMassMatrix(FESolver* solver, const FETimeInfo& timeInfo
 
 		lm.assign(RB.m_LM, RB.m_LM + 6);
 
-		solver->AssembleStiffness(lm, ke);
+		ke.SetIndices(lm);
+		LS.Assemble(ke);
 	}
 }
 
@@ -983,16 +1045,17 @@ void FERigidSolver::RigidMassMatrix(FESolver* solver, const FETimeInfo& timeInfo
 void FERigidSolverOld::UpdateRigidKinematics()
 {
 	// get the model and mesh
-	FEModel& fem = *m_fem;
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
 	FEMesh& mesh = fem.GetMesh();
-	FERigidSystem& rigid = *fem.GetRigidSystem();
 
 	// loop over all rigid bodies
-	int NRB = rigid.Objects();
+	int NRB = fem.RigidBodies();
 	for (int j = 0; j<NRB; ++j)
 	{
 		// get the rigid body
-		FERigidBody& rb = *rigid.Object(j);
+		FERigidBody& rb = *fem.GetRigidBody(j);
 
 		// right-hand side and least-square matrix
 		vector<double> r; r.assign(6, 0.0);
@@ -1004,10 +1067,9 @@ void FERigidSolverOld::UpdateRigidKinematics()
 		for (int n = 0; n<NDOM; ++n)
 		{
 			FEDomain& dom = mesh.Domain(n);
-			FEMaterial* pm = dom.GetMaterial();
-			if (pm->IsRigid())
+			FERigidMaterial* prm = dynamic_cast<FERigidMaterial*>(dom.GetMaterial());
+			if (prm)
 			{
-				FERigidMaterial* prm = static_cast<FERigidMaterial*>(pm);
 				if (prm->GetRigidBodyID() == j)
 				{
 					// now loop over all the nodes
@@ -1062,15 +1124,16 @@ void FERigidSolverOld::UpdateRigidKinematics()
 //! Updates the rigid body data
 void FERigidSolverOld::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui, bool bnewUpdate)
 {
-	// get the number of rigid bodies
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
-	const int NRB = rigid.Objects();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	const int NRB = fem.RigidBodies();
 
 	// first calculate the rigid body displacement increments
 	for (int i = 0; i<NRB; ++i)
 	{
 		// get the rigid body
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 		int *lm = RB.m_LM;
 		double* du = RB.m_du;
 
@@ -1085,16 +1148,17 @@ void FERigidSolverOld::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui,
 
 	// for prescribed displacements, the displacement increments are evaluated differently
 	// TODO: Is this really necessary? Why can't the ui vector contain the correct values?
-	const int NRD = rigid.PrescribedBCs();
+	const int NRD = fem.RigidPrescribedBCs();
 	for (int i = 0; i<NRD; ++i)
 	{
-		FERigidBodyDisplacement& dc = *rigid.PrescribedBC(i);
+		FERigidBodyDisplacement& dc = *fem.GetRigidPrescribedBC(i);
 		if (dc.IsActive())
 		{
-			FERigidBody& RB = *rigid.Object(dc.id);
+			FERigidBody& RB = *fem.GetRigidBody(dc.GetID());
 			if (RB.m_prb == 0)
 			{
-				RB.m_du[dc.bc] = (dc.lc < 0 ? 0 : dc.Value() - RB.m_Up[dc.bc]);
+				int I = dc.GetBC();
+				RB.m_du[I] = dc.Value() - RB.m_Up[I];
 			}
 		}
 	}
@@ -1103,7 +1167,7 @@ void FERigidSolverOld::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui,
 	for (int i = 0; i<NRB; ++i)
 	{
 		// get the rigid body
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 		double* du = RB.m_du;
 
 		if (bnewUpdate)
@@ -1152,7 +1216,7 @@ void FERigidSolverOld::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui,
 	}
 
 	// we need to update the position of rigid nodes
-	rigid.UpdateMesh();
+	fem.UpdateRigidMesh();
 
 	// Since the rigid nodes are repositioned we need to update the displacement DOFS
 	FEMesh& mesh = m_fem->GetMesh();
@@ -1175,12 +1239,14 @@ void FERigidSolverOld::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui,
 //-----------------------------------------------------------------------------
 void FERigidSolverNew::UpdateIncrements(vector<double>& Ui, vector<double>& ui, bool emap)
 {
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
-	int nrb = rigid.Objects();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	int nrb = fem.RigidBodies();
 	for (int i = 0; i<nrb; ++i)
 	{
 		// get the rigid body
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 		if (RB.m_prb == 0)
 		{
 			int *lm = RB.m_LM;
@@ -1218,12 +1284,14 @@ void FERigidSolverNew::UpdateIncrements(vector<double>& Ui, vector<double>& ui, 
 void FERigidSolverNew::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui)
 {
 	// update rigid bodies
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
-	int nrb = rigid.Objects();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	int nrb = fem.RigidBodies();
 	for (int i = 0; i<nrb; ++i)
 	{
 		// get the rigid body
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 		int *lm = RB.m_LM;
 		double* du = RB.m_du;
 
@@ -1236,9 +1304,8 @@ void FERigidSolverNew::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui)
 				pdc = RB.m_pDC[j];
 				if (pdc)
 				{
-					int lc = pdc->lc;
 					// TODO: do I need to take the line search step into account here?
-					du[j] = (lc < 0 ? 0 : pdc->Value() - RB.m_Up[j]);
+					du[j] = pdc->Value() - RB.m_Up[j];
 				}
 				else
 				{
@@ -1251,24 +1318,30 @@ void FERigidSolverNew::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui)
 		RB.m_rt.y = RB.m_rp.y + du[1];
 		RB.m_rt.z = RB.m_rp.z + du[2];
 
+		// update RB center of mass translations
+		if (RB.m_prb) du = RB.m_dul;
+		RB.m_Ut[0] = RB.m_Up[0] + du[0];
+		RB.m_Ut[1] = RB.m_Up[1] + du[1];
+		RB.m_Ut[2] = RB.m_Up[2] + du[2];
+
 		// next, we do the rotations. We do this seperatly since
 		// they need to be interpreted differently than displacements
 		if (RB.m_prb == 0)
 		{
-			quatd qdu;          // quaternion of net increment
-
 			if (RB.m_bpofr) {
 				// if all rotation components are known (prescribed or fixed)
 				// evaluate net increment from load curve
 				double Ut[3] = { 0 };
 				for (int j = 3; j<6; ++j) {
 					if (RB.m_pDC[j]) {
-						int lc = RB.m_pDC[j]->lc;
 						Ut[j - 3] = RB.m_pDC[j]->Value();
 					}
 				}
 				quatd qUt(vec3d(Ut[0], Ut[1], Ut[2]));
-				qdu = qUt*RB.m_qp.Inverse();
+				RB.SetRotation(qUt);
+				RB.m_Ut[3] = Ut[0];
+				RB.m_Ut[4] = Ut[1];
+				RB.m_Ut[5] = Ut[2];
 			}
 			else
 			{
@@ -1278,38 +1351,28 @@ void FERigidSolverNew::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui)
 				if (lm[3] >= 0) { vUi.x = Ui[lm[3]]; vui.x = ui[lm[3]]; }
 				if (lm[4] >= 0) { vUi.y = Ui[lm[4]]; vui.y = ui[lm[4]]; }
 				if (lm[5] >= 0) { vUi.z = Ui[lm[5]]; vui.z = ui[lm[5]]; }
-				quatd qUi(2 * atan(vUi.norm() / 2), vUi);                    // Cayley transform
-				quatd qui(2 * atan(vui.norm() / 2), vui);                    // Cayley transform
-				qdu = qui*qUi;
+				quatd qUi(2 * atan(vUi.norm() / 2), vUi);                   // Cayley transform
+				quatd qui(2 * atan(vui.norm() / 2), vui);                   // Cayley transform
+				quatd qdu = qui*qUi;                                        // quaternion of net increment
+
+				qdu.MakeUnit();                                         // clean-up roundoff errors
+				quatd Q = qdu*RB.m_qp;
+				Q.MakeUnit();
+
+				// update at the current time step
+				RB.SetRotation(Q);
+
+				// update RB rotations
+				vec3d vUt = Q.GetRotationVector();
+				RB.m_Ut[3] = vUt.x;
+				RB.m_Ut[4] = vUt.y;
+				RB.m_Ut[5] = vUt.z;
 			}
-
-			qdu.MakeUnit();                                         // clean-up roundoff errors
-			vec3d vdu = qdu.GetVector()*(2 * tan(qdu.GetAngle() / 2));  // Cayley transform
-			du[3] = vdu.x; du[4] = vdu.y; du[5] = vdu.z;
-
 		}
-
-		vec3d vdu(du[3], du[4], du[5]);
-		quatd qdu(2 * atan(vdu.norm() / 2), vdu);
-		quatd Q = qdu*RB.m_qp;
-		Q.MakeUnit();
-		// update at the current time step
-		RB.SetRotation(Q);
-
-		if (RB.m_prb) du = RB.m_dul;
-		// update RB center of mass translations
-		RB.m_Ut[0] = RB.m_Up[0] + du[0];
-		RB.m_Ut[1] = RB.m_Up[1] + du[1];
-		RB.m_Ut[2] = RB.m_Up[2] + du[2];
-		// update RB rotations
-		vec3d vUt = RB.GetRotation().GetVector()*RB.GetRotation().GetAngle();
-		RB.m_Ut[3] = vUt.x;
-		RB.m_Ut[4] = vUt.y;
-		RB.m_Ut[5] = vUt.z;
 	}
 
 	// update the mesh' nodes
-	rigid.UpdateMesh();
+	fem.UpdateRigidMesh();
 
 	// Since the rigid nodes are repositioned we need to update the displacement DOFS
 	FEMesh& mesh = m_fem->GetMesh();
@@ -1324,7 +1387,7 @@ void FERigidSolverNew::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui)
             
 			if (node.HasFlags(FENode::SHELL) && node.HasFlags(FENode::RIGID_CLAMP)) {
                 // get the rigid body
-                FERigidBody& RB = *rigid.Object(node.m_rid);
+                FERigidBody& RB = *fem.GetRigidBody(node.m_rid);
                 // evaluate the director in the current configuration
 				vec3d d = RB.GetRotation()*node.m_d0 - node.m_d0;
                 // evaluate the back face displacement increments
@@ -1338,13 +1401,15 @@ void FERigidSolverNew::UpdateRigidBodies(vector<double>& Ui, vector<double>& ui)
 //! evaluate body forces
 void FERigidSolverNew::BodyForces(FEGlobalVector& R, const FETimeInfo& timeInfo, FEBodyForce& pbf)
 {
-    FERigidSystem& rigid = *m_fem->GetRigidSystem();
-    int nrb = rigid.Objects();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	int nrb = fem.RigidBodies();
     
     // calculate body forces on rigid bodies
-    for (int i = 0; i<rigid.Objects(); ++i)
+    for (int i = 0; i<nrb; ++i)
     {
-        FERigidBody& RB = *rigid.Object(i);
+        FERigidBody& RB = *fem.GetRigidBody(i);
         
         // 3 translation dofs of rigid body needed for body force
         vector<double> fe(3);
@@ -1379,6 +1444,7 @@ void FERigidSolverNew::BodyForces(FEGlobalVector& R, const FETimeInfo& timeInfo,
 void FERigidSolverNew::InertialForces(FEGlobalVector& R, const FETimeInfo& timeInfo)
 {
 	// Newmark rule
+    double alpham = timeInfo.alpham;
     double beta = timeInfo.beta;
     double gamma = timeInfo.gamma;
 	double dt = timeInfo.timeIncrement;
@@ -1386,12 +1452,14 @@ void FERigidSolverNew::InertialForces(FEGlobalVector& R, const FETimeInfo& timeI
 	double b = a / dt;
 	double c = 1.0 - 0.5 / beta;
 
-	FERigidSystem& rigid = *m_fem->GetRigidSystem();
-	int nrb = rigid.Objects();
+	if (m_fem == nullptr) return;
+	FEMechModel& fem = *m_fem;
+
+	int nrb = fem.RigidBodies();
 	for (int i = 0; i<nrb; ++i)
 	{
 		// get the rigid body
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 
 		// acceleration and velocity of center of mass
 		RB.m_at = (RB.m_rt - RB.m_rp)*b - RB.m_vp*a + RB.m_ap*c;
@@ -1407,16 +1475,16 @@ void FERigidSolverNew::InertialForces(FEGlobalVector& R, const FETimeInfo& timeI
 	}
 
 	// calculate rigid body inertial forces
-	for (int i = 0; i<rigid.Objects(); ++i)
+	for (int i = 0; i<nrb; ++i)
 	{
-		FERigidBody& RB = *rigid.Object(i);
+		FERigidBody& RB = *fem.GetRigidBody(i);
 
 		// 6 dofs per rigid body
 		vector<double> fe(6);
 		vector<int>	LM(6);
 
 		// rate of change of linear momentum = mass*acceleration
-		vec3d F = RB.m_at*RB.m_mass;
+		vec3d F = (RB.m_at*alpham + RB.m_ap*(1-alpham))*RB.m_mass;
 
 		fe[0] = -F.x;
 		fe[1] = -F.y;
@@ -1425,11 +1493,13 @@ void FERigidSolverNew::InertialForces(FEGlobalVector& R, const FETimeInfo& timeI
 		// evaluate mass moment of inertia at t and tp
 		mat3d Rt = RB.GetRotation().RotationMatrix();
 		mat3ds Jt = (Rt*RB.m_moi*Rt.transpose()).sym();
-		mat3d Rp = RB.m_qp.RotationMatrix();
-		mat3ds Jp = (Rp*RB.m_moi*Rp.transpose()).sym();
+        RB.m_ht = Jt*RB.m_wt;
 
 		// evaluate rate of change of angular momentum
-		vec3d M = (Jt*RB.m_wt - Jp*RB.m_wp) / dt;
+		RB.m_dht = (RB.m_ht - RB.m_hp) / (gamma*dt) + RB.m_dhp*(1-1.0/gamma);
+//        RB.m_dht = (RB.m_wt ^ RB.m_ht) + Jt*RB.m_alt;
+
+        vec3d M = (RB.m_dht*alpham + RB.m_dhp*(1-alpham));
 
 		fe[3] = -M.x;
 		fe[4] = -M.y;

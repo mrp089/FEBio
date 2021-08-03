@@ -1,24 +1,54 @@
-// FEMooneyRivlin.cpp: implementation of the FEMooneyRivlin class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FECoupledTransIsoVerondaWestmann.h"
-#ifdef HAVE_GSL
-#include "gsl/gsl_sf_expint.h"
-#endif
+#include <FECore/log.h>
+#include <FECore/expint_Ei.h>
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FECoupledTransIsoVerondaWestmann, FEElasticMaterial)
-	ADD_PARAMETER2(m_c1  , FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "c1");
-	ADD_PARAMETER(m_c2  , FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETER(m_c3  , FE_PARAM_DOUBLE, "c3");
-	ADD_PARAMETER(m_c4  , FE_PARAM_DOUBLE, "c4");
-	ADD_PARAMETER(m_c5  , FE_PARAM_DOUBLE, "c5");
-	ADD_PARAMETER2(m_flam, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(1.0), "lambda");
-	ADD_PARAMETER2(m_K   , FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "k");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FECoupledTransIsoVerondaWestmann, FEElasticMaterial)
+	ADD_PARAMETER(m_c1  , FE_RANGE_GREATER(0.0), "c1");
+	ADD_PARAMETER(m_c2  , "c2");
+	ADD_PARAMETER(m_c3  , "c3");
+	ADD_PARAMETER(m_c4  , "c4");
+	ADD_PARAMETER(m_c5  , "c5");
+	ADD_PARAMETER(m_flam, FE_RANGE_GREATER_OR_EQUAL(1.0), "lambda");
+	ADD_PARAMETER(m_K   , FE_RANGE_GREATER(0.0), "k");
+	ADD_PARAMETER(m_fiber, "fiber");
+END_FECORE_CLASS();
+
+//-----------------------------------------------------------------------------
+FECoupledTransIsoVerondaWestmann::FECoupledTransIsoVerondaWestmann(FEModel* pfem) : FEElasticMaterial(pfem)
+{
+	m_fiber = vec3d(1, 0, 0);
+}
 
 //-----------------------------------------------------------------------------
 //! Calculate the Cauchy stress
@@ -31,13 +61,10 @@ mat3ds FECoupledTransIsoVerondaWestmann::Stress(FEMaterialPoint& mp)
 	mat3ds B = pt.LeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// get the material fiber axis
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = m_fiber(mp);
 
 	// get the spatial fiber axis
 	vec3d a = pt.m_F*a0;
@@ -96,11 +123,11 @@ tens4ds FECoupledTransIsoVerondaWestmann::Tangent(FEMaterialPoint& mp)
 	// calculate left Cauchy-Green tensor: B = F*Ft
 	mat3ds B = pt.LeftCauchyGreen();
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the material fiber axis
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q.col(0);
 
 	// get the spatial fiber axis
 	vec3d a = pt.m_F*a0;
@@ -162,7 +189,6 @@ tens4ds FECoupledTransIsoVerondaWestmann::Tangent(FEMaterialPoint& mp)
 //! calculate strain energy density at material point
 double FECoupledTransIsoVerondaWestmann::StrainEnergyDensity(FEMaterialPoint& mp)
 {
-#ifdef HAVE_GSL
 	// get the material point data
 	FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
     
@@ -170,13 +196,13 @@ double FECoupledTransIsoVerondaWestmann::StrainEnergyDensity(FEMaterialPoint& mp
 	mat3ds B = pt.LeftCauchyGreen();
     
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
     
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the material fiber axis
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q.col(0);
     
 	// get the spatial fiber axis
 	vec3d a = pt.m_F*a0;
@@ -199,7 +225,7 @@ double FECoupledTransIsoVerondaWestmann::StrainEnergyDensity(FEMaterialPoint& mp
 	{
 		if (l < m_flam)
 		{
-            sed += m_c3*(exp(-m_c4)*(gsl_sf_expint_Ei(m_c4*l) - gsl_sf_expint_Ei(m_c4))-log(l));
+            sed += m_c3*(exp(-m_c4)*(expint_Ei(m_c4*l) - expint_Ei(m_c4))-log(l));
 		}
 		else
 		{
@@ -214,7 +240,4 @@ double FECoupledTransIsoVerondaWestmann::StrainEnergyDensity(FEMaterialPoint& mp
     sed += m_K*lnJ*lnJ/2;
     
     return sed;
-#else
-	return 0;
-#endif
 }

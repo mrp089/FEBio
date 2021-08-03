@@ -1,13 +1,53 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEModelBuilder.h"
+#include <FECore/FEMaterial.h>
 #include <FECore/FEAnalysis.h>
-#include <FECore/BC.h>
+#include <FECore/FEBoundaryCondition.h>
+#include <FECore/FENodalLoad.h>
 #include <FECore/FESurfaceLoad.h>
 #include <FECore/FEEdgeLoad.h>
 #include <FECore/FEInitialCondition.h>
 #include <FECore/FEModelLoad.h>
-#include <FECore/FERigidSystem.h>
-#include <FECore/RigidBC.h>
+#include <FECore/FELoadCurve.h>
+#include <FEBioMech/RigidBC.h>
+#include <FEBioMech/FEUDGHexDomain.h>
+#include <FEBioMech/FEUT4Domain.h>
+#include <FEBioMech/FEMechModel.h>
+#include <FECore/FESurfaceMap.h>
+#include <FECore/FEDomainMap.h>
+#include <FECore/FEEdge.h>
+#include <FECore/FEConstValueVec3.h>
+#include <FECore/log.h>
+#include <FEBioMech/FESSIShellDomain.h>
+#include <sstream>
 
 //-----------------------------------------------------------------------------
 FEModelBuilder::FEModelBuilder(FEModel& fem) : m_fem(fem)
@@ -30,32 +70,40 @@ FEModelBuilder::FEModelBuilder(FEModel& fem) : m_fem(fem)
 	m_b3field_hex = true;
 	m_b3field_tet = false;
     m_b3field_shell = false;
+    m_b3field_quad = true;
+    m_b3field_tri = false;
 
 	// shell formulation
 	m_default_shell = NEW_SHELL;
+    m_shell_norm_nodal = true;
 
 	// UT4 formulation off by default
 	m_but4 = false;
+	m_ut4_alpha = 0.05;
+	m_ut4_bdev = false;
+
+	// UDG hourglass parameter
+	m_udghex_hg = 1.0;
 }
 
 //-----------------------------------------------------------------------------
 void FEModelBuilder::SetModuleName(const std::string& moduleName)
 {
-	m_moduleName = moduleName;
-	FECoreKernel::GetInstance().SetActiveModule(m_moduleName.c_str());
+	m_fem.SetModuleName(moduleName);
+	FECoreKernel::GetInstance().SetActiveModule(moduleName.c_str());
 }
 
 //-----------------------------------------------------------------------------
 //! Get the module name
-const std::string& FEModelBuilder::GetModuleName() const
+std::string FEModelBuilder::GetModuleName() const
 {
-	return m_moduleName;
+	return m_fem.GetModuleName();
 }
 
 //-----------------------------------------------------------------------------
 FEAnalysis* FEModelBuilder::CreateNewStep()
 {
-	FEAnalysis* pstep = new FEAnalysis(&m_fem);
+	FEAnalysis* pstep = fecore_new<FEAnalysis>("analysis", &m_fem);
 
 	// make sure we have a solver defined
 	FESolver* psolver = pstep->GetFESolver();
@@ -72,16 +120,16 @@ FEAnalysis* FEModelBuilder::CreateNewStep()
 // create a material
 FEMaterial* FEModelBuilder::CreateMaterial(const char* sztype)
 {
-	FEMaterial* pmat = fecore_new<FEMaterial>(FEMATERIAL_ID, sztype, &m_fem);
-
+	FEMaterial* pmat = fecore_new<FEMaterial>(sztype, &m_fem);
 	return pmat;
 }
 
 //-----------------------------------------------------------------------------
 FESolver* FEModelBuilder::BuildSolver(FEModel& fem)
 {
-	const char* sztype = m_moduleName.c_str();
-	FESolver* ps = fecore_new<FESolver>(FESOLVER_ID, sztype, &fem);
+	string moduleName = fem.GetModuleName();
+	const char* sztype = moduleName.c_str();
+	FESolver* ps = fecore_new<FESolver>(sztype, &fem);
 	return ps;
 }
 
@@ -93,6 +141,49 @@ void FEModelBuilder::NextStep()
 
 	// increase the step section counter
 	++m_nsteps;
+}
+
+//-----------------------------------------------------------------------------
+//! Get the mesh
+FEMesh& FEModelBuilder::GetMesh()
+{
+	return m_fem.GetMesh();
+}
+
+//-----------------------------------------------------------------------------
+//! get the FE model
+FEModel& FEModelBuilder::GetFEModel()
+{
+	return m_fem;
+}
+
+//-----------------------------------------------------------------------------
+//! Create a domain
+FEDomain* FEModelBuilder::CreateDomain(FE_Element_Spec espec, FEMaterial* mat)
+{
+	FECoreKernel& febio = FECoreKernel::GetInstance();
+	FEDomain* pdom = febio.CreateDomain(espec, &m_fem.GetMesh(), mat);
+
+	// Handle dome special cases
+	// TODO: Find a better way of dealing with these special cases
+	FEUDGHexDomain* udg = dynamic_cast<FEUDGHexDomain*>(pdom);
+	if (udg)
+	{
+		udg->SetHourGlassParameter(m_udghex_hg);
+	}
+
+	FEUT4Domain* ut4 = dynamic_cast<FEUT4Domain*>(pdom);
+	if (ut4)
+	{
+		ut4->SetUT4Parameters(m_ut4_alpha, m_ut4_bdev);
+	}
+    
+    FESSIShellDomain* ssi = dynamic_cast<FESSIShellDomain*>(pdom);
+    if (ssi) {
+        ssi->m_bnodalnormals = espec.m_shell_norm_nodal;
+    }
+
+	return pdom;
 }
 
 //-----------------------------------------------------------------------------
@@ -122,16 +213,9 @@ void FEModelBuilder::AddComponent(FEModelComponent* pmc)
 }
 
 //-----------------------------------------------------------------------------
-void FEModelBuilder::AddFixedBC(FEFixedBC* pbc)
+void FEModelBuilder::AddBC(FEBoundaryCondition* pbc)
 {
-	m_fem.AddFixedBC(pbc);
-	AddComponent(pbc);
-}
-
-//-----------------------------------------------------------------------------
-void FEModelBuilder::AddPrescribedBC(FEPrescribedBC* pbc)
-{
-	m_fem.AddPrescribedBC(pbc);
+	m_fem.AddBoundaryCondition(pbc);
 	AddComponent(pbc);
 }
 
@@ -187,35 +271,28 @@ void FEModelBuilder::AddNonlinearConstraint(FENLConstraint* pnc)
 //-----------------------------------------------------------------------------
 void FEModelBuilder::AddRigidFixedBC(FERigidBodyFixedBC* prc)
 {
-	m_fem.GetRigidSystem()->AddFixedBC(prc);
+	static_cast<FEMechModel&>(m_fem).AddRigidFixedBC(prc);
 	AddComponent(prc);
 }
 
 //-----------------------------------------------------------------------------
 void FEModelBuilder::AddRigidPrescribedBC(FERigidBodyDisplacement* prc)
 {
-	m_fem.GetRigidSystem()->AddPrescribedBC(prc);
+	static_cast<FEMechModel&>(m_fem).AddRigidPrescribedBC(prc);
 	AddComponent(prc);	
 }
 
 //-----------------------------------------------------------------------------
-void FEModelBuilder::AddRigidBodyVelocity(FERigidBodyVelocity* prv)
+void FEModelBuilder::AddRigidIC(FERigidIC* ric)
 {
-	m_fem.GetRigidSystem()->AddInitialVelocity(prv);
-	AddComponent(prv);
-}
-
-//-----------------------------------------------------------------------------
-void FEModelBuilder::AddRigidBodyAngularVelocity(FERigidBodyAngularVelocity* prv)
-{
-	m_fem.GetRigidSystem()->AddInitialAngularVelocity(prv);
-	AddComponent(prv);
+	static_cast<FEMechModel&>(m_fem).AddRigidInitialCondition(ric);
+	AddComponent(ric);
 }
 
 //-----------------------------------------------------------------------------
 void FEModelBuilder::AddRigidNodeSet(FERigidNodeSet* rs)
 {
-	m_fem.GetRigidSystem()->AddRigidNodeSet(rs);
+	static_cast<FEMechModel&>(m_fem).AddRigidNodeSet(rs);
 	AddComponent(rs);
 }
 
@@ -231,7 +308,7 @@ bool FEModelBuilder::BuildSurface(FESurface& s, FEFacetSet& fs, bool bnodal)
 	int faces = fs.Faces();
 
 	// allocate storage for faces
-	s.Create(faces);
+	s.Create(fs);
 
 	// read faces
 	for (int i = 0; i<faces; ++i)
@@ -267,6 +344,12 @@ bool FEModelBuilder::BuildSurface(FESurface& s, FEFacetSet& fs, bool bnodal)
 
     // copy the name
     s.SetName(fs.GetName());
+
+	// finish building the surface
+	s.InitSurface();
+
+	// allocate material point data
+	s.CreateMaterialPointData();
     
 	return true;
 }
@@ -367,6 +450,78 @@ void FEModelBuilder::GlobalToLocalID(int* l, int n, vector<int>& m)
 }
 
 //-----------------------------------------------------------------------------
+// Call this to initialize default variables when reading older files.
+void FEModelBuilder::SetDefaultVariables()
+{
+	// Reset degrees of
+	FEModel& fem = m_fem;
+	DOFS& dofs = fem.GetDOFS();
+	dofs.Reset();
+
+	// Add the default variables and degrees of freedom
+	int varD = dofs.AddVariable("displacement", VAR_VEC3);
+	dofs.SetDOFName(varD, 0, "x");
+	dofs.SetDOFName(varD, 1, "y");
+	dofs.SetDOFName(varD, 2, "z");
+	int varQ = dofs.AddVariable("shell rotation", VAR_VEC3);
+	dofs.SetDOFName(varQ, 0, "u");
+	dofs.SetDOFName(varQ, 1, "v");
+	dofs.SetDOFName(varQ, 2, "w");
+	int varSD = dofs.AddVariable("shell displacement", VAR_VEC3);
+	dofs.SetDOFName(varSD, 0, "sx");
+	dofs.SetDOFName(varSD, 1, "sy");
+	dofs.SetDOFName(varSD, 2, "sz");
+	int varP = dofs.AddVariable("fluid pressure");
+	dofs.SetDOFName(varP, 0, "p");
+	int varSP = dofs.AddVariable("shell fluid pressure");
+	dofs.SetDOFName(varSP, 0, "q");
+	int varQR = dofs.AddVariable("rigid rotation", VAR_VEC3);
+	dofs.SetDOFName(varQR, 0, "Ru");
+	dofs.SetDOFName(varQR, 1, "Rv");
+	dofs.SetDOFName(varQR, 2, "Rw");
+	int varV = dofs.AddVariable("velocity", VAR_VEC3);
+	dofs.SetDOFName(varV, 0, "vx");
+	dofs.SetDOFName(varV, 1, "vy");
+	dofs.SetDOFName(varV, 2, "vz");
+	int varW = dofs.AddVariable("relative fluid velocity", VAR_VEC3);
+	dofs.SetDOFName(varW, 0, "wx");
+	dofs.SetDOFName(varW, 1, "wy");
+	dofs.SetDOFName(varW, 2, "wz");
+	int varAW = dofs.AddVariable("relative fluid acceleration", VAR_VEC3);
+	dofs.SetDOFName(varAW, 0, "awx");
+	dofs.SetDOFName(varAW, 1, "awy");
+	dofs.SetDOFName(varAW, 2, "awz");
+	int varVF = dofs.AddVariable("fluid velocity", VAR_VEC3);
+	dofs.SetDOFName(varVF, 0, "vfx");
+	dofs.SetDOFName(varVF, 1, "vfy");
+	dofs.SetDOFName(varVF, 2, "vfz");
+	int varAF = dofs.AddVariable("fluid acceleration", VAR_VEC3);
+	dofs.SetDOFName(varAF, 0, "afx");
+	dofs.SetDOFName(varAF, 1, "afy");
+	dofs.SetDOFName(varAF, 2, "afz");
+	int varEF = dofs.AddVariable("fluid dilation");
+	dofs.SetDOFName(varEF, 0, "ef");
+	int varAEF = dofs.AddVariable("fluid dilation tderiv");
+	dofs.SetDOFName(varAEF, 0, "aef");
+	int varQV = dofs.AddVariable("shell velocity", VAR_VEC3);
+	dofs.SetDOFName(varQV, 0, "svx");
+	dofs.SetDOFName(varQV, 1, "svy");
+	dofs.SetDOFName(varQV, 2, "svz");
+	int varQA = dofs.AddVariable("shell acceleration", VAR_VEC3);
+	dofs.SetDOFName(varQA, 0, "sax");
+	dofs.SetDOFName(varQA, 1, "say");
+	dofs.SetDOFName(varQA, 2, "saz");
+    int varT = dofs.AddVariable("temperature");
+    dofs.SetDOFName(varT, 0, "T");
+	// must be last variable definition!!
+	int varC = dofs.AddVariable("concentration", VAR_ARRAY); // we start with zero concentrations
+															 // must be last variable definition!!
+	int varSC = dofs.AddVariable("shell concentration", VAR_ARRAY); // we start with zero concentrations
+    int varAC = dofs.AddVariable("concentration tderiv", VAR_ARRAY); // we start with zero concentrations
+    // must be last variable definition!!
+}
+
+//-----------------------------------------------------------------------------
 //! Get the element type from a XML tag
 FE_Element_Spec FEModelBuilder::ElementSpec(const char* sztype)
 {
@@ -383,7 +538,9 @@ FE_Element_Spec FEModelBuilder::ElementSpec(const char* sztype)
 	else if (strcmp(sztype, "penta6" ) == 0) eshape = ET_PENTA6;
 	else if (strcmp(sztype, "penta15") == 0) eshape = ET_PENTA15;
 	else if (strcmp(sztype, "pyra5"  ) == 0) eshape = ET_PYRA5;
+    else if (strcmp(sztype, "pyra13" ) == 0) eshape = ET_PYRA13;
 	else if (strcmp(sztype, "tet4"   ) == 0) eshape = ET_TET4;
+	else if (strcmp(sztype, "tet5"   ) == 0) eshape = ET_TET5;
 	else if (strcmp(sztype, "tet10"  ) == 0) eshape = ET_TET10;
 	else if (strcmp(sztype, "tet15"  ) == 0) eshape = ET_TET15;
 	else if (strcmp(sztype, "tet20"  ) == 0) eshape = ET_TET20;
@@ -395,11 +552,13 @@ FE_Element_Spec FEModelBuilder::ElementSpec(const char* sztype)
     else if (strcmp(sztype, "q4eas"  ) == 0) { eshape = ET_QUAD4; stype = FE_SHELL_QUAD4G8; m_default_shell = EAS_SHELL; }   // default shell type for q4eas
     else if (strcmp(sztype, "q4ans"  ) == 0) { eshape = ET_QUAD4; stype = FE_SHELL_QUAD4G8; m_default_shell = ANS_SHELL; }   // default shell type for q4ans
 	else if (strcmp(sztype, "truss2" ) == 0) eshape = ET_TRUSS2;
+	else if (strcmp(sztype, "ut4"    ) == 0) { eshape = ET_TET4; m_but4 = true; }
 	else
 	{
 		// new way for defining element type and integration rule at the same time
 		// this is useful for multi-step analyses where the geometry is read in before the control section.
-		if      (strcmp(sztype, "TET10G4"     ) == 0) { eshape = ET_TET10; m_ntet10 = FE_TET10G4; }
+		if      (strcmp(sztype, "TET4G4"      ) == 0) { eshape = ET_TET4 ; m_ntet4  = FE_TET4G4; }
+		else if (strcmp(sztype, "TET10G4"     ) == 0) { eshape = ET_TET10; m_ntet10 = FE_TET10G4; }
 		else if (strcmp(sztype, "TET10G8"     ) == 0) { eshape = ET_TET10; m_ntet10 = FE_TET10G8; }
 		else if (strcmp(sztype, "TET10GL11"   ) == 0) { eshape = ET_TET10; m_ntet10 = FE_TET10GL11; }
 		else if (strcmp(sztype, "TET10G4_S3"  ) == 0) { eshape = ET_TET10; m_ntet10 = FE_TET10G4;   m_ntri6 = FE_TRI6G3; }
@@ -453,11 +612,13 @@ FE_Element_Spec FEModelBuilder::ElementSpec(const char* sztype)
 	case ET_PENTA6 : etype = FE_PENTA6G6; break;
 	case ET_PENTA15: etype = FE_PENTA15G21; break;
 	case ET_PYRA5  : etype = FE_PYRA5G8; break;
+    case ET_PYRA13 : etype = FE_PYRA13G8; break;
 	case ET_TET4   : etype = m_ntet4; break;
+	case ET_TET5   : etype = FE_TET5G4; break;
 	case ET_TET10  : etype = m_ntet10; break;
 	case ET_TET15  : etype = m_ntet15; break;
 	case ET_TET20  : etype = m_ntet20; break;
-	case ET_HEX20  : etype = FE_HEX20G27; break;
+	case ET_HEX20  : etype = (stype == FE_HEX20G8 ? FE_HEX20G8 : FE_HEX20G27); break;
 	case ET_HEX27  : etype = FE_HEX27G27; break;
 	case ET_QUAD4  : etype = (NDIM == 3 ? stype : FE2D_QUAD4G4); break;
 	case ET_TRI3   : etype = (NDIM == 3 ? stype : FE2D_TRI3G1); break;
@@ -477,14 +638,199 @@ FE_Element_Spec FEModelBuilder::ElementSpec(const char* sztype)
 	spec.eclass = eclass;
 	spec.eshape = eshape;
 	spec.etype = etype;
-	spec.m_bthree_field_hex = m_b3field_hex;
-	spec.m_bthree_field_tet = m_b3field_tet;
-    spec.m_bthree_field_shell = m_b3field_shell;
+
+	// set three-field flag
+	switch (eshape)
+	{
+	case ET_HEX8   : spec.m_bthree_field = m_b3field_hex; break;
+	case ET_PENTA6 : spec.m_bthree_field = m_b3field_hex; break;
+	case ET_PYRA5  : spec.m_bthree_field = m_b3field_hex; break;
+	case ET_TET4   : spec.m_bthree_field = m_b3field_tet; break;
+	case ET_TET5   : spec.m_bthree_field = m_b3field_tet; break;
+	case ET_TET10  : spec.m_bthree_field = m_b3field_tet; break;
+	case ET_TET15  : spec.m_bthree_field = m_b3field_tet; break;
+	case ET_TET20  : spec.m_bthree_field = m_b3field_tet; break;
+	case ET_QUAD4  : spec.m_bthree_field = m_b3field_shell || m_b3field_quad; break;
+	case ET_TRI3   : spec.m_bthree_field = m_b3field_shell || m_b3field_tri; break;
+	case ET_TRI6   : spec.m_bthree_field = m_b3field_shell; break;
+	case ET_QUAD8  : spec.m_bthree_field = m_b3field_shell; break;
+	case ET_QUAD9  : spec.m_bthree_field = m_b3field_shell; break;
+	}
+
 	spec.m_but4 = m_but4;
+	spec.m_ut4_alpha = m_ut4_alpha;
+	spec.m_ut4_bdev = m_ut4_bdev;
 	spec.m_shell_formulation = m_default_shell;
+    spec.m_shell_norm_nodal = m_shell_norm_nodal;
 
 	// Make sure this is a valid element specification
 	assert(FEElementLibrary::IsValid(spec));
 
 	return spec;
+}
+
+void FEModelBuilder::AddMappedParameter(FEParam* p, FECoreBase* parent, const char* szmap, int index)
+{
+	MappedParameter mp;
+	mp.pp = p;
+	mp.pc = parent;
+	mp.szname = strdup(szmap);
+	mp.index = index;
+
+	m_mappedParams.push_back(mp);
+}
+
+void FEModelBuilder::ApplyParameterMaps()
+{
+	FEMesh& mesh = m_fem.GetMesh();
+	for (int i = 0; i < m_mappedParams.size(); ++i)
+	{
+		MappedParameter& mp = m_mappedParams[i];
+		FEParam& p = *mp.pp;
+
+		FEDataMap* data = (FEDataMap*)mesh.FindDataMap(mp.szname);
+		if (data == nullptr)
+		{
+			stringstream ss;
+			ss << "Can't find map \"" << mp.szname << "\" for parameter \"" << p.name() << "\"";
+			throw std::runtime_error(ss.str());
+		}
+
+		FEItemList* itemList = data->GetItemList();
+
+		// find the map of this parameter
+		if (p.type() == FE_PARAM_DOUBLE_MAPPED)
+		{
+			FEParamDouble& v = p.value<FEParamDouble>(mp.index);
+			FEMappedValue* map = new FEMappedValue(&m_fem);
+			if (data->DataType() != FE_DOUBLE)
+			{
+				std::stringstream ss;
+				ss << "Cannot assign map \"" << data->GetName() << "\" to parameter \"" << p.name() << "\" : bad data type";
+				string err = ss.str();
+				throw std::runtime_error(err.c_str());
+			}
+			map->setDataMap(data);
+			v.setValuator(map);
+			v.SetItemList(itemList);
+		}
+		else if (p.type() == FE_PARAM_VEC3D_MAPPED)
+		{
+			FEParamVec3& v = p.value<FEParamVec3>();
+			FEMappedValueVec3* map = new FEMappedValueVec3(&m_fem);
+			if (data->DataType() != FE_VEC3D)
+			{
+				std::stringstream ss;
+				ss << "Cannot assign map \"" << data->GetName() << "\" to parameter \"" << p.name() << "\" : bad data type";
+				string err = ss.str();
+				throw std::runtime_error(err.c_str());
+			}
+			map->setDataMap(data);
+			v.setValuator(map);
+			v.SetItemList(itemList);
+		}
+		else if (p.type() == FE_PARAM_MAT3D_MAPPED)
+		{
+			FEParamMat3d& v = p.value<FEParamMat3d>();
+			FEMappedValueMat3d* map = fecore_alloc(FEMappedValueMat3d, &m_fem);
+			if (data->DataType() != FE_MAT3D)
+			{
+				std::stringstream ss;
+				ss << "Cannot assign map \"" << data->GetName() << "\" to parameter \"" << p.name() << "\" : bad data type";
+				string err = ss.str();
+				throw std::runtime_error(err.c_str());
+			}
+			map->setDataMap(data);
+			v.setValuator(map);
+			v.SetItemList(itemList);
+		}
+		else
+		{
+			assert(false);
+		}
+	}
+}
+
+FENodeSet* FEModelBuilder::FindNodeSet(const string& setName)
+{
+	FEMesh& mesh = m_fem.GetMesh();
+
+	if (setName.compare(0, 9, "@surface:") == 0)
+	{
+		// see if we can find a surface
+		string surfName = setName.substr(9);
+		FEFacetSet* surf = mesh.FindFacetSet(surfName);
+		if (surf == nullptr) return nullptr;
+
+		// we might have been here before. If so, we already create a nodeset
+		// with the same name as the surface, so look for that first.
+		FENodeSet* ps = mesh.FindNodeSet(surfName);
+		if (ps) return ps;
+
+		// okay, first time here, so let's create a node set from this surface
+		FENodeList nodeList = surf->GetNodeList();
+		ps = fecore_alloc(FENodeSet, &m_fem);
+		ps->Add(nodeList);
+		ps->SetName(surfName);
+		mesh.AddNodeSet(ps);
+
+		return ps;
+	}
+	else if (setName.compare(0, 10, "@elem_set:") == 0)
+	{
+		// see if we can find an element set
+		string esetName = setName.substr(10);
+		FEElementSet* part = mesh.FindElementSet(esetName);
+		if (part == nullptr) return nullptr;
+
+		// we might have been here before. If so, we already create a nodeset
+		// with the same name as the surface, so look for that first.
+		FENodeSet* ps = mesh.FindNodeSet(esetName);
+		if (ps) return ps;
+
+		// okay, first time here, so let's create a node set from this element set
+		FENodeList nodeList = part->GetNodeList();
+		ps = fecore_alloc(FENodeSet, &m_fem);
+		ps->Add(nodeList);
+		ps->SetName(esetName);
+		mesh.AddNodeSet(ps);
+
+		return ps;
+	}
+	else return mesh.FindNodeSet(setName);
+}
+
+void FEModelBuilder::MapLoadCurveToFunction(FEPointFunction* pf, int lc, double scale)
+{
+	MapLCToFunction m = { lc, scale, pf };
+	m_lc2fnc.push_back(m);
+}
+
+void FEModelBuilder::ApplyLoadcurvesToFunctions()
+{
+	FEModel& fem = m_fem;
+	for (int i = 0; i < m_lc2fnc.size(); ++i)
+	{
+		MapLCToFunction& m = m_lc2fnc[i];
+
+		FELoadController* plc = fem.GetLoadController(m.lc); assert(plc);
+		FELoadCurve* lc = dynamic_cast<FELoadCurve*>(plc);
+
+		FEPointFunction& f = lc->GetFunction();
+
+		m.pf->CopyFrom(f);
+		if (m.scale != 1.0) m.pf->Scale(m.scale);
+	}
+}
+
+// finish the build process
+void FEModelBuilder::Finish()
+{
+	ApplyParameterMaps();
+	ApplyLoadcurvesToFunctions();
+}
+
+FEBModel& FEModelBuilder::GetFEBModel()
+{
+	return m_feb;
 }

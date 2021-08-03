@@ -1,28 +1,48 @@
-// FEElementTraits.h: interface for the FEElementTraits class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FEELEMENTTRAITS_H__5AE1C578_7EC7_4C11_AC98_EBCCFD68B00C__INCLUDED_)
-#define AFX_FEELEMENTTRAITS_H__5AE1C578_7EC7_4C11_AC98_EBCCFD68B00C__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "matrix.h"
 #include "vec3d.h"
 #include "mat3d.h"
-#include "FE_enum.h"
+#include "fecore_enum.h"
 #include <vector>
 
 //-----------------------------------------------------------------------------
 // Forward declaration of the FEElement class
 class FEElement;
+class FESolidElementShape;
+class FESurfaceElementShape;
 
 //-----------------------------------------------------------------------------
 //! This class is the base class for all element trait's classes
 
-class FEElementTraits
+class FECORE_API FEElementTraits
 {
 public:
 	//! constructor
@@ -32,25 +52,41 @@ public:
 	virtual ~FEElementTraits(){}
 
 	//! return the element class
-	FE_Element_Class Class() const { return spec.eclass; }
+	FE_Element_Class Class() const { return m_spec.eclass; }
 
 	//! return the element shape
-	FE_Element_Shape Shape() const { return spec.eshape; }
+	FE_Element_Shape Shape() const { return m_spec.eshape; }
 
 	//! return the element type
-	FE_Element_Type Type() const { return spec.etype; }
+	FE_Element_Type Type() const { return m_spec.etype; }
+
+	// project integration point data to nodes
+	virtual void project_to_nodes(double* ai, double* ao) const {}
+	virtual void project_to_nodes(vec3d*  ai, vec3d*  ao) const;
+	virtual void project_to_nodes(mat3ds* ai, mat3ds* ao) const;
+	virtual void project_to_nodes(mat3d*  ai, mat3d*  ao) const;
+
+	virtual int ShapeFunctions(int order) { return m_neln; }
+
+	int Faces() const { return m_faces; }
 
 public:
-	int nint;	//!< number of integration points
-	int	neln;	//!< number of element nodes
+	int m_nint;	//!< number of integration points
+	int	m_neln;	//!< number of element nodes
 
-	matrix H;	//!< shape function values at gausspoints.
+	matrix m_H;	//!< shape function values at gausspoints.
 				//!< The first index refers to the gauss-point,
 				//!< the second index to the shape function
 
-	FE_Element_Spec	spec;	//!< element specs
+	vector<matrix> m_Hp;	//!< shape function values at gausspoints.
+							//!< The first index refers to the gauss-point,
+							//!< the second index to the shape function
 
-private:
+	FE_Element_Spec	m_spec;	//!< element specs
+
+protected:
+	// number of faces of element
+	int	m_faces;
 
 	//! function to allocate storage for integration point data
 	virtual void init() = 0;
@@ -67,27 +103,25 @@ private:
 //! This class defines the specific traits for solid elements and serves as
 //! a base class for specific solid element formulations
 //
-class FESolidElementTraits : public FEElementTraits
+class FECORE_API FESolidElementTraits : public FEElementTraits
 {
 public:
 	//! constructor
 	FESolidElementTraits(int ni, int ne, FE_Element_Shape es, FE_Element_Type et);
 
 	//! initialize element traits data
-	void init();
+	void init() override;
 
 	//! values of shape functions
-	virtual void shape_fnc(double* H, double r, double s, double t) = 0;
+	void shape_fnc(double* H, double r, double s, double t);
 
 	//! values of shape function derivatives
-	virtual void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t) = 0;
+	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
 
 	//! values of shape function second derivatives
-	virtual void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t) = 0;
+	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 
-	//! project integration point data to nodes
-	virtual void project_to_nodes(double* ai, double* ao) = 0;
-    void project_to_nodes(mat3ds* si, mat3ds* so);
+	int ShapeFunctions(int order) override;
 
 public:
 	// gauss-point coordinates and weights
@@ -96,15 +130,22 @@ public:
 	vector<double> gt;
 	vector<double> gw;
 
+	// element shape class
+	FESolidElementShape*				m_shape;
+	std::vector<FESolidElementShape*>	m_shapeP; // shape classes for different order (some orders can by null)
+
 	// local derivatives of shape functions at gauss points
-	matrix Gr, Gs, Gt;
+	matrix m_Gr, m_Gs, m_Gt;
+	std::vector<matrix>	m_Gr_p;
+	std::vector<matrix>	m_Gs_p;
+	std::vector<matrix>	m_Gt_p;
 
 	// local second derivatives of shape functions at gauss points
 	matrix Grr, Gsr, Gtr, Grs, Gss, Gts, Grt, Gst, Gtt;
 };
 
 //=============================================================================
-class FESRISolidElementTraits
+class FECORE_API FESRISolidElementTraits
 {
 public:
 	FESRISolidElementTraits() : m_pTRI(0) {}
@@ -119,18 +160,11 @@ class FEHex8_ : public FESolidElementTraits
 public:
 	enum { NELN = 8 };
 
+	//! initialize element traits data
+	void init();
+
 public:
 	FEHex8_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_HEX8, et) {}
-
-public:
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -144,10 +178,10 @@ public:
 public:
 	FEHex8G8();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
+	matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
 };
 
 //=============================================================================
@@ -161,7 +195,7 @@ public:
 public:
 	FEHex8RI();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -175,7 +209,7 @@ public:
 public:
 	FEHex8G1();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -185,17 +219,11 @@ class FETet4_ : public FESolidElementTraits
 public:
 	enum { NELN = 4 };
 
+	//! initialize element traits data
+	void init();
+
 public:
 	FETet4_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_TET4, et) {}
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -208,7 +236,7 @@ public:
 public:
 	FETet4G1();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -221,10 +249,37 @@ public:
 public:
 	FETet4G4();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
+	matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
+};
+
+//=============================================================================
+//! Base class for 5-node linear tetrahedrons
+class FETet5_ : public FESolidElementTraits
+{
+public:
+	enum { NELN = 5 };
+
+	//! initialize element traits data
+	void init();
+
+public:
+	FETet5_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_TET5, et) {}
+};
+
+//=============================================================================
+// 5-node tetrahedral element using a 4-node Gaussian integration rule
+class FETet5G4 : public FETet5_
+{
+public:
+	enum { NINT = 4 };
+
+public:
+	FETet5G4();
+
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -240,17 +295,11 @@ class FEPenta6_ : public FESolidElementTraits
 public:
 	enum { NELN = 6 };
 
+	//! initialize element traits data
+	void init();
+
 public:
 	FEPenta6_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_PENTA6, et){}
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -263,10 +312,10 @@ public:
 public:
 	FEPenta6G6();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
+	matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
 };
 
 //=============================================================================
@@ -284,15 +333,6 @@ public:
     
 public:
     FEPenta15_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_PENTA15, et){}
-    
-    //! values of shape functions
-    void shape_fnc(double* H, double r, double s, double t);
-    
-    //! values of shape function derivatives
-    void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-    
-    //! values of shape function second derivatives
-    void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -305,14 +345,14 @@ public:
 public:
     FEPenta15G8();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
     
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
-    matrix MT;
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_MT;
 };
 
 //=============================================================================
@@ -325,13 +365,13 @@ public:
 public:
     FEPenta15G21();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -347,17 +387,11 @@ class FETet10_ : public FESolidElementTraits
 public:
 	enum { NELN = 10 };
 
+	//! initialize element traits data
+	void init();
+
 public:
 	FETet10_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_TET10, et){}
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -370,7 +404,7 @@ public:
 public:
 	FETet10G1();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix Ai;
@@ -386,7 +420,7 @@ public:
 public:
 	FETet10G4();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix Ai;
@@ -402,8 +436,7 @@ public:
 public:
 	FETet10G8();
 
-	void project_to_nodes(double* ai, double* ao);
-
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix N;
@@ -434,7 +467,7 @@ public:
 public:
 	FETet10GL11();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -452,15 +485,6 @@ public:
 
 public:
 	FETet15_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_TET15, et){}
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -473,7 +497,7 @@ public:
 public:
 	FETet15G4();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix N;
@@ -490,7 +514,7 @@ public:
 public:
 	FETet15G8();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix N;
@@ -507,7 +531,7 @@ public:
 public:
 	FETet15G11();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix N;
@@ -524,7 +548,7 @@ public:
 public:
 	FETet15G15();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix N;
@@ -553,15 +577,6 @@ public:
 
 public:
 	FETet20_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_TET20, et){}
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -574,7 +589,7 @@ public:
 public:
 	FETet20G15();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix N;
@@ -598,14 +613,10 @@ public:
 public:
 	FEHex20_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_HEX20, et){}
 
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
+	//! initialize element traits data
+	void init();
 
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
+	int Nodes(int order);
 };
 
 //=============================================================================
@@ -618,7 +629,7 @@ public:
 public:
     FEHex20G8();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
@@ -638,7 +649,7 @@ public:
 public:
 	FEHex20G27();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
@@ -663,18 +674,12 @@ public:
 
 public:
 	FEHex27_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_HEX27, et){}
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
     
+	//! initialize element traits data
+	void init();
+
 protected:
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -687,7 +692,7 @@ public:
 public:
 	FEHex27G27();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -705,15 +710,6 @@ public:
 
 public:
 	FEPyra5_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_PYRA5, et){}
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t);
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t);
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t);
 };
 
 //=============================================================================
@@ -726,10 +722,43 @@ public:
 public:
 	FEPyra5G8();
 
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix	Ai;
+	matrix	m_Ai;
+};
+
+//=============================================================================
+//
+// FEPyra13
+//
+//=============================================================================
+
+//=============================================================================
+//! Base class for 13-node pyramid element
+class FEPyra13_ : public FESolidElementTraits
+{
+public:
+    enum { NELN = 13 };
+    
+public:
+    FEPyra13_(int ni, FE_Element_Type et) : FESolidElementTraits(ni, NELN, ET_PYRA13, et){}
+};
+
+//=============================================================================
+// 13-node pyramid element using a 2x2x2 Gaussian integration rule
+class FEPyra13G8: public FEPyra13_
+{
+public:
+    enum { NINT = 8 };
+    
+public:
+    FEPyra13G8();
+    
+    void project_to_nodes(double* ai, double* ao) const override;
+    
+protected:
+    matrix    m_Ai;
 };
 
 //=============================================================================
@@ -752,16 +781,19 @@ public:
 	void init();
 
 	// shape functions at (r,s)
-	virtual void shape(double* H, double r, double s) = 0;
+	void shape_fnc(double* H, double r, double s);
 
 	// shape function derivatives at (r,s)
-	virtual void shape_deriv(double* Gr, double* Gs, double r, double s) = 0;
+	void shape_deriv(double* Gr, double* Gs, double r, double s);
 
 	// shape function derivatives at (r,s)
-	virtual void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s) = 0;
+	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
 
-	// project integration point data to nodes
-	virtual void project_to_nodes(double* ai, double* ao) = 0;
+	// shape functions at (r,s)
+	void shape_fnc(int order, double* H, double r, double s);
+
+	// shape function derivatives at (r,s)
+	void shape_deriv(int order, double* Gr, double* Gs, double r, double s);
 
 public:
 	// gauss-point coordinates and weights
@@ -769,8 +801,16 @@ public:
 	vector<double> gs;
 	vector<double> gw;
 
+	// element shape class
+	FESurfaceElementShape*				m_shape;
+	std::vector<FESurfaceElementShape*>	m_shapeP; // shape classes for different order (some orders can by null)
+
 	// local derivatives of shape functions at gauss points
 	matrix Gr, Gs;
+
+	// local derivatives of shape functions at gauss points, for different interpolation order
+	std::vector<matrix>	Gr_p;
+	std::vector<matrix>	Gs_p;
 };
 
 //=============================================================================
@@ -787,18 +827,11 @@ class FEQuad4_ : public FESurfaceElementTraits
 public:
 	enum { NELN = 4 };
 
+	void init() override;
+
 public:
 	//! constructor
 	FEQuad4_(int ni, FE_Element_Type et) : FESurfaceElementTraits(ni, NELN, ET_QUAD4, et){}
-
-	//! shape functions at (r,s)
-	void shape(double* H, double r, double s);
-
-	//! shape function derivatives at (r,s)
-	void shape_deriv(double* Gr, double* Gs, double r, double s);
-
-	//! shape function derivatives at (r,s)
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
 };
 
 //=============================================================================
@@ -812,10 +845,10 @@ public:
 	FEQuad4G4();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
+	matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
 };
 
 //=============================================================================
@@ -830,7 +863,7 @@ public:
 	FEQuad4NI();
 
 	//! project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -850,14 +883,8 @@ public:
 	//! constructor
 	FETri3_(int ni, FE_Element_Type et) : FESurfaceElementTraits(ni, NELN, ET_TRI3, et){}
 
-	//! shape function at (r,s)
-	void shape(double* H, double r, double s);
-
-	//! shape function derivatives at (r,s)
-	void shape_deriv(double* Gr, double* Gs, double r, double s);
-
-	//! shape function derivatives at (r,s)
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
+	// initialization 
+	void init() override;
 };
 
 //=============================================================================
@@ -872,7 +899,7 @@ public:
 	FETri3G1();
 
 	//! project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -887,10 +914,10 @@ public:
 	FETri3G3();
 
 	//! project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
+	matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
 };
 
 //=============================================================================
@@ -905,10 +932,10 @@ public:
 	FETri3G7();
 
 	//! project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -923,7 +950,7 @@ public:
 	FETri3NI();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -942,14 +969,8 @@ public:
 public:
 	FETri6_(int ni, FE_Element_Type et) : FESurfaceElementTraits(ni, NELN, ET_TRI6, et){}
 
-	// shape function at (r,s)
-	void shape(double* H, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv(double* Gr, double* Gs, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
+	// initialization 
+	void init() override;
 };
 
 //=============================================================================
@@ -965,7 +986,7 @@ public:
 	FETri6G3();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -981,7 +1002,7 @@ public:
 	FETri6G4();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -997,10 +1018,10 @@ public:
 	FETri6G7();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1016,7 +1037,7 @@ public:
 	FETri6GL7();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -1032,7 +1053,7 @@ public:
 	FETri6NI();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -1043,6 +1064,7 @@ public:
 
 //=============================================================================
 // Base class for 6-noded quadratic triangles with modified shape functions
+/*
 class FETri6m_ : public FESurfaceElementTraits
 {
 public:
@@ -1061,6 +1083,7 @@ public:
 	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
 };
 
+
 //=============================================================================
 // 6-node triangular element (with modified shape functions)
 // with 7-point gaussian quadrature
@@ -1075,11 +1098,12 @@ public:
 	FETri6mG7();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
+*/
 
 //=============================================================================
 //
@@ -1097,14 +1121,8 @@ public:
 public:
 	FETri7_(int ni, FE_Element_Type et) : FESurfaceElementTraits(ni, NELN, ET_TRI7, et){}
 
-	// shape function at (r,s)
-	void shape(double* H, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv(double* Gr, double* Gs, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
+	// initialization
+	void init() override;
 };
 
 //=============================================================================
@@ -1120,7 +1138,7 @@ public:
 	FETri7G3();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix	Ai;
@@ -1139,7 +1157,7 @@ public:
 	FETri7G4();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix	Ai;
@@ -1159,10 +1177,10 @@ public:
 	FETri7G7();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1178,7 +1196,7 @@ public:
 	FETri7GL7();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
 	matrix	Ai;
@@ -1200,14 +1218,8 @@ public:
 public:
 	FETri10_(int ni, FE_Element_Type et) : FESurfaceElementTraits(ni, NELN, ET_TRI10, et){}
 
-	// shape function at (r,s)
-	void shape(double* H, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv(double* Gr, double* Gs, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
+	// initialization
+	void init() override;
 };
 
 //=============================================================================
@@ -1223,10 +1235,10 @@ public:
 	FETri10G7();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 
@@ -1243,10 +1255,10 @@ public:
 	FETri10G12();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1266,14 +1278,8 @@ public:
 public:
 	FEQuad8_(int ni, FE_Element_Type et) : FESurfaceElementTraits(ni, NELN, ET_QUAD8, et) {}
 
-	// shape function at (r,s)
-	void shape(double* H, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv(double* Gr, double* Gs, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
+	// initialization
+	void init() override;
 };
 
 //=============================================================================
@@ -1288,10 +1294,10 @@ public:
 	FEQuad8G9();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1306,10 +1312,10 @@ public:
     FEQuad8NI();
     
     // project integration point data to nodes
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 private:
-    matrix	Ai;
+    matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1329,14 +1335,8 @@ public:
 public:
 	FEQuad9_(int ni, FE_Element_Type et) : FESurfaceElementTraits(ni, NELN, ET_QUAD9, et) {}
 
-	// shape function at (r,s)
-	void shape(double* H, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv(double* Gr, double* Gs, double r, double s);
-
-	// shape function derivatives at (r,s)
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s);
+	// initialization
+	void init() override;
 };
 
 //=============================================================================
@@ -1351,10 +1351,10 @@ public:
 	FEQuad9G9();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1369,10 +1369,10 @@ public:
     FEQuad9NI();
     
     // project integration point data to nodes
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 private:
-    matrix	Ai;
+    matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1398,10 +1398,6 @@ public:
     
     //! values of shape function derivatives
     virtual void shape_deriv(double* Hr, double* Hs, double r, double s) = 0;
-    
-    //! project integration point data to nodes
-    virtual void project_to_nodes(double* ai, double* ao) = 0;
-    void project_to_nodes(mat3ds* si, mat3ds* so);
     
 public:
 	// gauss-point coordinates and weights
@@ -1446,13 +1442,13 @@ public:
 public:
     FEShellQuad4G8();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1466,13 +1462,13 @@ public:
 public:
     FEShellQuad4G12();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1506,13 +1502,13 @@ public:
 public:
     FEShellTri3G6();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1526,13 +1522,13 @@ public:
 public:
     FEShellTri3G9();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1566,13 +1562,13 @@ public:
 public:
     FEShellQuad8G18();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1586,13 +1582,13 @@ public:
 public:
     FEShellQuad8G27();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1626,13 +1622,13 @@ public:
 public:
     FEShellTri6G14();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1646,13 +1642,13 @@ public:
 public:
     FEShellTri6G21();
     
-    void project_to_nodes(double* ai, double* ao);
+    void project_to_nodes(double* ai, double* ao) const override;
     
 protected:
     // use these integration points to project to nodes
     static int ni[NELN];
 
-    matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
+    matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data
 };
 
 //=============================================================================
@@ -1720,9 +1716,6 @@ public:
 	// shape function derivatives at (r,s)
 	virtual void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s) = 0;
 
-	// project integration point data to nodes
-	virtual void project_to_nodes(double* ai, double* ao) = 0;
-
 public:
 	// gauss-point coordinates and weights
 	vector<double> gr;
@@ -1775,7 +1768,7 @@ public:
 	FE2DTri3G1();
 
 	//! project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -1817,7 +1810,7 @@ public:
 	FE2DTri6G3();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
 
 //=============================================================================
@@ -1859,10 +1852,10 @@ public:
 	FE2DQuad4G4();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 protected:
-	matrix Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
+	matrix m_Hi;	//!< inverse of H; useful for projection integr. point data to nodal data 
 };
 
 //=============================================================================
@@ -1904,10 +1897,10 @@ public:
 	FE2DQuad8G9();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1949,10 +1942,10 @@ public:
 	FE2DQuad9G9();
 
 	// project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 
 private:
-	matrix	Ai;
+	matrix	m_Ai;
 };
 
 //=============================================================================
@@ -1978,9 +1971,6 @@ public:
 
 	// shape function second derivatives at (r)
 	virtual void shape_deriv2(double* Grr, double r) = 0;
-
-	// project integration point data to nodes
-	virtual void project_to_nodes(double* ai, double* ao) = 0;
 
 public:
 	vector<double> gr;	//!< integration point coordinates
@@ -2031,7 +2021,5 @@ public:
 	FELine2G1();
 
 	//! project integration point data to nodes
-	void project_to_nodes(double* ai, double* ao);
+	void project_to_nodes(double* ai, double* ao) const override;
 };
-
-#endif // !defined(AFX_FEELEMENTTRAITS_H__5AE1C578_7EC7_4C11_AC98_EBCCFD68B00C__INCLUDED_)

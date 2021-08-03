@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "PltArchive.h"
 #include <assert.h>
@@ -232,7 +260,7 @@ bool PltArchive::Create(const char* szfile)
 	m_fp = new FileStream();
 	if (m_fp->Create(szfile) == false) return false;
 
-	// write the master tag 
+	// write the root tag 
 	unsigned int ntag = 0x00464542;
 	m_fp->Write(&ntag, sizeof(int), 1);
 
@@ -282,7 +310,7 @@ bool PltArchive::Open(const char* szfile)
 	m_fp = new FileStream();
 	if (m_fp->Open(szfile) == false) return false;
 
-	// read the master tag
+	// read the root tag
 	unsigned int ntag;
 	m_fp->read(&ntag, sizeof(int), 1);
 	if (ntag != 0x00464542) { Close(); return false; }
@@ -358,7 +386,7 @@ void PltArchive::CloseChunk()
 	// take a peek at the parent
 	if (m_Chunk.empty())
 	{
-		// we just deleted the master chunk
+		// we just deleted the root chunk
 		m_bend = true;
 	}
 	else

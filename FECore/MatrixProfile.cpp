@@ -1,6 +1,30 @@
-// MatrixProfile.cpp: implementation of the MatrixProfile class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "MatrixProfile.h"
@@ -147,6 +171,18 @@ SparseMatrixProfile::SparseMatrixProfile(int nrow, int ncol)
 }
 
 //-----------------------------------------------------------------------------
+//! allocate storage for profile
+void SparseMatrixProfile::Create(int nrow, int ncol)
+{
+	m_nrow = nrow;
+	m_ncol = ncol;
+
+	int nres = (m_ncol < 100 ? m_ncol : 100);
+	m_prof.resize(ncol);
+	for (int i = 0; i<ncol; ++i) m_prof[i].reserve(nres);
+}
+
+//-----------------------------------------------------------------------------
 //! Copy constructor. Simply copies the profile
 
 SparseMatrixProfile::SparseMatrixProfile(const SparseMatrixProfile& mp)
@@ -212,7 +248,7 @@ void SparseMatrixProfile::UpdateProfile(vector< vector<int> >& LM, int M)
 	for (int i = 0; i<M; ++i)
 	{
 		int* lm = &(LM[i])[0];
-		int N = LM[i].size();
+		int N = (int)LM[i].size();
 		Ntot += N;
 		for (int j = 0; j<N; ++j)
 		{
@@ -236,7 +272,7 @@ void SparseMatrixProfile::UpdateProfile(vector< vector<int> >& LM, int M)
 	for (int i = 0; i<M; ++i)
 	{
 		int* lm = &(LM[i])[0];
-		int N = LM[i].size();
+		int N = (int)LM[i].size();
 		for (int j = 0; j<N; ++j)
 		{
 			if (lm[j] >= 0) *(ppelc[lm[j]])++ = i;
@@ -261,7 +297,7 @@ void SparseMatrixProfile::UpdateProfile(vector< vector<int> >& LM, int M)
 			{
 				int iel = (ppelc[i])[j];
 				int* lm = &(LM[iel])[0];
-				int N = LM[iel].size();
+				int N = (int)LM[iel].size();
 				for (int k = 0; k<N; ++k)
 				{
 					if (lm[k] >= 0)
@@ -272,6 +308,14 @@ void SparseMatrixProfile::UpdateProfile(vector< vector<int> >& LM, int M)
 			}
 		}
 	}
+}
+
+//-----------------------------------------------------------------------------
+//! inserts an entry into the profile
+void SparseMatrixProfile::Insert(int i, int j)
+{
+	ColumnProfile& a = m_prof[j];
+	a.insertRow(i);
 }
 
 //-----------------------------------------------------------------------------

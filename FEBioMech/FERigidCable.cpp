@@ -1,53 +1,57 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
 #include "stdafx.h"
 #include "FERigidCable.h"
-#include <FECore/FERigidSystem.h>
-#include <FECore/FERigidBody.h>
-#include <FECore/FEModel.h>
+#include "FERigidBody.h"
+#include "FEMechModel.h"
+#include <FECore/FELinearSystem.h>
+
+REGISTER_SUPER_CLASS(FERigidCablePoint, FEOBJECT_ID);
 
 //=============================================================================
-BEGIN_PARAMETER_LIST(FERigidCable::FECablePoint, FECoreBase)
-	ADD_PARAMETER(m_pos, FE_PARAM_VEC3D, "point");
-	ADD_PARAMETER(m_pos, FE_PARAM_VEC3D, "position");
-END_PARAMETER_LIST();
-
-bool FERigidCable::FECablePoint::SetAttribute(const char* szatt, const char* szval)
-{
-	if (strcmp(szatt, "rb") == 0)
-	{
-		m_rb = atoi(szval);
-		return true;
-	}
-	else return false;
-}
+BEGIN_FECORE_CLASS(FERigidCablePoint, FECoreBase)
+	ADD_PARAMETER(m_rb, "rigid_body_id");
+	ADD_PARAMETER(m_pos, "position");
+END_FECORE_CLASS();
 
 //=============================================================================
-BEGIN_PARAMETER_LIST(FERigidCable, FEModelLoad)
-	ADD_PARAMETER(m_force   , FE_PARAM_DOUBLE, "force");
-	ADD_PARAMETER(m_forceDir, FE_PARAM_VEC3D , "force_direction");
-	ADD_PARAMETER(m_brelative, FE_PARAM_BOOL , "relative");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidCable, FEModelLoad)
+	ADD_PARAMETER(m_force   , "force");
+	ADD_PARAMETER(m_forceDir, "force_direction");
+	ADD_PARAMETER(m_brelative, "relative");
 
-FERigidCable::FERigidCable(FEModel* fem) : FEModelLoad(FEBC_ID, fem)
+	// add the points property
+	ADD_PROPERTY(m_points, "rigid_cable_point");
+END_FECORE_CLASS();
+
+FERigidCable::FERigidCable(FEModel* fem) : FEModelLoad(fem)
 {
 	m_force = 0;
 	m_forceDir = vec3d(0,0,-1);
 	m_brelative = true;
-
-	// add the points property
-	AddProperty(&m_points, "point", FEProperty::ValueProperty);
-}
-
-//! override for building points list
-FECoreBase* FERigidCable::GetProperty(int n)
-{
-	// make sure this references the point property
-	if (n != 0) return 0;
-
-	// create a new point
-	FECablePoint* p = new FECablePoint(0);
-	m_points.AddProperty(p);
-
-	return p;
 }
 
 //! initialization
@@ -59,12 +63,12 @@ bool FERigidCable::Init()
 	m_forceDir.unit();
 
 	// get the rigid system
-	FERigidSystem& rigid = *GetFEModel()->GetRigidSystem();
+	FEMechModel& fem = static_cast<FEMechModel&>(*GetFEModel());
 
 	// correct the rigid body indices
 	for (int i=0; i<m_points.size(); ++i)
 	{
-		m_points[i]->m_rb = rigid.FindRigidbodyFromMaterialID(m_points[i]->m_rb - 1);
+		m_points[i]->m_rb = fem.FindRigidbodyFromMaterialID(m_points[i]->m_rb - 1);
 		if (m_points[i]->m_rb == -1) return false;
 	}
 
@@ -88,18 +92,18 @@ void FERigidCable::applyRigidForce(FERigidBody& rb, const vec3d& F, const vec3d&
 	rb.m_Mr += M;
 }
 
-//! Residual
-void FERigidCable::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+//! forces
+void FERigidCable::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
-	int npoints = m_points.size();
+	int npoints = (int)m_points.size();
 	if (npoints == 0) return;
 
 	// get the rigid system
-	FERigidSystem& rigid = *GetFEModel()->GetRigidSystem();
+	FEMechModel& fem = static_cast<FEMechModel&>(*GetFEModel());
 
 	// get the last rigid body
 	int rb0 = m_points[npoints - 1]->m_rb;
-	FERigidBody& bodyZ = *rigid.Object(rb0);
+	FERigidBody& bodyZ = *fem.GetRigidBody(rb0);
 	vec3d p0 = m_points[npoints - 1]->m_pos;
 
 	// apply the force to the last attachment point
@@ -112,8 +116,8 @@ void FERigidCable::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 		int rbA = m_points[i  ]->m_rb;
 		int rbB = m_points[i+1]->m_rb;
 
-		FERigidBody& bodyA = *rigid.Object(rbA);
-		FERigidBody& bodyB = *rigid.Object(rbB);
+		FERigidBody& bodyA = *fem.GetRigidBody(rbA);
+		FERigidBody& bodyB = *fem.GetRigidBody(rbB);
 
 		vec3d r0A = m_points[i    ]->m_pos;
 		vec3d r0B = m_points[i + 1]->m_pos;
@@ -144,20 +148,20 @@ void FERigidCable::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 }
 
 //! Stiffness matrix
-void FERigidCable::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FERigidCable::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
-	int npoints = m_points.size();
+	int npoints = (int)m_points.size();
 	if (npoints < 2) return;
 
-	FERigidSystem& rigid = *GetFEModel()->GetRigidSystem();
+	FEMechModel& fem = static_cast<FEMechModel&>(*GetFEModel());
 	for (int i=0; i<npoints-1; ++i)
 	{
 		int idA = m_points[i  ]->m_rb;
 		int idB = m_points[i+1]->m_rb;
 
 		// Get the rigid bodies
-		FERigidBody& bodyA = *rigid.Object(idA);
-		FERigidBody& bodyB = *rigid.Object(idB);
+		FERigidBody& bodyA = *fem.GetRigidBody(idA);
+		FERigidBody& bodyB = *fem.GetRigidBody(idB);
 
 		// get the force positions
 		vec3d ra0 = m_points[i]->m_pos;
@@ -197,7 +201,8 @@ void FERigidCable::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 		mat3d ASB = A*SB;
 
 		// put it all together
-		matrix K(12, 12); K.zero();
+		FEElementMatrix K;
+		K.resize(12, 12); K.zero();
 		K.sub(0, 0, S);
 		K.sub(0, 3, SA);
 		K.add(0, 6, S);
@@ -232,6 +237,7 @@ void FERigidCable::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 		lm[11] = bodyB.m_LM[5];
 
 		// assemble into global matrix
-		psolver->AssembleStiffness(lm, K);
+		K.SetIndices(lm);
+		LS.Assemble(K);
 	}
 }

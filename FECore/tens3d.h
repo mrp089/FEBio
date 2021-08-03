@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 
 #include "mat3d.h"
@@ -50,6 +78,7 @@ class tens3drs : public tensor_base<tens3drs>
 {
 public:
 	// constructors
+	explicit tens3drs(double a);
 	tens3drs(){}
 
 	// access operator
@@ -58,7 +87,7 @@ public:
 
 	vec3d contractdyad1(const vec3d& v) const;
 	vec3d contract2s(const mat3ds& s) const;
-	double tripledot(const tens3drs& H);
+	double tripledot(const tens3drs& H) const;
 	vec3d contractdyad2(const vec3d& v, const vec3d& w);
 	tens3dls transpose();
 	void contractleg2(const mat3d& F, int leg);
@@ -82,10 +111,15 @@ public:
 	tens3dls(){}
 
 	tens3dls operator * (const mat3d& F) const;
+    tens3dls operator * (const double& f) const;
 
 	// transpose
 	tens3drs transpose();
+    vec3d trace();
+    tens3d generalize();
 };
+
+tens3dls dyad3ls(const mat3ds& L, const vec3d& r);
 
 //-----------------------------------------------------------------------------
 //! Class for 3rd order tensor with no symmetry (27 components)
@@ -99,6 +133,7 @@ class tens3d : public tensor_base<tens3d>
 public:
 	// constructors
 	tens3d(){}
+    explicit tens3d(double a);
 
 	// access operators
 	double operator () (int i, int j, int k) const;
@@ -106,6 +141,15 @@ public:
 
 	// return symmetric tens3ds
 	tens3ds symm();
+    
+    // right transpose
+    tens3d transposer();
+    
+    //Contract by 2nd order tensor
+    vec3d contract2(const mat3d& s) const;
+
+    //Contract on right by vector
+    mat3d contract1(const vec3d& v) const;
 };
 
 tens3d operator + (const tens3dls& l, const tens3drs& r);

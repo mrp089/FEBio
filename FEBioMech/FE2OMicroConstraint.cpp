@@ -1,11 +1,40 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FE2OMicroConstraint.h"
-#include <FECore/FEModel.h>
 #include <FECore/log.h>
+#include "FEBioMech.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
 //! constructor
-FEMicroFlucSurface::FEMicroFlucSurface(FEMesh* pm) : FESurface(pm)
+FEMicroFlucSurface::FEMicroFlucSurface(FEModel* fem) : FESurface(fem)
 {
 	m_Lm.x = 0.; m_Lm.y = 0.; m_Lm.z = 0.;
 	m_pv.x = 0.; m_pv.y = 0.; m_pv.z = 0.;
@@ -88,24 +117,22 @@ vec3d FEMicroFlucSurface::SurfMicrofluc()
 }
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FE2OMicroConstraint, FESurfaceConstraint);
-	ADD_PARAMETER(m_blaugon, FE_PARAM_BOOL  , "laugon" ); 
-	ADD_PARAMETER(m_atol   , FE_PARAM_DOUBLE, "augtol" );
-	ADD_PARAMETER(m_eps    , FE_PARAM_DOUBLE, "penalty");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FE2OMicroConstraint, FESurfaceConstraint);
+	ADD_PARAMETER(m_blaugon, "laugon" ); 
+	ADD_PARAMETER(m_atol   , "augtol" );
+	ADD_PARAMETER(m_eps    , "penalty");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! constructor. Set default parameter values
-FE2OMicroConstraint::FE2OMicroConstraint(FEModel* pfem) : FESurfaceConstraint(pfem), m_s(&pfem->GetMesh())
+FE2OMicroConstraint::FE2OMicroConstraint(FEModel* pfem) : FESurfaceConstraint(pfem), m_s(pfem), m_dofU(pfem)
 {
 	m_eps = 0.0;
 	m_atol = 0.0;
 	m_blaugon = false;
 	m_binit = false;	// will be set to true during activation
 
-	m_dofX = pfem->GetDOFIndex("x");
-	m_dofY = pfem->GetDOFIndex("y");
-	m_dofZ = pfem->GetDOFIndex("z");
+	m_dofU.AddVariable(FEBioMech::GetVariableName(FEBioMech::DISPLACEMENT));
 }
 
 //-----------------------------------------------------------------------------
@@ -161,14 +188,14 @@ void FE2OMicroConstraint::UnpackLM(FEElement& el, vector<int>& lm)
 		FENode& node = mesh.Node(n);
 		vector<int>& id = node.m_ID;
 
-		lm[3*i  ] = id[m_dofX];
-		lm[3*i+1] = id[m_dofY];
-		lm[3*i+2] = id[m_dofZ];
+		lm[3*i  ] = id[m_dofU[0]];
+		lm[3*i+1] = id[m_dofU[1]];
+		lm[3*i+2] = id[m_dofU[2]];
 	}
 }
 
 //-----------------------------------------------------------------------------
-void FE2OMicroConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FE2OMicroConstraint::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	FEMesh& mesh = *m_s.GetMesh();
 
@@ -229,9 +256,9 @@ void FE2OMicroConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 		for (int j=0; j<neln; ++j)
 		{
 			vector<int>& id = mesh.Node(el.m_node[j]).m_ID;
-			lm[3*j  ] = id[m_dofX];
-			lm[3*j+1] = id[m_dofY];
-			lm[3*j+2] = id[m_dofZ];
+			lm[3*j  ] = id[m_dofU[0]];
+			lm[3*j+1] = id[m_dofU[1]];
+			lm[3*j+2] = id[m_dofU[2]];
 		}
 
 		// add element force vector to global force vector
@@ -240,12 +267,12 @@ void FE2OMicroConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FE2OMicroConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FE2OMicroConstraint::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	FEMesh& mesh = *m_s.GetMesh();
 
 	// element stiffness matrix
-	matrix ke;
+	FEElementMatrix ke;
 	vector<int> lm;
 	vector<double> fe;
 
@@ -327,13 +354,15 @@ void FE2OMicroConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 		for (int j=0; j<neln; ++j)
 		{
 			vector<int>& id = mesh.Node(el.m_node[j]).m_ID;
-			lm[3*j  ] = id[m_dofX];
-			lm[3*j+1] = id[m_dofY];
-			lm[3*j+2] = id[m_dofZ];
+			lm[3*j  ] = id[m_dofU[0]];
+			lm[3*j+1] = id[m_dofU[1]];
+			lm[3*j+2] = id[m_dofU[2]];
 		}
 
 		// assemble element matrix in global stiffness matrix
-		psolver->AssembleStiffness(el.m_node, lm, ke);
+		ke.SetNodes(el.m_node);
+		ke.SetIndices(lm);
+		LS.Assemble(ke);
 	}
 }
 
@@ -343,7 +372,7 @@ bool FE2OMicroConstraint::Augment(int naug, const FETimeInfo& tp)
 	// make sure we are augmenting
 	if ((m_blaugon == false) || (m_atol <= 0.0)) return true;
 
-	felog.printf("\n2O periodic surface microfluctation constraint:\n");
+	feLog("\n2O periodic surface microfluctation constraint:\n");
 
 	vec3d Dm = m_s.m_c*m_eps;
 	vec3d Lm = m_s.m_pv;
@@ -356,9 +385,9 @@ bool FE2OMicroConstraint::Augment(int naug, const FETimeInfo& tp)
 	if (Lnorm == 0)
 		err = 0;
 
-	felog.printf("\tpressure vect norm: %lg\n", Lm.norm());
-	felog.printf("\tnorm : %lg (%lg)\n", err, m_atol);
-	felog.printf("\ttotal microfluc norm: %lg\n", m_s.m_c.norm());
+	feLog("\tpressure vect norm: %lg\n", Lm.norm());
+	feLog("\tnorm : %lg (%lg)\n", err, m_atol);
+	feLog("\ttotal microfluc norm: %lg\n", m_s.m_c.norm());
 
 	// check convergence
 	if (err < m_atol) return true;
@@ -373,22 +402,11 @@ bool FE2OMicroConstraint::Augment(int naug, const FETimeInfo& tp)
 //-----------------------------------------------------------------------------
 void FE2OMicroConstraint::Serialize(DumpStream& ar)
 {
-	if (ar.IsSaving())
-	{
-		ar << m_s.m_Lm;
-		ar << m_s.m_pv;
-		ar << m_s.m_c;
-		ar << m_s.m_Fm;
-		ar << m_s.m_Gm;
-	}
-	else
-	{
-		ar >> m_s.m_Lm;
-		ar >> m_s.m_pv;
-		ar >> m_s.m_c;
-		ar >> m_s.m_Fm;
-		ar >> m_s.m_Gm;
-	}
+	ar & m_s.m_Lm;
+	ar & m_s.m_pv;
+	ar & m_s.m_c;
+	ar & m_s.m_Fm;
+	ar & m_s.m_Gm;
 }
 
 //-----------------------------------------------------------------------------

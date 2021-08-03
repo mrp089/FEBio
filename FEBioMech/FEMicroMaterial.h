@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FEElasticMaterial.h"
 #include "FECore/FEModel.h"
@@ -62,7 +90,7 @@ public:
 	double	   m_macro_energy_inc;	// Macroscopic strain energy increment
 	double	   m_micro_energy_inc;	// Microscopic strain energy increment
 
-	FERVEModel	m_rve;				// Local copy of the master rve
+	FERVEModel	m_rve;				// Local copy of the parent rve
 };
 
 //-----------------------------------------------------------------------------
@@ -77,13 +105,13 @@ public:
 	~FEMicroProbe();
 
 public:
-	int		m_neid;					//!< element Id
-	int		m_ngp;					//!< Gauss-point (one-based!)
-	char	m_szfile[MAX_FILE];		//!< file name
-	bool	m_bdebug;				//!< debug flag
+	int			m_neid;			//!< element Id
+	int			m_ngp;			//!< Gauss-point (one-based!)
+	std::string	m_szfile;		//!< file name
+	bool		m_bdebug;		//!< debug flag
 	FERVEProbe*	m_probe;
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -98,11 +126,11 @@ public:
 	~FEMicroMaterial(void);
 
 public:
-	char		m_szrve[256];	//!< filename for RVE file
-	char		m_szbc[256];	//!< name of nodeset defining boundary
+	std::string	m_szrve;	//!< filename for RVE file
+	std::string	m_szbc;		//!< name of nodeset defining boundary
 	int			m_bctype;		//!< periodic bc flag
 	double		m_scale;		//!< RVE scale factor
-	FERVEModel	m_mrve;			//!< the master RVE (Representive Volume Element)
+	FERVEModel	m_mrve;			//!< the parent RVE (Representive Volume Element)
 
 public:
 	//! calculate stress at material point
@@ -131,9 +159,9 @@ public:
 	FEMicroProbe& Probe(int i) { return *m_probe[i]; }
 
 protected:
-	FEVecPropertyT<FEMicroProbe>	m_probe;
+	std::vector<FEMicroProbe*>	m_probe;
 
 public:
 	// declare the parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

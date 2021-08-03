@@ -1,11 +1,32 @@
-//
-//  DOFS.cpp
-//  FECore
-//
-//  Created by Gerard Ateshian on 12/28/13.
-//  Copyright (c) 2013 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "DOFS.h"
 #include <string.h>
 #include <stdlib.h>
@@ -18,6 +39,7 @@ DOFS::DOF_ITEM::DOF_ITEM()
 {
 	sz[0] = 0;
 	ndof = -1;
+	nvar = -1;
 }
 
 //-----------------------------------------------------------------------------
@@ -25,6 +47,7 @@ DOFS::DOF_ITEM::DOF_ITEM(const char* sz)
 {
 	SetName(sz);
 	ndof = -1;
+	nvar = -1;
 }
 
 //-----------------------------------------------------------------------------
@@ -32,6 +55,7 @@ DOFS::DOF_ITEM::DOF_ITEM(const DOFS::DOF_ITEM& d)
 {
 	SetName(d.sz);
 	ndof = d.ndof;
+	nvar = d.nvar;
 }
 
 //-----------------------------------------------------------------------------
@@ -39,6 +63,7 @@ void DOFS::DOF_ITEM::operator = (const DOFS::DOF_ITEM& d)
 {
 	SetName(d.sz);
 	ndof = d.ndof;
+	nvar = d.nvar;
 }
 
 //-----------------------------------------------------------------------------
@@ -51,6 +76,14 @@ DOFS::~DOFS()
 void DOFS::DOF_ITEM::SetName(const char* szdof)
 {
 	strcpy(sz, szdof);
+}
+
+//-----------------------------------------------------------------------------
+void DOFS::DOF_ITEM::Serialize(DumpStream& ar)
+{
+	if (ar.IsShallow()) return;
+	ar & sz;
+	ar & ndof & nvar;
 }
 
 //-----------------------------------------------------------------------------
@@ -85,23 +118,35 @@ DOFS::DOF_ITEM::~DOF_ITEM()
 //-----------------------------------------------------------------------------
 DOFS::Var::Var()
 {
-	szname[0] = 0;
+	m_ntype = -1;	// invalid
+	m_order = -1;	// assumed full interpolation order as implied by element nodes
 }
 
 //-----------------------------------------------------------------------------
 DOFS::Var::Var(const DOFS::Var& v) 
 { 
-	strcpy(szname, v.szname); 
-	m_dof = v.m_dof; 
-	ntype = v.ntype; 
+	m_ntype = v.m_ntype;
+	m_order = v.m_order;
+	m_dof = v.m_dof;
+	m_name = v.m_name;
 }
 
 //-----------------------------------------------------------------------------
 void DOFS::Var::operator = (const DOFS::Var& v)
 { 
-	strcpy(szname, v.szname); 
-	m_dof = v.m_dof; 
-	ntype = v.ntype; 
+	m_ntype = v.m_ntype;
+	m_order = v.m_order;
+	m_dof = v.m_dof;
+	m_name = v.m_name;
+}
+
+//-----------------------------------------------------------------------------
+void DOFS::Var::Serialize(DumpStream& ar)
+{
+	if (ar.IsShallow()) return;
+	ar & m_ntype & m_order;
+	ar & m_name;
+	ar & m_dof;
 }
 
 //-----------------------------------------------------------------------------
@@ -128,8 +173,8 @@ int DOFS::AddVariable(const char* szvar, int ntype)
 
 	// Okay, add the variable
 	Var var;
-	strcpy(var.szname, szvar);
-	var.ntype = ntype;
+	var.m_name = szvar;
+	var.m_ntype = ntype;
 
 	// allocate degrees of freedom
 	int ndof = 0;
@@ -163,7 +208,7 @@ DOFS::Var* DOFS::GetVariable(const char* szvar)
 	for (int i=0; i<NVAR; ++i)
 	{
 		Var& var = m_var[i];
-		if (strcmp(szvar, var.szname) == 0) return &var;
+		if (var.m_name == szvar) return &var;
 	}
 	return 0;
 }
@@ -176,7 +221,7 @@ int DOFS::GetVariableIndex(const char* szvar)
 	for (int i=0; i<NVAR; ++i)
 	{
 		Var& var = m_var[i];
-		if (strcmp(szvar, var.szname) == 0) return i;
+		if (var.m_name == szvar) return i;
 	}
 	return -1;
 }
@@ -198,7 +243,7 @@ int DOFS::AddDOF(const char* szvar, const char* sz)
 
 	// Make sure the variable is valid
 	Var* pvar = GetVariable(szvar);
-	if (pvar && (pvar->ntype == VAR_ARRAY))
+	if (pvar && (pvar->m_ntype == VAR_ARRAY))
 	{
 		Var& var = *pvar;
 
@@ -235,7 +280,7 @@ int DOFS::AddDOF(int nvar, const char* sz)
 	if (nvar >= (int) m_var.size()) return -1; 
 
 	Var& var = m_var[nvar];
-	if (var.ntype == VAR_ARRAY)
+	if (var.m_ntype == VAR_ARRAY)
 	{
 		// Add the DOF
 		DOF_ITEM it(sz);
@@ -335,6 +380,24 @@ void DOFS::GetDOFList(const char* varName, std::vector<int>& dofs)
 }
 
 //-----------------------------------------------------------------------------
+//! Returns a list of DOF indices for a variable. 
+//! The returned list will be empty if the variable is not known
+void DOFS::GetDOFList(int nvar, std::vector<int>& dofs)
+{
+	// make sure we start with an empty list
+	dofs.clear();
+
+	// get the variable
+	Var& var = m_var[nvar];
+
+	// fill the dof list
+	int n = (int)var.m_dof.size();
+	if (n == 0) return;
+	dofs.resize(n);
+	for (int i = 0; i<n; ++i) dofs[i] = var.m_dof[i].ndof;
+}
+
+//-----------------------------------------------------------------------------
 bool DOFS::ParseDOFString(const char* sz, std::vector<int>& dofs)
 {
 	const char* ch = sz;
@@ -349,7 +412,11 @@ bool DOFS::ParseDOFString(const char* sz, std::vector<int>& dofs)
 			c = szdof;
 			if (*ch != 0) ch++; else ch = 0;
 		}
-		else *c++ = *ch++;
+		else
+		{
+			if (isspace(*ch) == 0) *c++ = *ch;
+			ch++;
+		}
 	}
 	while (ch);
 	return true;
@@ -360,7 +427,7 @@ bool DOFS::ParseDOFString(const char* sz, std::vector<int>& dofs)
 int DOFS::GetVariableSize(const char* szvar)
 {
 	Var* pvar = GetVariable(szvar);
-	if (pvar) return pvar->m_dof.size();
+	if (pvar) return (int)pvar->m_dof.size();
 	return -1;
 }
 
@@ -369,7 +436,7 @@ int DOFS::GetVariableSize(const char* szvar)
 int DOFS::GetVariableSize(int nvar)
 {
 	if ((nvar < 0) || (nvar >= (int) m_var.size())) return -1;
-	return m_var[nvar].m_dof.size();
+	return (int)m_var[nvar].m_dof.size();
 }
 
 //-----------------------------------------------------------------------------
@@ -377,8 +444,12 @@ int DOFS::GetVariableSize(int nvar)
 int DOFS::GetVariableType(int nvar)
 {
 	if ((nvar < 0) || (nvar >= (int) m_var.size())) return -1;
-	return m_var[nvar].ntype;
+	return m_var[nvar].m_ntype;
 }
+
+//-----------------------------------------------------------------------------
+//! return the total number of degrees of freedom
+int DOFS::GetTotalDOFS() const { return m_maxdofs; }
 
 //-----------------------------------------------------------------------------
 // Updates the DOF indices. 
@@ -395,6 +466,7 @@ void DOFS::Update()
 		{
 			DOF_ITEM& it = var.m_dof[j];
 			it.ndof = m_maxdofs++;
+			it.nvar = i;
 		}
 	}
 }
@@ -464,55 +536,70 @@ const char* DOFS::GetDOFName(int nvar, int n)
 }
 
 //-----------------------------------------------------------------------------
+const char* DOFS::GetDOFName(int ndof)
+{
+	int n = 0;
+	for (int i = 0; i < m_var.size(); ++i)
+	{
+		Var& var = m_var[i];
+		for (int j = 0; j < var.m_dof.size(); ++j)
+		{
+			DOF_ITEM& dof = var.m_dof[j];
+			if (dof.ndof == ndof)
+			{
+				return dof.sz;
+			}
+		}
+	}
+	return nullptr;
+}
+
+//-----------------------------------------------------------------------------
 void DOFS::Serialize(DumpStream& ar)
 {
 	if (ar.IsShallow()) return;
+	ar & m_maxdofs;
+	ar & m_var;
+}
 
-	if (ar.IsSaving())
+//-----------------------------------------------------------------------------
+//! set the interpolation order for a variable
+void DOFS::SetVariableInterpolationOrder(int nvar, int order)
+{
+	m_var[nvar].m_order = order;
+}
+
+//-----------------------------------------------------------------------------
+// return the interpolation order of a variable
+int DOFS::GetVariableInterpolationOrder(int nvar)
+{
+	return m_var[nvar].m_order;
+}
+
+//-----------------------------------------------------------------------------
+// Find the variable from a dof
+int DOFS::FindVariableFromDOF(int ndof)
+{
+	for (int i=0; i<Variables(); ++i)
 	{
-		ar << m_maxdofs;
-		int nvar = m_var.size();
-		ar << nvar;
-		for (int i=0; i<nvar; ++i)
+		Var& v = m_var[i];
+		size_t dofs = v.m_dof.size();
+		for (size_t j = 0; j < dofs; ++j)
 		{
-			Var& v = m_var[i];
-			ar << v.ntype;
-			ar << v.szname;
-
-			int ndof = (int) v.m_dof.size();
-			ar << ndof;
-			for (int j=0; j<ndof; ++j)
-			{
-				DOF_ITEM& d = v.m_dof[j];
-				ar << d.ndof;
-				ar << d.sz;
-			}
+			if (v.m_dof[j].ndof == ndof) return i;
 		}
 	}
-	else
-	{
-		m_var.clear();
-		ar >> m_maxdofs;
-		int nvar;
-		ar >> nvar;
-		for (int i=0; i<nvar; ++i)
-		{
-			Var v;
-			ar >> v.ntype;
-			ar >> v.szname;
+	assert(false);
+	return -1;
+}
 
-			int ndof;
-			ar >> ndof;
-			for (int j=0; j<ndof; ++j)
-			{
-				DOF_ITEM d;
-				ar >> d.ndof;
-				ar >> d.sz;
+//-----------------------------------------------------------------------------
+// return the interpolation order for a degree of freedom
+int DOFS::GetDOFInterpolationOrder(int ndof)
+{
+	// find the variable for this dof
+	int nvar = FindVariableFromDOF(ndof);
+	assert(nvar >= 0);
 
-				v.m_dof.push_back(d);
-			}
-
-			m_var.push_back(v);
-		}
-	}
+	return m_var[nvar].m_order;
 }

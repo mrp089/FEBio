@@ -1,20 +1,41 @@
-//
-//  FEFluidDomain2D.hpp
-//  FEBioFluid
-//
-//  Created by Gerard Ateshian on 12/15/15.
-//  Copyright © 2015 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #pragma once
 #include "FECore/FEDomain2D.h"
 #include "FEFluidDomain.h"
 #include "FEFluid.h"
+#include <FECore/FEDofList.h>
 
 //-----------------------------------------------------------------------------
 //! domain described by 2D elements
 //!
-class FEFluidDomain2D : public FEDomain2D, public FEFluidDomain
+class FEBIOFLUID_API FEFluidDomain2D : public FEDomain2D, public FEFluidDomain
 {
 public:
     //! constructor
@@ -37,6 +58,9 @@ public: // overrides from FEDomain
     
     //! set the material
     void SetMaterial(FEMaterial* pm) override;
+
+	//! get the total dof
+	const FEDofList& GetDOFList() const override;
     
 public: // overrides from FEElasticDomain
     
@@ -56,13 +80,13 @@ public: // overrides from FEElasticDomain
     void InertialForces(FEGlobalVector& R, const FETimeInfo& tp) override;
     
     //! calculates the global stiffness matrix for this domain
-    void StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+    void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
     
     //! calculates inertial stiffness
-    void MassMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+    void MassMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
     
     //! body force stiffness
-    void BodyForceStiffness(FESolver* psolver, const FETimeInfo& tp, FEBodyForce& bf) override;
+    void BodyForceStiffness(FELinearSystem& LS, const FETimeInfo& tp, FEBodyForce& bf) override;
     
 public:
     // --- S T I F F N E S S ---
@@ -96,12 +120,7 @@ protected:
     FEFluid*	m_pMat;
 
 protected:
-    int	m_dofWX, m_dofWY, m_dofWZ;
+	FEDofList	m_dofW, m_dofAW, m_dof;
     int	m_dofEF;
-    int	m_dofWXP, m_dofWYP, m_dofWZP;
-    int m_dofEFP;
-    int	m_dofAWX, m_dofAWY, m_dofAWZ;
     int m_dofAEF;
-    int	m_dofAWXP, m_dofAWYP, m_dofAWZP;
-    int m_dofAEFP;
 };

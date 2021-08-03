@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "DOFS.h"
 #include "FEMesh.h"
@@ -5,29 +33,50 @@
 #include "FEModelComponent.h"
 #include "Callback.h"
 #include "FECoreKernel.h"
+#include "DataStore.h"
 #include <string>
 
 //-----------------------------------------------------------------------------
 // forward declarations
-class FELoadCurve;
+class FELoadController;
 class FEMaterial;
 class FEModelLoad;
 class FENodalLoad;
-class FEFixedBC;
-class FEPrescribedBC;
+class FEBoundaryCondition;
 class FEInitialCondition;
 class FESurfaceLoad;
 class FEEdgeLoad;
 class FEBodyLoad;
 class FENLConstraint;
 class FESurfacePairConstraint;
-class FERigidSystem;
 class FEAnalysis;
 class FEGlobalData;
 class FEGlobalMatrix;
 class FELinearConstraintManager;
 class FEModelData;
 class FEDataArray;
+class FEMeshAdaptor;
+class Timer;
+
+//-----------------------------------------------------------------------------
+// struct that breaks down memory usage of FEModel
+struct FEMODEL_MEMORY_STATS {
+	size_t		StiffnessMatrix;
+	size_t		Mesh;
+	size_t		LinearSolver;
+	size_t		NonLinSolver;
+};
+
+//-----------------------------------------------------------------------------
+// Timer IDs
+enum TimerID {
+	Timer_Update,
+	Timer_Solve,
+	Timer_Reform,
+	Timer_Residual,
+	Timer_Stiffness,
+	Timer_QNUpdate
+};
 
 //-----------------------------------------------------------------------------
 //! The FEModel class stores all the data for the finite element model, including
@@ -36,6 +85,8 @@ class FEDataArray;
 //!
 class FECORE_API FEModel : public FECoreBase, public CallbackHandler
 {
+	FECORE_SUPER_CLASS
+
 public:
 	enum {MAX_STRING = 256};
 
@@ -56,17 +107,28 @@ public:
 	virtual void CopyFrom(FEModel& fem);
 
 	// clear all model data
-	void Clear();
+	virtual void Clear();
 
 	// model activation
-	void Activate();
+	virtual void Activate();
+
+	// TODO: temporary construction. Need to see if I can just use Activate(). 
+	//       This is called after remeshed
+	virtual void Reactivate();
+
+	// TODO: This function was introduced in order to call the initialization of the rigid system 
+	// at the correct time. Should look in better way.
+	virtual bool InitRigidSystem() { return true; }
+
+	//! Call this function whenever the geometry of the model has changed.
+	virtual void Update();
+
+	//! will return true if the model solved succussfully
+	bool IsSolved() const;
 
 public:
 	// get the FE mesh
 	FEMesh& GetMesh();
-
-	// get the rigid system
-	FERigidSystem* GetRigidSystem();
 
 	// get the linear constraint manager
 	FELinearConstraintManager& GetLinearConstraintManager();
@@ -74,19 +136,38 @@ public:
 	//! Validate BC's
 	bool InitBCs();
 
+	//! Initialize the mesh
+	bool InitMesh();
+
+	//! Initialize shells
+	virtual void InitShells();
+
 	//! Build the matrix profile for this model
-	void BuildMatrixProfile(FEGlobalMatrix& G, bool breset);
+	virtual void BuildMatrixProfile(FEGlobalMatrix& G, bool breset);
 
-public:	// --- Load curve functions ----
+	// call this function to set the mesh's update flag
+	void SetMeshUpdateFlag(bool b);
 
-	//! Add a loadcurve to the model
-	void AddLoadCurve(FELoadCurve* plc);
+public:	// --- Load controller functions ----
 
-	//! get a loadcurve
-	FELoadCurve* GetLoadCurve(int i);
+	//! Add a load controller to the model
+	void AddLoadController(FELoadController* plc);
 
-	//! get the number of loadcurves
-	int LoadCurves() const;
+	//! get a load controller
+	FELoadController* GetLoadController(int i);
+
+	//! get the number of load controllers
+	int LoadControllers() const;
+
+	//! Attach a load controller to a parameter
+	void AttachLoadController(FEParam* p, int lc);
+	void AttachLoadController(FEParam* p, FELoadController* plc);
+
+	//! Detach a load controller from a parameter
+	bool DetachLoadController(FEParam* p);
+
+	//! Get a load controller for a parameter (returns null if the param is not under load control)
+	FELoadController* GetLoadController(FEParam* p);
 
 public: // --- Material functions ---
 
@@ -111,18 +192,12 @@ public: // --- Material functions ---
 	//! material validation
 	bool ValidateMaterials();
 
-public: // --- Boundary Conditions functions ---
-	// fixed BC
-	int FixedBCs();
-	FEFixedBC* FixedBC(int i);
-	void AddFixedBC(FEFixedBC* pbc);
-	void AddFixedBC(int node, int bc);
-
-	// prescribed BC's
-	int PrescribedBCs();
-	FEPrescribedBC* PrescribedBC(int i);
-	void AddPrescribedBC(FEPrescribedBC* pbc);
-	void ClearBCs();
+public:
+	// Boundary conditions
+	int BoundaryConditions() const;
+	FEBoundaryCondition* BoundaryCondition(int i);
+	void AddBoundaryCondition(FEBoundaryCondition* bc);
+	void ClearBoundaryConditions();
 
 	// initial conditions
 	int InitialConditions();
@@ -174,6 +249,7 @@ public: // --- Analysis steps functions ---
 
 	//! Get the current step
 	FEAnalysis* GetCurrentStep();
+	const FEAnalysis* GetCurrentStep() const;
 
 	//! Set the current step index
 	int GetCurrentStepIndex() const;
@@ -243,31 +319,38 @@ public:	// --- Model Loads ----
 	//! find a surface load based on the name
 	FESurfaceLoad* FindSurfaceLoad(const std::string& loadName);
 
+public:	// --- Mesh adaptors ---
+	//! return number of mesh adaptors
+	int MeshAdaptors();
+
+	//! retrieve a mesh adaptors
+	FEMeshAdaptor* MeshAdaptor(int i);
+
+	//! add a mesh adaptor
+	void AddMeshAdaptor(FEMeshAdaptor* meshAdaptor);
+
 public: // --- parameter functions ---
 
-	//! evaluate all load curves at some time
-	void EvaluateLoadCurves(double time);
+	//! evaluate all load controllers at some time
+	void EvaluateLoadControllers(double time);
 
-	//! evaluate all parameter lists
-	bool EvaluateAllParameterLists();
+	//! evaluate all load parameters
+	virtual bool EvaluateLoadParameters();
 
-	//! Evaluate parameter list
-	bool EvaluateParameterList(FEParameterList& pl);
-
-	//! Evaluate parameter list
-	bool EvaluateParameterList(FECoreBase* pc);
+	//! Find a model parameter
+	FEParam* FindParameter(const ParamString& s) override;
 
 	//! return a reference to the named parameter
-	FEParamValue GetParameterValue(const ParamString& param);
+	virtual FEParamValue GetParameterValue(const ParamString& param);
 
 	//! Find property 
 	//! Note: Can't call this FindProperty, since this is already defined in base class
 	FECoreBase* FindComponent(const ParamString& prop);
 
-public:	// --- Miscellaneous routines ---
+	//! Set the print parameters flag
+	void SetPrintParametersFlag(bool b);
 
-	//! find a model componnet from its class ID
-	FEModelComponent* FindModelComponent(int nid);
+public:	// --- Miscellaneous routines ---
 
 	//! call the callback function
 	//! This function returns fals if the run is to be aborted
@@ -285,17 +368,22 @@ public:	// --- Miscellaneous routines ---
 	//! serialize data for restarts
 	void Serialize(DumpStream& ar) override;
 
-	//! Get the linear solver type
-	int GetLinearSolverType() const;
+	//! This is called to serialize geometry.
+	//! Derived classes can override this
+	virtual void SerializeGeometry(DumpStream& ar);
 
-	//! set the linear solver type
-	void SetLinearSolverType(int ntype);
+	//! set the module name
+	void SetModuleName(const std::string& moduleName);
 
-	//! see if we need to optimize bandwidth of linear system
-	bool OptimizeBandwidth() const;
+	//! get the module name
+	string GetModuleName() const;
 
-	//! Set the optimize band width flag
-	void SetOptimizeBandwidth(bool b);
+public:
+	//! Log a message
+	virtual void Log(int ntag, const char* msg);
+	void Logf(int ntag, const char* msg, ...);
+	void BlockLog();
+	void UnBlockLog();
 
 public: // Global data
 	void AddGlobalData(FEGlobalData* psd);
@@ -319,20 +407,31 @@ public: // Data retrieval
 	// get nodal dof data
 	bool GetNodeData(int dof, vector<double>& data);
 
-public: // data arrays
-	void ClearDataArrays();
-	void AddDataArray(const char* szname, FEDataArray* map);
-	FEDataArray* FindDataArray(const char* szmap);
+	//! return the data store
+	DataStore& GetDataStore();
 
 public:
-	// TODO: put this somewhere else
-	double	m_ut4_alpha;		//!< UT4 integration alpha value
-	bool	m_ut4_bdev;			//!< UT4 integration deviatoric formulation flag
-	double	m_udghex_hg;		//!< hourglass parameter for UDGhex integration
+	// reset all the timers
+	void ResetAllTimers();
+
+	// return total number of timers
+	int Timers();
+
+	// return a timer by index
+	Timer* GetTimer(int i);
+
+	// get the number of calls to Update()
+	int UpdateCounter() const;
+
+	// this can be used to change the update counter
+	void IncrementUpdateCounter();
+
+protected:
+	FEParamValue GetMeshParameter(const ParamString& paramString);
 
 private:
 	class Implementation;
 	Implementation*	m_imp;
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

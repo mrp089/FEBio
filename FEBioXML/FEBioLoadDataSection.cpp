@@ -1,7 +1,36 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBioLoadDataSection.h"
-#include "FECore/FEModel.h"
-#include "FECore/FEDataLoadCurve.h"
+#include <FECore/FEModel.h>
+#include <FECore/FELoadCurve.h>
+#include <FECore/FEPointFunction.h>
 
 //-----------------------------------------------------------------------------
 FEBioLoadDataSection::FEBioLoadDataSection(FEFileImport* pim) : FEFileSection(pim) 
@@ -26,17 +55,20 @@ void FEBioLoadDataSection::Parse(XMLTag& tag)
 			tag.AttributeValue("id", nid);
 
 			// default type and extend mode
-			FEDataLoadCurve::INTFUNC ntype = FEDataLoadCurve::LINEAR;
-			FEDataLoadCurve::EXTMODE nextm = FEDataLoadCurve::CONSTANT;
+			FEPointFunction::INTFUNC ntype = FEPointFunction::LINEAR;
+			FEPointFunction::EXTMODE nextm = FEPointFunction::CONSTANT;
 
 			// get the (optional) type
 			XMLAtt* patt = tag.Attribute("type", true);
 			if (patt)
 			{
 				XMLAtt& type = *patt;
-				if      (type == "step"  ) ntype = FEDataLoadCurve::STEP;
-				else if (type == "linear") ntype = FEDataLoadCurve::LINEAR;
-				else if (type == "smooth") ntype = FEDataLoadCurve::SMOOTH;
+				if      (type == "step"  ) ntype = FEPointFunction::STEP;
+				else if (type == "linear") ntype = FEPointFunction::LINEAR;
+				else if (type == "smooth") ntype = FEPointFunction::SMOOTH;
+                else if (type == "cubic spline") ntype = FEPointFunction::CSPLINE;
+                else if (type == "control points") ntype = FEPointFunction::CPOINTS;
+                else if (type == "approximation" ) ntype = FEPointFunction::APPROX;
 				else throw XMLReader::InvalidAttributeValue(tag, "type", type.cvalue());
 			}
 
@@ -45,25 +77,25 @@ void FEBioLoadDataSection::Parse(XMLTag& tag)
 			if (patt)
 			{
 				XMLAtt& ext = *patt;
-				if      (ext == "constant"     ) nextm = FEDataLoadCurve::CONSTANT;
-				else if (ext == "extrapolate"  ) nextm = FEDataLoadCurve::EXTRAPOLATE;
-				else if (ext == "repeat"       ) nextm = FEDataLoadCurve::REPEAT;
-				else if (ext == "repeat offset") nextm = FEDataLoadCurve::REPEAT_OFFSET;
+				if      (ext == "constant"     ) nextm = FEPointFunction::CONSTANT;
+				else if (ext == "extrapolate"  ) nextm = FEPointFunction::EXTRAPOLATE;
+				else if (ext == "repeat"       ) nextm = FEPointFunction::REPEAT;
+				else if (ext == "repeat offset") nextm = FEPointFunction::REPEAT_OFFSET;
 				else throw XMLReader::InvalidAttributeValue(tag, "extend", ext.cvalue());
 			}
 
 			// get the number of load curves
-			int nlc = fem.LoadCurves();
+			int nlc = fem.LoadControllers();
 
 			// find or create the load curve
-			FEDataLoadCurve* plc = 0;
+			FELoadCurve* plc = 0;
 
 			// see if this refers to a valid curve
 			if (m_redefineCurves)
 			{
 				if ((nid > 0) && (nid <= nlc)) 
 				{
-					plc = dynamic_cast<FEDataLoadCurve*>(fem.GetLoadCurve(nid - 1));
+					plc = dynamic_cast<FELoadCurve*>(fem.GetLoadController(nid - 1));
 					assert(plc);
 
 					// clear the curve since we're about to read in new data points
@@ -79,10 +111,11 @@ void FEBioLoadDataSection::Parse(XMLTag& tag)
 				if (nid != nlc + 1) throw XMLReader::InvalidAttributeValue(tag, "id");
 
 				// create the loadcurve
-				plc = dynamic_cast<FEDataLoadCurve*>(fecore_new<FELoadCurve>(FELOADCURVE_ID, "loadcurve", &fem));
+				plc = fecore_new<FELoadCurve>("loadcurve", &fem); assert(plc);
+				plc->SetID(nid - 1);
 
 				// add the loadcurve
-				fem.AddLoadCurve(plc);
+				fem.AddLoadController(plc);
 			}
 
 			// set the load curve attributes

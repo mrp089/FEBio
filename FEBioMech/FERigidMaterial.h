@@ -1,14 +1,32 @@
-// FERigid.h: interface for the FERigid class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FERIGID_H__42385DA7_ECE1_4862_B6E1_EFE5B4D4CC4B__INCLUDED_)
-#define AFX_FERIGID_H__42385DA7_ECE1_4862_B6E1_EFE5B4D4CC4B__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "FEElasticMaterial.h"
 
 //-----------------------------------------------------------------------------
@@ -32,13 +50,21 @@ public:
 public:
 	int		m_com;	//!< center of mass input flag
 	vec3d	m_rc;	//!< center of mass
+	int		m_nRB;	//!< rigid body ID (TODO: rigid materials can be assigned to mulitple rigid bodies, so does it make sense to store this?)
 
 public:
 	// inherited from FEMaterial
-	virtual bool IsRigid() override { return true; }
+	bool IsRigid() const override { return true; }
 
 	// override this function to set the COM logic
 	void SetParameter(FEParam& p) override;
+
+public:
+	//! get the ID of the rigid body this material is assigned to (-1 if not)
+	int GetRigidBodyID() { return m_nRB; }
+
+	//! Set the rigid body ID this material is assigned to
+	void SetRigidBodyID(int rid) { m_nRB = rid; }
 
 public:
 	//! Create a rigid material point
@@ -48,7 +74,7 @@ public:
 	virtual mat3ds Stress(FEMaterialPoint& pt) override { return mat3ds(); }
 
 	//! calculate tangent stiffness at material point
-	virtual tens4dss Tangent(FEMaterialPoint& pt) override { return tens4dss(); }
+	virtual tens4dss Tangent(FEMaterialPoint& pt) override { return tens4ds(); }
 
 	//! data initialization
 	bool Init() override;
@@ -57,10 +83,8 @@ public:
 	void Serialize(DumpStream& ar) override;
 
 	// declare a parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 
 private:
 	bool	m_binit;	//!< flag for first initialization
 };
-
-#endif // !defined(AFX_FERIGID_H__42385DA7_ECE1_4862_B6E1_EFE5B4D4CC4B__INCLUDED_)

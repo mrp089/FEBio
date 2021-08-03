@@ -1,15 +1,43 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FENeoHookeanTransIso.h"
 
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FENeoHookeanTransIso, FEElasticMaterial)
-	ADD_PARAMETER(m_Ep, FE_PARAM_DOUBLE, "Ep");
-	ADD_PARAMETER(m_Ez, FE_PARAM_DOUBLE, "Ez");
-	ADD_PARAMETER(m_vz, FE_PARAM_DOUBLE, "vz");
-	ADD_PARAMETER(m_vp, FE_PARAM_DOUBLE, "vp");
-	ADD_PARAMETER(m_gz, FE_PARAM_DOUBLE, "gz");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FENeoHookeanTransIso, FEElasticMaterial)
+	ADD_PARAMETER(m_Ep, "Ep");
+	ADD_PARAMETER(m_Ez, "Ez");
+	ADD_PARAMETER(m_vz, "vz");
+	ADD_PARAMETER(m_vp, "vp");
+	ADD_PARAMETER(m_gz, "gz");
+END_FECORE_CLASS();
 
 //////////////////////////////////////////////////////////////////////
 // CompNeoHookean_Transiso
@@ -25,27 +53,17 @@ mat3ds FENeoHookeanTransIso::Stress(FEMaterialPoint& mp)
 	//define jacobian
 	double J = detF;
 
-	// current local material axis
-	vec3d a0, a;
-	double lam;
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
 
 	// get the initial fiber direction
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
-
-	// for testing (comment out)
-//	a0.x=1;
-//	a0.y=0;
-//	a0.z=0;
+	vec3d a0 = Q.col(0);
 
 	// calculate the current material axis lam*a = F*a0;
-	a.x = F[0][0]*a0.x + F[0][1]*a0.y + F[0][2]*a0.z;
-	a.y = F[1][0]*a0.x + F[1][1]*a0.y + F[1][2]*a0.z;
-	a.z = F[2][0]*a0.x + F[2][1]*a0.y + F[2][2]*a0.z;
+	vec3d a = F*a0;
 
 	// normalize material axis and store fiber stretch
-	lam = a.unit();
+	double lam = a.unit();
 
 	// calculate left Cauchy-Green tensor
 	// (we commented out the matrix components we do not need)
@@ -134,27 +152,17 @@ tens4ds FENeoHookeanTransIso::Tangent(FEMaterialPoint& mp)
 	//define jacobian
 	double J = detF;
 
-	// current local material axis
-	vec3d a0, a;
-	double lam;
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
 
 	// get the initial fiber direction
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
-
-	// for testing (comment out)
-//	a0.x=1;
-//	a0.y=0;
-//	a0.z=0;
+	vec3d a0 = Q.col(0);
 
 	// calculate the current material axis lam*a = F*a0;
-	a.x = F[0][0]*a0.x + F[0][1]*a0.y + F[0][2]*a0.z;
-	a.y = F[1][0]*a0.x + F[1][1]*a0.y + F[1][2]*a0.z;
-	a.z = F[2][0]*a0.x + F[2][1]*a0.y + F[2][2]*a0.z;
+	vec3d a = F*a0;
 
 	// normalize material axis and store fiber stretch
-	lam = a.unit();
+	double lam = a.unit();
 
 	// calculate left Cauchy-Green tensor
 	// (we commented out the matrix components we do not need)

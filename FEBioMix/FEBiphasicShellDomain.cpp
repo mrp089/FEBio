@@ -1,19 +1,41 @@
-//
-//  FEBiphasicShellDomain.cpp
-//  FEBioMix
-//
-//  Created by Gerard Ateshian on 12/1/16.
-//  Copyright © 2016 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEBiphasicShellDomain.h"
 #include "FECore/FEMesh.h"
 #include "FECore/log.h"
 #include <FECore/FEModel.h>
 #include <FECore/FESolidDomain.h>
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
-FEBiphasicShellDomain::FEBiphasicShellDomain(FEModel* pfem) : FESSIShellDomain(pfem), FEBiphasicDomain(pfem)
+FEBiphasicShellDomain::FEBiphasicShellDomain(FEModel* pfem) : FESSIShellDomain(pfem), FEBiphasicDomain(pfem), m_dof(pfem)
 {
     m_dofSX = pfem->GetDOFIndex("sx");
     m_dofSY = pfem->GetDOFIndex("sy");
@@ -21,8 +43,23 @@ FEBiphasicShellDomain::FEBiphasicShellDomain(FEModel* pfem) : FESSIShellDomain(p
 }
 
 //-----------------------------------------------------------------------------
+//! get the material (overridden from FEDomain)
+FEMaterial* FEBiphasicShellDomain::GetMaterial()
+{
+	return m_pMat;
+}
+
+//-----------------------------------------------------------------------------
+//! get the total dof
+const FEDofList& FEBiphasicShellDomain::GetDOFList() const
+{
+	return m_dof;
+}
+
+//-----------------------------------------------------------------------------
 void FEBiphasicShellDomain::SetMaterial(FEMaterial* pmat)
 {
+	FEDomain::SetMaterial(pmat);
     m_pMat = dynamic_cast<FEBiphasic*>(pmat);
     assert(m_pMat);
 }
@@ -78,52 +115,6 @@ void FEBiphasicShellDomain::PreSolveUpdate(const FETimeInfo& timeInfo)
 }
 
 //-----------------------------------------------------------------------------
-bool FEBiphasicShellDomain::Init()
-{
-    // initialize base class
-	FESSIShellDomain::Init();
-    
-    // error flag (set true on error)
-    bool bmerr = false;
-    
-    // initialize local coordinate systems (can I do this elsewhere?)
-    FEElasticMaterial* pme = m_pMat->GetElasticMaterial();
-    for (size_t i=0; i<m_Elem.size(); ++i)
-    {
-        FEShellElement& el = m_Elem[i];
-        for (int n=0; n<el.GaussPoints(); ++n) pme->SetLocalCoordinateSystem(el, n, *(el.GetMaterialPoint(n)));
-    }
-    
-    // check for initially inverted shells
-    for (int i=0; i<Elements(); ++i)
-    {
-        FEShellElement& el = Element(i);
-        int nint = el.GaussPoints();
-        for (int n=0; n<nint; ++n)
-        {
-            double J0 = detJ0(el, n);
-            if (J0 <= 0)
-            {
-                felog.printf("**************************** E R R O R ****************************\n");
-                felog.printf("Negative jacobian detected at integration point %d of element %d\n", n+1, el.GetID());
-                felog.printf("Jacobian = %lg\n", J0);
-                felog.printf("Did you use the right node numbering?\n");
-                felog.printf("Nodes:");
-                for (int l=0; l<el.Nodes(); ++l)
-                {
-                    felog.printf("%d", el.m_node[l]+1);
-                    if (l+1 != el.Nodes()) felog.printf(","); else felog.printf("\n");
-                }
-                felog.printf("*******************************************************************\n\n");
-                bmerr = true;
-            }
-        }
-    }
-    
-    return (bmerr == false);
-}
-
-//-----------------------------------------------------------------------------
 void FEBiphasicShellDomain::Activate()
 {
     for (int i=0; i<Nodes(); ++i)
@@ -133,22 +124,22 @@ void FEBiphasicShellDomain::Activate()
         {
             if (node.m_rid < 0)
             {
-                node.m_ID[m_dofX] = DOF_ACTIVE;
-                node.m_ID[m_dofY] = DOF_ACTIVE;
-                node.m_ID[m_dofZ] = DOF_ACTIVE;
+                node.set_active(m_dofU[0]);
+                node.set_active(m_dofU[1]);
+                node.set_active(m_dofU[2]);
                 
                 if (node.HasFlags(FENode::SHELL))
                 {
-                    node.m_ID[m_dofSX] = DOF_ACTIVE;
-                    node.m_ID[m_dofSY] = DOF_ACTIVE;
-                    node.m_ID[m_dofSZ] = DOF_ACTIVE;
+                    node.set_active(m_dofSU[0]);
+                    node.set_active(m_dofSU[1]);
+                    node.set_active(m_dofSU[2]);
                 }
             }
             
-            node.m_ID[m_dofP] = DOF_ACTIVE;
+            node.set_active(m_dofP);
             
             if (node.HasFlags(FENode::SHELL))
-                node.m_ID[m_dofQ] = DOF_ACTIVE;
+                node.set_active(m_dofQ);
         }
     }
 }
@@ -166,9 +157,9 @@ void FEBiphasicShellDomain::UnpackLM(FEElement& el, vector<int>& lm)
         vector<int>& id = node.m_ID;
         
         // first the displacement dofs
-        lm[8*i  ] = id[m_dofX];
-        lm[8*i+1] = id[m_dofY];
-        lm[8*i+2] = id[m_dofZ];
+        lm[8*i  ] = id[m_dofU[0]];
+        lm[8*i+1] = id[m_dofU[1]];
+        lm[8*i+2] = id[m_dofU[2]];
         
         // next the shell dofs
         lm[8*i+3] = id[m_dofSX];
@@ -181,9 +172,9 @@ void FEBiphasicShellDomain::UnpackLM(FEElement& el, vector<int>& lm)
         
         // rigid rotational dofs
         // TODO: Do I really need this?
-        lm[8*N + 3*i  ] = id[m_dofRU];
-        lm[8*N + 3*i+1] = id[m_dofRV];
-        lm[8*N + 3*i+2] = id[m_dofRW];
+        lm[8*N + 3*i  ] = id[m_dofR[0]];
+        lm[8*N + 3*i+1] = id[m_dofR[1]];
+        lm[8*N + 3*i+2] = id[m_dofR[2]];
     }
 }
 
@@ -197,26 +188,13 @@ void FEBiphasicShellDomain::Reset()
     FEBiphasic* pmb = m_pMat;
     
     // initialize all element data
-    for (int i=0; i<(int) m_Elem.size(); ++i)
-    {
-        // get the solid element
-        FEShellElement& el = m_Elem[i];
-        
-        // get the number of integration points
-        int nint = el.GaussPoints();
-        
-        // loop over the integration points
-        for (int n=0; n<nint; ++n)
-        {
-            FEMaterialPoint& mp = *el.GetMaterialPoint(n);
-            FEBiphasicMaterialPoint& pt = *(mp.ExtractData<FEBiphasicMaterialPoint>());
-            
-            // initialize referential solid volume fraction
-            pt.m_phi0 = pmb->m_phi0;
-        }
-    }
-}
+	ForEachMaterialPoint([=](FEMaterialPoint& mp) {
+		FEBiphasicMaterialPoint& pt = *(mp.ExtractData<FEBiphasicMaterialPoint>());
 
+		// initialize referential solid volume fraction
+		pt.m_phi0 = pmb->m_phi0(mp);
+	});
+}
 
 //-----------------------------------------------------------------------------
 void FEBiphasicShellDomain::InternalForces(FEGlobalVector& R)
@@ -243,7 +221,6 @@ void FEBiphasicShellDomain::InternalForces(FEGlobalVector& R)
         UnpackLM(el, lm);
         
         // assemble element 'fe'-vector into global R vector
-        //#pragma omp critical
         R.Assemble(el.m_node, lm, fe, true);
     }
 }
@@ -362,7 +339,6 @@ void FEBiphasicShellDomain::InternalForcesSS(FEGlobalVector& R)
         UnpackLM(el, lm);
         
         // assemble element 'fe'-vector into global R vector
-        //#pragma omp critical
         R.Assemble(el.m_node, lm, fe, true);
     }
 }
@@ -451,7 +427,7 @@ void FEBiphasicShellDomain::ElementInternalForceSS(FEShellElement& el, vector<do
 }
 
 //-----------------------------------------------------------------------------
-void FEBiphasicShellDomain::StiffnessMatrix(FESolver* psolver, bool bsymm)
+void FEBiphasicShellDomain::StiffnessMatrix(FELinearSystem& LS, bool bsymm)
 {
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
@@ -459,13 +435,10 @@ void FEBiphasicShellDomain::StiffnessMatrix(FESolver* psolver, bool bsymm)
 #pragma omp parallel for shared(NE)
     for (int iel=0; iel<NE; ++iel)
     {
+		FEShellElement& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FEShellElement& el = m_Elem[iel];
-        
-        // allocate stiffness matrix
+        FEElementMatrix ke(el);
         int neln = el.Nodes();
         int ndof = neln*8;
         ke.resize(ndof, ndof);
@@ -473,16 +446,17 @@ void FEBiphasicShellDomain::StiffnessMatrix(FESolver* psolver, bool bsymm)
         // calculate the element stiffness matrix
         ElementBiphasicStiffness(el, ke, bsymm);
         
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
 //-----------------------------------------------------------------------------
-void FEBiphasicShellDomain::StiffnessMatrixSS(FESolver* psolver, bool bsymm)
+void FEBiphasicShellDomain::StiffnessMatrixSS(FELinearSystem& LS, bool bsymm)
 {
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
@@ -490,13 +464,10 @@ void FEBiphasicShellDomain::StiffnessMatrixSS(FESolver* psolver, bool bsymm)
 #pragma omp parallel for shared(NE)
     for (int iel=0; iel<NE; ++iel)
     {
+		FEShellElement& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FEShellElement& el = m_Elem[iel];
-        
-        // allocate stiffness matrix
+        FEElementMatrix ke(el);
         int neln = el.Nodes();
         int ndof = neln*8;
         ke.resize(ndof, ndof);
@@ -504,11 +475,12 @@ void FEBiphasicShellDomain::StiffnessMatrixSS(FESolver* psolver, bool bsymm)
         // calculate the element stiffness matrix
         ElementBiphasicStiffnessSS(el, ke, bsymm);
         
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
@@ -583,7 +555,7 @@ bool FEBiphasicShellDomain::ElementBiphasicStiffness(FEShellElement& el, matrix&
         
         // evaluate the permeability and its derivatives
         mat3ds K = m_pMat->Permeability(mp);
-        tens4ds dKdE = m_pMat->GetPermeability()->Tangent_Permeability_Strain(mp);
+        tens4dmm dKdE = m_pMat->GetPermeability()->Tangent_Permeability_Strain(mp);
         
         // evaluate the solvent supply and its derivatives
         double phiwhat = 0;
@@ -657,10 +629,10 @@ bool FEBiphasicShellDomain::ElementBiphasicStiffness(FEShellElement& el, matrix&
         for (i=0; i<neln; ++i)
             for (j=0; j<neln; ++j)
             {
-                vec3d kpu = (vdotTdotv(gradMu[i], dKdE, gradMu[j]).transpose()*gradp + Q*(gradMu[j]*Mu[i]))*(detJt*dt);
-                vec3d kpd = (vdotTdotv(gradMu[i], dKdE, gradMd[j]).transpose()*gradp + Q*(gradMd[j]*Mu[i]))*(detJt*dt);
-                vec3d kqu = (vdotTdotv(gradMd[i], dKdE, gradMu[j]).transpose()*gradp + Q*(gradMu[j]*Md[i]))*(detJt*dt);
-                vec3d kqd = (vdotTdotv(gradMd[i], dKdE, gradMd[j]).transpose()*gradp + Q*(gradMd[j]*Md[i]))*(detJt*dt);
+                vec3d kpu = (vdotTdotv(gradMu[i], dKdE, gradMu[j])*gradp + Q*(gradMu[j]*Mu[i]))*(detJt*dt);
+                vec3d kpd = (vdotTdotv(gradMu[i], dKdE, gradMd[j])*gradp + Q*(gradMd[j]*Mu[i]))*(detJt*dt);
+                vec3d kqu = (vdotTdotv(gradMd[i], dKdE, gradMu[j])*gradp + Q*(gradMu[j]*Md[i]))*(detJt*dt);
+                vec3d kqd = (vdotTdotv(gradMd[i], dKdE, gradMd[j])*gradp + Q*(gradMd[j]*Md[i]))*(detJt*dt);
                 
                 ke[8*i+6][8*j  ] -= kpu.x; ke[8*i+6][8*j+1] -= kpu.y; ke[8*i+6][8*j+2] -= kpu.z;
                 
@@ -766,7 +738,7 @@ bool FEBiphasicShellDomain::ElementBiphasicStiffnessSS(FEShellElement& el, matri
         
         // evaluate the permeability and its derivatives
         mat3ds K = m_pMat->Permeability(mp);
-        tens4ds dKdE = m_pMat->GetPermeability()->Tangent_Permeability_Strain(mp);
+        tens4dmm dKdE = m_pMat->GetPermeability()->Tangent_Permeability_Strain(mp);
         
         // evaluate the solvent supply and its derivatives
         double phiwhat = 0;
@@ -840,10 +812,10 @@ bool FEBiphasicShellDomain::ElementBiphasicStiffnessSS(FEShellElement& el, matri
         for (i=0; i<neln; ++i)
             for (j=0; j<neln; ++j)
             {
-                vec3d kpu = (vdotTdotv(gradMu[i], dKdE, gradMu[j]).transpose()*gradp + Q*(gradMu[j]*Mu[i]))*(detJt*dt);
-                vec3d kpd = (vdotTdotv(gradMu[i], dKdE, gradMd[j]).transpose()*gradp + Q*(gradMd[j]*Mu[i]))*(detJt*dt);
-                vec3d kqu = (vdotTdotv(gradMd[i], dKdE, gradMu[j]).transpose()*gradp + Q*(gradMu[j]*Md[i]))*(detJt*dt);
-                vec3d kqd = (vdotTdotv(gradMd[i], dKdE, gradMd[j]).transpose()*gradp + Q*(gradMd[j]*Md[i]))*(detJt*dt);
+                vec3d kpu = (vdotTdotv(gradMu[i], dKdE, gradMu[j])*gradp + Q*(gradMu[j]*Mu[i]))*(detJt*dt);
+                vec3d kpd = (vdotTdotv(gradMu[i], dKdE, gradMd[j])*gradp + Q*(gradMd[j]*Mu[i]))*(detJt*dt);
+                vec3d kqu = (vdotTdotv(gradMd[i], dKdE, gradMu[j])*gradp + Q*(gradMu[j]*Md[i]))*(detJt*dt);
+                vec3d kqd = (vdotTdotv(gradMd[i], dKdE, gradMd[j])*gradp + Q*(gradMd[j]*Md[i]))*(detJt*dt);
                 
                 ke[8*i+6][8*j  ] -= kpu.x; ke[8*i+6][8*j+1] -= kpu.y; ke[8*i+6][8*j+2] -= kpu.z;
                 
@@ -897,14 +869,14 @@ void FEBiphasicShellDomain::Update(const FETimeInfo& tp)
 #pragma omp critical
             {
                 berr = true;
-                if (NegativeJacobian::m_boutput) e.print();
+                if (e.DoOutput()) feLogError(e.what());
             }
         }
     }
     // if we encountered an error, we request a running restart
     if (berr)
     {
-        if (NegativeJacobian::m_boutput == false) felog.printbox("ERROR", "Negative jacobian was detected.");
+        if (NegativeJacobian::DoOutput() == false) feLogError("Negative jacobian was detected.");
         throw DoRunningRestart();
     }
 }
@@ -912,6 +884,8 @@ void FEBiphasicShellDomain::Update(const FETimeInfo& tp)
 //-----------------------------------------------------------------------------
 void FEBiphasicShellDomain::UpdateElementStress(int iel)
 {
+    double dt = GetFEModel()->GetTime().timeIncrement;
+    
     // get the solid element
     FEShellElement& el = m_Elem[iel];
     
@@ -950,7 +924,11 @@ void FEBiphasicShellDomain::UpdateElementStress(int iel)
         
         // get the deformation gradient and determinant
         pt.m_J = defgrad(el, pt.m_F, n);
-        
+        mat3d Fp;
+        defgradp(el, Fp, n);
+        mat3d Fi = pt.m_F.inverse();
+        pt.m_L = (pt.m_F - Fp)*Fi / dt;
+
         // biphasic data
         FEBiphasicMaterialPoint& ppt = *(mp.ExtractData<FEBiphasicMaterialPoint>());
         
@@ -964,6 +942,12 @@ void FEBiphasicShellDomain::UpdateElementStress(int iel)
         //		ppt.m_w = m_pMat->Flux(mp);
         ppt.m_w = FluidFlux(mp);
         ppt.m_pa = m_pMat->Pressure(mp);
+        
+        // update specialized material points
+        m_pMat->UpdateSpecializedMaterialPoints(mp, GetFEModel()->GetTime());
+        
+        // calculate the solid stress at this material point
+        ppt.m_ss = m_pMat->GetElasticMaterial()->Stress(mp);
         
         // calculate the stress at this material point
         pt.m_s = m_pMat->Stress(mp);
@@ -1004,7 +988,6 @@ void FEBiphasicShellDomain::BodyForce(FEGlobalVector& R, FEBodyForce& BF)
 void FEBiphasicShellDomain::ElementBodyForce(FEBodyForce& BF, FEShellElement& el, vector<double>& fe)
 {
     // get true solid and fluid densities
-    double rhoTs = m_pMat->SolidDensity();
     double rhoTw = m_pMat->FluidDensity();
     
     // jacobian
@@ -1042,7 +1025,7 @@ void FEBiphasicShellDomain::ElementBodyForce(FEBodyForce& BF, FEShellElement& el
         
         // evaluate apparent solid and fluid densities and mixture density
         double phiw = m_pMat->Porosity(mp);
-        double rhos = (1-phiw)*rhoTs;
+        double rhos = (1-phiw)*m_pMat->SolidDensity(mp);
         double rhow = phiw*rhoTw;
         double rho = rhos + rhow;
         
@@ -1064,12 +1047,11 @@ void FEBiphasicShellDomain::ElementBodyForce(FEBodyForce& BF, FEShellElement& el
 }
 
 //-----------------------------------------------------------------------------
-void FEBiphasicShellDomain::BodyForceStiffness(FESolver* psolver, FEBodyForce& bf)
+void FEBiphasicShellDomain::BodyForceStiffness(FELinearSystem& LS, FEBodyForce& bf)
 {
     FEBiphasic* pmb = dynamic_cast<FEBiphasic*>(GetMaterial()); assert(pmb);
     
     // element stiffness matrix
-    matrix ke;
     vector<int> lm;
     
     // repeat over all solid elements
@@ -1079,7 +1061,8 @@ void FEBiphasicShellDomain::BodyForceStiffness(FESolver* psolver, FEBodyForce& b
         FEShellElement& el = m_Elem[iel];
         
         // create the element's stiffness matrix
-        int neln = el.Nodes();
+		FEElementMatrix ke(el);
+		int neln = el.Nodes();
         int ndof = 8*neln;
         ke.resize(ndof, ndof);
         ke.zero();
@@ -1089,9 +1072,10 @@ void FEBiphasicShellDomain::BodyForceStiffness(FESolver* psolver, FEBodyForce& b
         
         // get the element's LM vector
         UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
@@ -1104,7 +1088,6 @@ void FEBiphasicShellDomain::ElementBodyForceStiffness(FEBodyForce& BF, FEShellEl
     double dt = GetFEModel()->GetTime().timeIncrement;
     
     // get true solid and fluid densities
-    double rhoTs = m_pMat->SolidDensity();
     double rhoTw = m_pMat->FluidDensity();
     
     // jacobian
@@ -1138,13 +1121,13 @@ void FEBiphasicShellDomain::ElementBodyForceStiffness(FEBodyForce& BF, FEShellEl
         
         // evaluate apparent solid and fluid densities and mixture density
         double phiw = m_pMat->Porosity(mp);
-        double rhos = (1-phiw)*rhoTs;
+        double rhos = (1-phiw)*m_pMat->SolidDensity(mp);
         double rhow = phiw*rhoTw;
         double rho = rhos + rhow;
         
         // evaluate the permeability and its derivatives
         mat3ds K = m_pMat->Permeability(mp);
-        tens4ds dKdE = m_pMat->GetPermeability()->Tangent_Permeability_Strain(mp);
+        tens4dmm dKdE = m_pMat->GetPermeability()->Tangent_Permeability_Strain(mp);
         
         // calculate the jacobian
         detJt = detJ(el, n);
@@ -1193,13 +1176,13 @@ void FEBiphasicShellDomain::ElementBodyForceStiffness(FEBodyForce& BF, FEShellEl
                 ke[8*i+4][8*j+3] += Kdd(1,0); ke[8*i+4][8*j+4] += Kdd(1,1); ke[8*i+4][8*j+5] += Kdd(1,2);
                 ke[8*i+5][8*j+3] += Kdd(2,0); ke[8*i+5][8*j+4] += Kdd(2,1); ke[8*i+5][8*j+5] += Kdd(2,2);
                 
-                kpu = (vdotTdotv(gradMu[i], dKdE, gradMu[j]).transpose()*b
+                kpu = (vdotTdotv(gradMu[i], dKdE, gradMu[j])*b
                        + ((b & gradMu[j]) + gradb*Mu[j])*K*gradMu[i])*(rhoTw*detJt*dt);
-                kpd = (vdotTdotv(gradMu[i], dKdE, gradMd[j]).transpose()*b
+                kpd = (vdotTdotv(gradMu[i], dKdE, gradMd[j])*b
                        + ((b & gradMd[j]) + gradb*Md[j])*K*gradMu[i])*(rhoTw*detJt*dt);
-                kqu = (vdotTdotv(gradMd[i], dKdE, gradMu[j]).transpose()*b
+                kqu = (vdotTdotv(gradMd[i], dKdE, gradMu[j])*b
                        + ((b & gradMu[j]) + gradb*Mu[j])*K*gradMd[i])*(rhoTw*detJt*dt);
-                kqd = (vdotTdotv(gradMd[i], dKdE, gradMd[j]).transpose()*b
+                kqd = (vdotTdotv(gradMd[i], dKdE, gradMd[j])*b
                        + ((b & gradMd[j]) + gradb*Md[j])*K*gradMd[i])*(rhoTw*detJt*dt);
                 
                 ke[8*i+6][8*j  ] -= kpu.x; ke[8*i+6][8*j+1] -= kpu.y; ke[8*i+6][8*j+2] -= kpu.z;

@@ -1,6 +1,30 @@
-// FEMuscleMaterial.cpp: implementation of the FEMuscleMaterial class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEMuscleMaterial.h"
@@ -9,32 +33,24 @@
 	#define SQR(x) ((x)*(x))
 #endif
 
-//-----------------------------------------------------------------------------
-#ifdef WIN32
-inline double acosh(double x)
-{
-	if (x <= 1) return 0;
-	return log(x + sqrt(x*x - 1));
-}
-#endif
-
 /////////////////////////////////////////////////////////////////////////
 // FEMuscleMaterial
 /////////////////////////////////////////////////////////////////////////
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEMuscleMaterial, FEUncoupledMaterial)
-	ADD_PARAMETER(m_G1, FE_PARAM_DOUBLE, "g1");
-	ADD_PARAMETER(m_G2, FE_PARAM_DOUBLE, "g2");
-	ADD_PARAMETER(m_G3, FE_PARAM_DOUBLE, "g3");
-	ADD_PARAMETER(m_P1, FE_PARAM_DOUBLE, "p1");
-	ADD_PARAMETER(m_P2, FE_PARAM_DOUBLE, "p2");
-	ADD_PARAMETER(m_Lofl, FE_PARAM_DOUBLE, "Lofl");
-	ADD_PARAMETER(m_smax, FE_PARAM_DOUBLE, "smax");
-	ADD_PARAMETER(m_lam1, FE_PARAM_DOUBLE, "lam_max");
-	ADD_PARAMETER(m_alpha, FE_PARAM_DOUBLE, "activation");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEMuscleMaterial, FEUncoupledMaterial)
+	ADD_PARAMETER(m_G1, "g1");
+	ADD_PARAMETER(m_G2, "g2");
+	ADD_PARAMETER(m_G3, "g3");
+	ADD_PARAMETER(m_P1, "p1");
+	ADD_PARAMETER(m_P2, "p2");
+	ADD_PARAMETER(m_Lofl, "Lofl");
+	ADD_PARAMETER(m_smax, "smax");
+	ADD_PARAMETER(m_lam1, "lam_max");
+	ADD_PARAMETER(m_alpha, "activation");
+	ADD_PARAMETER(m_fiber, "fiber");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEMuscleMaterial::FEMuscleMaterial(FEModel* pfem) : FEUncoupledMaterial(pfem)
@@ -43,6 +59,8 @@ FEMuscleMaterial::FEMuscleMaterial(FEModel* pfem) : FEUncoupledMaterial(pfem)
 	m_G2 = 0;
 	m_G3 = 0;
 	m_alpha = 0.0;
+
+	m_fiber = vec3d(1, 0, 0);
 }
 
 //-----------------------------------------------------------------------------
@@ -56,11 +74,11 @@ mat3ds FEMuscleMaterial::DevStress(FEMaterialPoint& mp)
 	mat3d &F = pt.m_F;
 	double J = pt.m_J;
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q*m_fiber.unitVector(mp);
 
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;
@@ -73,7 +91,7 @@ mat3ds FEMuscleMaterial::DevStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// calculate Ba = B*a
 	vec3d Ba = B*a;
@@ -210,11 +228,11 @@ tens4ds FEMuscleMaterial::DevTangent(FEMaterialPoint& mp)
 	// deviatoric cauchy-stress, trs = trace[s]/3
 	mat3ds devs = pt.m_s.dev();
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q*m_fiber.unitVector(mp);
 
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;
@@ -227,7 +245,7 @@ tens4ds FEMuscleMaterial::DevTangent(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// calculate B*a
 	vec3d Ba = B*a;

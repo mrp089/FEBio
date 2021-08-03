@@ -1,14 +1,32 @@
-// FETiedInterface.h: interface for the FETiedInterface class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FETIEDINTERFACE_H__2D0F2799_9B2D_463F_B42E_C6924D6BCD6E__INCLUDED_)
-#define AFX_FETIEDINTERFACE_H__2D0F2799_9B2D_463F_B42E_C6924D6BCD6E__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "FEContactInterface.h"
 #include "FETiedContactSurface.h"
 
@@ -30,15 +48,15 @@ public:
 	//! interface activation
 	void Activate() override;
 
-	//! projects slave nodes onto master nodes
+	//! projects nodes onto secondary surface
 	void ProjectSurface(FETiedContactSurface& ss, FETiedContactSurface& ms, bool bmove = false);
 
 	//! serialize data to archive
 	void Serialize(DumpStream& ar) override;
 
-	//! return the master and slave surface
-	FESurface* GetMasterSurface() override { return &ms; }
-	FESurface* GetSlaveSurface () override { return &ss; }
+	//! return the primary and secondary surface
+	FESurface* GetPrimarySurface() override { return &ss; }
+	FESurface* GetSecondarySurface() override { return &ms; }
 
 	//! return integration rule class
 	bool UseNodalIntegration() override { return true; }
@@ -46,22 +64,28 @@ public:
 	//! build the matrix profile for use in the stiffness matrix
 	void BuildMatrixProfile(FEGlobalMatrix& K) override;
 
+	//! return number of equations to be allocated for Lagrange multipliers
+	int InitEquations(int neq) override;
+
 public:
 	//! calculate contact forces
-	void Residual(FEGlobalVector& R, const FETimeInfo& tp) override;
+	void LoadVector(FEGlobalVector& R, const FETimeInfo& tp) override;
 
 	//! calculate contact stiffness
-	void StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+	void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
 
 	//! calculate Lagrangian augmentations
 	bool Augment(int naug, const FETimeInfo& tp) override;
 
 	//! update
-	void Update(int niter, const FETimeInfo& tp) override;
+	void Update() override;
+
+	//! Update Lagrange multipliers
+	void Update(vector<double>& ui) override;
 
 public:
-	FETiedContactSurface	ss;	//!< slave surface
-	FETiedContactSurface	ms;	//!< master surface
+	FETiedContactSurface	ss;	//!< primary surface
+	FETiedContactSurface	ms;	//!< secondary surface
 
 public:
 	double		m_atol;		//!< augmentation tolerance
@@ -69,12 +93,12 @@ public:
 	double		m_stol;		//!< search tolerance
 	int			m_naugmax;	//!< maximum nr of augmentations
 	int			m_naugmin;	//!< minimum nr of augmentations
-	bool		m_boffset;	//!< offset slave surface for shells
+	bool		m_boffset;	//!< offset primary surface for shells
 	double		m_Dmax;		//!< max distance for contact
 	bool		m_bspecial;	//!< handle special cases in projection
 	bool		m_breloc;	//!< node relocation on initialization
 
-	DECLARE_PARAMETER_LIST();
-};
+	vector<int>	m_LM;	//!< Lagrange multiplier equations
 
-#endif // !defined(AFX_FETIEDINTERFACE_H__2D0F2799_9B2D_463F_B42E_C6924D6BCD6E__INCLUDED_)
+	DECLARE_FECORE_CLASS();
+};

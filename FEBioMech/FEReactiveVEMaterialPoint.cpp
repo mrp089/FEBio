@@ -1,11 +1,32 @@
-//
-//  FEReactiveVEMaterialPoint.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 11/30/14.
-//  Copyright (c) 2014 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEReactiveVEMaterialPoint.h"
 #include "FEElasticMaterial.h"
 
@@ -28,11 +49,11 @@ FEMaterialPoint* FEReactiveVEMaterialPoint::Copy()
 //! Initializes material point data.
 void FEReactiveVEMaterialPoint::Init()
 {
-	// initialize data to zero
-	m_Fi.clear();
-	m_Ji.clear();
-	m_v.clear();
-	m_w.clear();
+	// initialize data to include first generation (initially intact bonds)
+    m_Fi.resize(1,mat3dd(1));
+    m_Ji.resize(1,1);
+    m_v.resize(1,0);
+    m_w.resize(1,1);
     
     // don't forget to initialize the base class
     FEMaterialPoint::Init();

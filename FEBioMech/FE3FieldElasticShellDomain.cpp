@@ -1,16 +1,76 @@
-//
-//  FE3FieldElasticShellDomain.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 2/9/18.
-//  Copyright © 2018 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FE3FieldElasticShellDomain.h"
 #include "FEUncoupledMaterial.h"
 #include <FECore/FEModel.h>
-#include "FECore/log.h"
+#include <FECore/log.h>
+#include <FECore/FELinearSystem.h>
+
+//-----------------------------------------------------------------------------
+BEGIN_FECORE_CLASS(FE3FieldElasticShellDomain, FEElasticShellDomain)
+	ADD_PARAMETER(m_blaugon, "laugon");
+	ADD_PARAMETER(m_augtol , "atol");
+	ADD_PARAMETER(m_naugmin, "minaug");
+	ADD_PARAMETER(m_naugmax, "maxaug");
+END_FECORE_CLASS();
+
+//-----------------------------------------------------------------------------
+void FE3FieldElasticShellDomain::ELEM_DATA::Serialize(DumpStream& ar)
+{
+	ar & eJ;
+	ar & ep;
+	ar & Lk;
+}
+
+//-----------------------------------------------------------------------------
+FE3FieldElasticShellDomain::FE3FieldElasticShellDomain(FEModel* pfem) : FEElasticShellDomain(pfem)
+{
+	m_blaugon = false;
+	m_augtol = 0.01;
+	m_naugmin = 0;
+	m_naugmax = 0;
+}
+
+//-----------------------------------------------------------------------------
+FE3FieldElasticShellDomain& FE3FieldElasticShellDomain::operator = (FE3FieldElasticShellDomain& d) 
+{ 
+	m_Elem = d.m_Elem; 
+	m_pMesh = d.m_pMesh; 
+	return (*this); 
+}
+
+//-----------------------------------------------------------------------------
+bool FE3FieldElasticShellDomain::DoAugmentations() const
+{
+	return m_blaugon;
+}
 
 //-----------------------------------------------------------------------------
 //! Initialize the 3-field domain data
@@ -53,20 +113,19 @@ void FE3FieldElasticShellDomain::Reset()
 
 //-----------------------------------------------------------------------------
 //! Stiffness matrix for three-field domain
-void FE3FieldElasticShellDomain::StiffnessMatrix(FESolver* psolver)
+void FE3FieldElasticShellDomain::StiffnessMatrix(FELinearSystem& LS)
 {
-    FEModel& fem = psolver->GetFEModel();
+    FEModel& fem = *GetFEModel();
     
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
 #pragma omp parallel for
     for (int iel=0; iel<NE; ++iel)
     {
+		FEShellElement& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FEShellElement& el = m_Elem[iel];
+        FEElementMatrix ke(el);
         
         // create the element's stiffness matrix
         int ndof = 6*el.Nodes();
@@ -80,11 +139,12 @@ void FE3FieldElasticShellDomain::StiffnessMatrix(FESolver* psolver)
         ElementDilatationalStiffness(fem, iel, ke);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
-        
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
+
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
@@ -101,11 +161,8 @@ void FE3FieldElasticShellDomain::ElementDilatationalStiffness(FEModel& fem, int 
     const int nint = elem.GaussPoints();
     const int neln = elem.Nodes();
     
-    // get the elements material
-    FEElasticMaterial* pm = m_pMat->GetElasticMaterial();
-    assert(pm);
-    
-    FEUncoupledMaterial* pmi = dynamic_cast<FEUncoupledMaterial*>(pm);
+    // get the material
+    FEUncoupledMaterial* pmi = dynamic_cast<FEUncoupledMaterial*>(m_pMat);
     assert(pmi);
     
     // average global derivatives
@@ -199,11 +256,8 @@ void FE3FieldElasticShellDomain::ElementStiffness(int iel, matrix& ke)
     FEShellElement& el = Element(iel);
     ELEM_DATA& ed = m_Data[iel];
 
-    // get the elements material
-    FEElasticMaterial* pm = m_pMat->GetElasticMaterial();
-    assert(pm);
-    
-    FEUncoupledMaterial* pmi = dynamic_cast<FEUncoupledMaterial*>(pm);
+    // get the material
+    FEUncoupledMaterial* pmi = dynamic_cast<FEUncoupledMaterial*>(m_pMat);
     assert(pmi);
     
     int i, i6, j, j6, n;
@@ -352,7 +406,7 @@ void FE3FieldElasticShellDomain::Update(const FETimeInfo& tp)
 #pragma omp critical
             {
                 berr = true;
-                if (NegativeJacobian::m_boutput) e.print();
+                if (e.DoOutput()) feLogError(e.what());
             }
         }
     }
@@ -360,7 +414,7 @@ void FE3FieldElasticShellDomain::Update(const FETimeInfo& tp)
     // if we encountered an error, we request a running restart
     if (berr)
     {
-        if (NegativeJacobian::m_boutput == false) felog.printbox("ERROR","Negative jacobian was detected.");
+        if (NegativeJacobian::DoOutput() == false) feLogError("Negative jacobian was detected.");
         throw DoRunningRestart();
     }
 }
@@ -371,6 +425,8 @@ void FE3FieldElasticShellDomain::Update(const FETimeInfo& tp)
 //! material and a dilatational term.
 void FE3FieldElasticShellDomain::UpdateElementStress(int iel)
 {
+    double dt = GetFEModel()->GetTime().timeIncrement;
+    
     // get the material
     FEUncoupledMaterial& mat = *(dynamic_cast<FEUncoupledMaterial*>(m_pMat));
     
@@ -388,24 +444,39 @@ void FE3FieldElasticShellDomain::UpdateElementStress(int iel)
     int neln = el.Nodes();
     
     // nodal coordinates
-    const int NME = FEElement::MAX_NODES;
-    vec3d r0[NME], rt[NME];
-    for (int j=0; j<neln; ++j)
+    const int NELN = FEElement::MAX_NODES;
+    vec3d r0[NELN], s0[NELN], r[NELN], s[NELN];
+    vec3d v[NELN], w[NELN];
+    vec3d a[NELN], b[NELN];
+    // nodal coordinates
+    GetCurrentNodalCoordinates(el, r, m_alphaf, false);
+    GetCurrentNodalCoordinates(el, s, m_alphaf, true);
+    GetReferenceNodalCoordinates(el, r0, false);
+    GetReferenceNodalCoordinates(el, s0, true);
+
+    // update dynamic quantities
+    if (m_update_dynamic)
     {
-        r0[j] = m_pMesh->Node(el.m_node[j]).m_r0;
-        rt[j] = m_pMesh->Node(el.m_node[j]).m_rt;
+        for (int j=0; j<neln; ++j)
+        {
+            FENode& node = m_pMesh->Node(el.m_node[j]);
+            v[j] = node.get_vec3d(m_dofV[0], m_dofV[1], m_dofV[2])*m_alphaf + node.m_vp*(1-m_alphaf);
+            w[j] = node.get_vec3d(m_dofSV[0], m_dofSV[1], m_dofSV[2])*m_alphaf + node.get_vec3d_prev(m_dofSV[0], m_dofSV[1], m_dofSV[2])*(1-m_alphaf);
+            a[j] = node.m_at*m_alpham + node.m_ap*(1-m_alpham);
+            b[j] = node.get_vec3d(m_dofSA[0], m_dofSA[1], m_dofSA[2])*m_alpham + node.get_vec3d_prev(m_dofSA[0], m_dofSA[1], m_dofSA[2])*(1-m_alpham);
+        }
     }
-    
+
     // calculate the average dilatation and pressure
-    double v = 0, V = 0;
+    double vt = 0, V = 0;
     for (int n=0; n<nint; ++n)
     {
-        v += detJ(el, n)*gw[n];
+        vt += detJ(el, n)*gw[n];
         V += detJ0(el, n)*gw[n];
     }
     
     // calculate volume ratio
-    ed.eJ = v / V;
+    ed.eJ = vt / V;
     
     // Calculate pressure. This is a sum of a Lagrangian term and a penalty term
     //      <--- Lag. mult. -->  <-- penalty -->
@@ -422,11 +493,26 @@ void FE3FieldElasticShellDomain::UpdateElementStress(int iel)
         // material point coordinates
         // TODO: I'm not entirly happy with this solution
         //         since the material point coordinates are not used by most materials.
-        pt.m_r0 = el.Evaluate(r0, n);
-        pt.m_rt = el.Evaluate(rt, n);
+        pt.m_r0 = evaluate(el, r0, s0, n);
+        pt.m_rt = evaluate(el, r, s, n);
+
+        // get the deformation gradient and determinant at intermediate time
+        double Jt, Jp;
+        mat3d Ft, Fp;
+        Jt = defgrad(el, Ft, n);
+        Jp = defgradp(el, Fp, n);
+        pt.m_F = Ft*m_alphaf + Fp*(1-m_alphaf);
+        pt.m_J = pt.m_F.det();
+        mat3d Fi = pt.m_F.inverse();
+        pt.m_L = (Ft - Fp)*Fi/dt;
+        if (m_update_dynamic)
+        {
+            pt.m_v = evaluate(el, v, w, n);
+            pt.m_a = evaluate(el, a, b, n);
+        }
         
-        // get the deformation gradient and determinant
-        pt.m_J = defgrad(el, pt.m_F, n);
+        // update specialized material points
+        m_pMat->UpdateSpecializedMaterialPoints(mp, GetFEModel()->GetTime());
         
         // calculate the stress at this material point
         // Note that we don't call the material's Stress member function.
@@ -435,6 +521,23 @@ void FE3FieldElasticShellDomain::UpdateElementStress(int iel)
         // Therefore we call the DevStress function and add the pressure term
         // seperately.
         pt.m_s = mat3dd(ed.ep) + mat.DevStress(mp);
+        
+        
+        // adjust stress for strain energy conservation
+        if (m_alphaf == 0.5)
+        {
+            // evaluate strain energy at current time
+            FEElasticMaterialPoint et = pt;
+            et.m_F = Ft;
+            et.m_J = Jt;
+            FEElasticMaterial* pme = dynamic_cast<FEElasticMaterial*>(m_pMat);
+            pt.m_Wt = pme->StrainEnergyDensity(et);
+            
+            mat3ds D = pt.m_L.sym();
+            double D2 = D.dotdot(D);
+            if (D2 > 0)
+                pt.m_s += D*(((pt.m_Wt-pt.m_Wp)/(dt*pt.m_J) - pt.m_s.dotdot(D))/D2);
+        }
     }
 }
 
@@ -446,7 +549,7 @@ bool FE3FieldElasticShellDomain::Augment(int naug)
     assert(pmi);
     
     // make sure Augmented Lagrangian flag is on
-    if (pmi->m_blaugon == false) return true;
+    if (m_blaugon == false) return true;
     
     // do the augmentation
     int n;
@@ -472,15 +575,15 @@ bool FE3FieldElasticShellDomain::Augment(int naug)
     double pctn = 0;
     if (fabs(normL1) > 1e-10) pctn = fabs((normL1 - normL0)/normL1);
     
-    felog.printf(" material %d\n", pmi->GetID());
-    felog.printf("                        CURRENT         CHANGE        REQUIRED\n");
-    felog.printf("   pressure norm : %15le%15le%15le\n", normL1, pctn, pmi->m_augtol);
+    feLog(" material %d\n", pmi->GetID());
+    feLog("                        CURRENT         CHANGE        REQUIRED\n");
+    feLog("   pressure norm : %15le%15le%15le\n", normL1, pctn, m_augtol);
     
     // check convergence
     bool bconv = true;
-    if (pctn >= pmi->m_augtol) bconv = false;
-    if (pmi->m_naugmin > naug) bconv = false;
-    if ((pmi->m_naugmax > 0) && (pmi->m_naugmax <= naug)) bconv = true;
+    if (pctn >= m_augtol) bconv = false;
+    if (m_naugmin > naug) bconv = false;
+    if ((m_naugmax > 0) && (m_naugmax <= naug)) bconv = true;
     
     // do the augmentation only if we have not yet converged
     if (bconv == false)
@@ -502,27 +605,5 @@ bool FE3FieldElasticShellDomain::Augment(int naug)
 void FE3FieldElasticShellDomain::Serialize(DumpStream &ar)
 {
     FEElasticShellDomain::Serialize(ar);
-    
-    if (ar.IsSaving())
-    {
-        int NE = Elements();
-        ar << NE;
-        for (int i=0; i<NE; ++i)
-        {
-            ELEM_DATA& ed = m_Data[i];
-            ar << ed.eJ << ed.ep << ed.Lk;
-        }
-    }
-    else
-    {
-        int NE;
-        ar >> NE;
-        assert(NE == Elements());
-        m_Data.resize(NE);
-        for (int i=0; i<NE; ++i)
-        {
-            ELEM_DATA& ed = m_Data[i];
-            ar >> ed.eJ >> ed.ep >> ed.Lk;
-        }
-    }
+	ar & m_Data;
 }

@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FEBiphasic.h"
 #include "FESolutesMaterialPoint.h"
@@ -6,11 +34,12 @@
 #include "FEChemicalReaction.h"
 #include "FEMembraneReaction.h"
 #include "FESoluteInterface.h"
+#include <FECore/FEModelParam.h>
 
 //-----------------------------------------------------------------------------
 //! Base class for multiphasic materials.
 
-class FEMultiphasic : public FEMaterial, public FESoluteInterface
+class FEBIOMIX_API FEMultiphasic : public FEMaterial, public FESoluteInterface
 {
 public:
 	//! constructor
@@ -26,7 +55,7 @@ public:
 	virtual FEMaterialPoint* CreateMaterialPointData() override = 0;
 	
 	// return elastic material component
-	FEElasticMaterial* GetElasticMaterial() override { return m_pSolid->GetElasticMaterial(); }
+	FEElasticMaterial* GetElasticMaterial() { return m_pSolid; }
 
     //! Update solid bound molecules
     virtual void UpdateSolidBoundMolecules(FEMaterialPoint& mp) = 0;
@@ -118,9 +147,6 @@ public:
 	//! find local SBM ID from global one
 	int FindLocalSBMID(int nid);
 
-	//! Add a solute
-	void AddSolute(FESolute* psol);
-
 	//! Add a solid bound molecule
 	void AddSolidBoundMolecule(FESolidBoundMolecule* psbm);
 
@@ -149,10 +175,10 @@ public:
     int MembraneReactions() { return (int) m_pMReact.size();}
 
 public: // parameters
-	double	m_phi0;			//!< solid volume fraction in reference configuration
-	double	m_rhoTw;		//!< true fluid density
-	double	m_penalty;		//!< penalty for enforcing electroneutrality
-	double	m_cFr;			//!< fixed charge density in reference configurations
+	FEParamDouble       m_phi0;     //!< solid volume fraction in reference configuration
+    FEParamDouble       m_cFr;      //!< fixed charge density in reference configurations
+	double              m_rhoTw;    //!< true fluid density
+	double              m_penalty;  //!< penalty for enforcing electroneutrality
 
 public:
 	double	m_Rgas;			//!< universal gas constant
@@ -163,14 +189,14 @@ public:
 
 protected:
 	// material properties
-	FEPropertyT<FEElasticMaterial>			m_pSolid;		//!< pointer to elastic solid material
-	FEPropertyT<FEHydraulicPermeability>	m_pPerm;		//!< pointer to permeability material
-	FEPropertyT<FEOsmoticCoefficient>		m_pOsmC;		//!< pointer to osmotic coefficient material
-	FEPropertyT<FESolventSupply>			m_pSupp;		//!< pointer to solvent supply material
-	FEVecPropertyT<FESolute>				m_pSolute;		//!< pointer to solute materials
-	FEVecPropertyT<FESolidBoundMolecule>	m_pSBM;			//!< pointer to solid-bound molecule materials
-	FEVecPropertyT<FEChemicalReaction>		m_pReact;		//!< pointer to chemical reactions
-    FEVecPropertyT<FEMembraneReaction>      m_pMReact;      //!< pointer to membrane reactions
+	FEElasticMaterial*			m_pSolid;		//!< pointer to elastic solid material
+	FEHydraulicPermeability*	m_pPerm;		//!< pointer to permeability material
+	FEOsmoticCoefficient*		m_pOsmC;		//!< pointer to osmotic coefficient material
+	FESolventSupply*			m_pSupp;		//!< pointer to solvent supply material
+	std::vector<FESolute*>				m_pSolute;		//!< pointer to solute materials
+	std::vector<FESolidBoundMolecule*>	m_pSBM;			//!< pointer to solid-bound molecule materials
+	std::vector<FEChemicalReaction*>	m_pReact;		//!< pointer to chemical reactions
+	std::vector<FEMembraneReaction*>    m_pMReact;      //!< pointer to membrane reactions
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

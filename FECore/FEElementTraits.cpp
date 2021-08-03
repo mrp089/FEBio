@@ -1,11 +1,37 @@
-// FEElementTraits.cpp: implementation of the FEElementTraits class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEElementTraits.h"
 #include "FEElement.h"
 #include "FEException.h"
+#include "FESolidElementShape.h"
+#include "FESurfaceElementShape.h"
 
 #ifndef SQR
 #define SQR(x) ((x)*(x))
@@ -13,25 +39,70 @@
 
 FEElementTraits::FEElementTraits(int ni, int ne, FE_Element_Class c, FE_Element_Shape s, FE_Element_Type t)
 {
-	neln = ne;
-	nint = ni;
-	spec.eclass = c;
-	spec.eshape = s;
-	spec.etype  = t;
-	H.resize(ni, ne);
+	m_neln = ne;
+	m_nint = ni;
+	m_faces = 0;
+	m_spec.eclass = c;
+	m_spec.eshape = s;
+	m_spec.etype  = t;
+	m_H.resize(ni, ne);
+}
+
+//-----------------------------------------------------------------------------
+//! project mat3ds integration point data to nodes
+void FEElementTraits::project_to_nodes(mat3ds* si, mat3ds* so) const
+{
+	double ai[FEElement::MAX_INTPOINTS];
+	double ao[FEElement::MAX_NODES];
+	for (int i = 0; i<3; ++i) {
+		for (int j = i; j<3; ++j) {
+			for (int n = 0; n<m_nint; ++n) ai[n] = si[n](i, j);
+			project_to_nodes(ai, ao);
+			for (int n = 0; n<m_neln; ++n) so[n](i, j) = ao[n];
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+//! project mat3d integration point data to nodes
+void FEElementTraits::project_to_nodes(mat3d* si, mat3d* so) const
+{
+	double ai[FEElement::MAX_INTPOINTS];
+	double ao[FEElement::MAX_NODES];
+	for (int i = 0; i<3; ++i) {
+		for (int j = 0; j<3; ++j) {
+			for (int n = 0; n<m_nint; ++n) ai[n] = si[n](i, j);
+			project_to_nodes(ai, ao);
+			for (int n = 0; n<m_neln; ++n) so[n](i, j) = ao[n];
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+//! project vec3d integration point data to nodes
+void FEElementTraits::project_to_nodes(vec3d* si, vec3d* so) const
+{
+	double ai[FEElement::MAX_INTPOINTS];
+	double ao[FEElement::MAX_NODES];
+
+	for (int n = 0; n<m_nint; ++n) ai[n] = si[n].x; project_to_nodes(ai, ao); for (int n = 0; n<m_neln; ++n) so[n].x = ao[n];
+	for (int n = 0; n<m_nint; ++n) ai[n] = si[n].y; project_to_nodes(ai, ao); for (int n = 0; n<m_neln; ++n) so[n].y = ao[n];
+	for (int n = 0; n<m_nint; ++n) ai[n] = si[n].z; project_to_nodes(ai, ao); for (int n = 0; n<m_neln; ++n) so[n].z = ao[n];
 }
 
 //=============================================================================
 FESolidElementTraits::FESolidElementTraits(int ni, int ne, FE_Element_Shape eshape, FE_Element_Type etype) : FEElementTraits(ni, ne, FE_ELEM_SOLID, eshape, etype) 
 {
+	m_shape = nullptr;
+
 	gr.resize(ni);
 	gs.resize(ni);
 	gt.resize(ni);
 	gw.resize(ni);
 
-	Gr.resize(ni, ne);
-	Gs.resize(ni, ne);
-	Gt.resize(ni, ne);
+	m_Gr.resize(ni, ne);
+	m_Gs.resize(ni, ne);
+	m_Gt.resize(ni, ne);
 
 	Grr.resize(ni, ne);
 	Gsr.resize(ni, ne);
@@ -44,155 +115,181 @@ FESolidElementTraits::FESolidElementTraits(int ni, int ne, FE_Element_Shape esha
 	Grt.resize(ni, ne);
 	Gst.resize(ni, ne);
 	Gtt.resize(ni, ne);
+
+	// TODO: Move this to the individual classes?
+	m_faces = 0;
+	switch (eshape)
+	{
+	case ET_TET4:
+	case ET_TET5:
+	case ET_TET10:
+	case ET_TET15:
+	case ET_TET20: 
+		m_faces = 4;
+		break;
+	case ET_PENTA6:
+	case ET_PENTA15:
+		m_faces = 5;
+		break;
+	case ET_HEX8:
+	case ET_HEX20:
+	case ET_HEX27:
+		m_faces = 6;
+		break;
+	case ET_PYRA5:
+    case ET_PYRA13:
+		m_faces = 5;
+		break;
+	default:
+		assert(false);
+	}
+}
+
+//-----------------------------------------------------------------------------
+int FESolidElementTraits::ShapeFunctions(int order)
+{
+	FESolidElementShape* shape = m_shapeP[order];
+	return (shape ? shape->nodes(): 0);
 }
 
 //-----------------------------------------------------------------------------
 //! initialize element traits data
 void FESolidElementTraits::init()
 {
-	assert(nint > 0);
-	assert(neln > 0);
+	assert(m_nint > 0);
+	assert(m_neln > 0);
 	const int NELN = FEElement::MAX_NODES;
+
+	// get shape class
+	m_shape = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(m_spec.eshape));
+	assert(m_shape && (m_shape->shape() == m_spec.eshape));
 
 	// calculate shape function values at gauss points
 	double N[NELN];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
-		shape_fnc(N, gr[n], gs[n], gt[n]);
-		for (int i=0; i<neln; ++i) H[n][i] = N[i];
+		m_shape->shape_fnc(N, gr[n], gs[n], gt[n]);
+		for (int i=0; i<m_neln; ++i) m_H[n][i] = N[i];
 	}
 
 	// calculate local derivatives of shape functions at gauss points
 	double Hr[NELN], Hs[NELN], Ht[NELN];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
-		shape_deriv(Hr, Hs, Ht, gr[n], gs[n], gt[n]);
-		for (int i=0; i<neln; ++i)
+		m_shape->shape_deriv(Hr, Hs, Ht, gr[n], gs[n], gt[n]);
+		for (int i=0; i<m_neln; ++i)
 		{
-			Gr[n][i] = Hr[i];
-			Gs[n][i] = Hs[i];
-			Gt[n][i] = Ht[i];
+			m_Gr[n][i] = Hr[i];
+			m_Gs[n][i] = Hs[i];
+			m_Gt[n][i] = Ht[i];
 		}
 	}
 	
 	// calculate local second derivatives of shape functions at gauss points
 	double Hrr[NELN], Hss[NELN], Htt[NELN], Hrs[NELN], Hst[NELN], Hrt[NELN];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
-		shape_deriv2(Hrr, Hss, Htt, Hrs, Hst, Hrt, gr[n], gs[n], gt[n]);
-		for (int i=0; i<neln; ++i)
+		m_shape->shape_deriv2(Hrr, Hss, Htt, Hrs, Hst, Hrt, gr[n], gs[n], gt[n]);
+		for (int i=0; i<m_neln; ++i)
 		{
 			Grr[n][i] = Hrr[i]; Grs[n][i] = Hrs[i]; Grt[n][i] = Hrt[i]; 
 			Gsr[n][i] = Hrs[i]; Gss[n][i] = Hss[i]; Gst[n][i] = Hst[i]; 
 			Gtr[n][i] = Hrt[i]; Gts[n][i] = Hst[i]; Gtt[n][i] = Htt[i]; 
 		}
 	}
+
+	// NOTE: Below, is a new interface for dealing with mixed element formulations.
+	//       This is still a work in progress.
+
+	// Get the max interpolation order
+	const int maxOrder = (int) m_shapeP.size() - 1;
+	m_Hp.resize(maxOrder + 1);
+	m_Gr_p.resize(maxOrder + 1);
+	m_Gs_p.resize(maxOrder + 1);
+	m_Gt_p.resize(maxOrder + 1);
+	for (int i = 0; i <= maxOrder; ++i)
+	{
+		FESolidElementShape* shape = m_shapeP[i];
+		matrix& H = m_Hp[i];
+		matrix& Gr = m_Gr_p[i];
+		matrix& Gs = m_Gs_p[i];
+		matrix& Gt = m_Gt_p[i];
+		if (i == 0)
+		{
+			H.resize(m_nint, 1);
+			Gr.resize(m_nint, 1);
+			Gs.resize(m_nint, 1);
+			Gt.resize(m_nint, 1);
+			for (int n = 0; n < m_nint; ++n)
+			{
+				H[n][0] = 1.0;
+				Gr[n][0] = Gs[n][0] = Gt[n][0] = 0.0;
+			}
+		}
+		else if (m_shapeP[i])
+		{
+			// get the nodes
+			int neln = shape->nodes();
+
+			// shape function values
+			H.resize(m_nint, neln);
+			for (int n = 0; n<m_nint; ++n)
+			{
+				m_shapeP[i]->shape_fnc(N, gr[n], gs[n], gt[n]);
+				for (int j = 0; j<neln; ++j) H[n][j] = N[j];
+			}
+
+			// calculate local derivatives of shape functions at gauss points
+			Gr.resize(m_nint, neln);
+			Gs.resize(m_nint, neln);
+			Gt.resize(m_nint, neln);
+			for (int n = 0; n<m_nint; ++n)
+			{
+				shape->shape_deriv(Hr, Hs, Ht, gr[n], gs[n], gt[n]);
+				for (int j = 0; j<neln; ++j)
+				{
+					Gr[n][j] = Hr[j];
+					Gs[n][j] = Hs[j];
+					Gt[n][j] = Ht[j];
+				}
+			}
+		}
+	}
 }
 
-//-----------------------------------------------------------------------------
-//! project mat3ds integration point data to nodes
-void FESolidElementTraits::project_to_nodes(mat3ds* si, mat3ds* so)
+//! values of shape functions
+void FESolidElementTraits::shape_fnc(double* H, double r, double s, double t)
 {
-    double ai[FEElement::MAX_INTPOINTS];
-    double ao[FEElement::MAX_NODES];
-    for (int i=0; i<3; ++i) {
-        for (int j=i; j<3; ++j) {
-            for (int n=0; n<nint; ++n) ai[n] = si[n](i,j);
-            project_to_nodes(ai, ao);
-            for (int n=0; n<neln; ++n) so[n](i,j) = ao[n];
-        }
-    }
+	return m_shape->shape_fnc(H, r, s, t); 
+}
+
+//! values of shape function derivatives
+void FESolidElementTraits::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
+{
+	return m_shape->shape_deriv(Hr, Hs, Ht, r, s, t);
+}
+
+//! values of shape function second derivatives
+void FESolidElementTraits::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
+{
+	return m_shape->shape_deriv2(Hrr, Hss, Htt, Hrs, Hst, Hrt, r, s, t);
 }
 
 //=============================================================================
 //                                F E H E X 8
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-void FEHex8_::shape_fnc(double* H, double r, double s, double t)
+void FEHex8_::init()
 {
-	H[0] = 0.125*(1 - r)*(1 - s)*(1 - t);
-	H[1] = 0.125*(1 + r)*(1 - s)*(1 - t);
-	H[2] = 0.125*(1 + r)*(1 + s)*(1 - t);
-	H[3] = 0.125*(1 - r)*(1 + s)*(1 - t);
-	H[4] = 0.125*(1 - r)*(1 - s)*(1 + t);
-	H[5] = 0.125*(1 + r)*(1 - s)*(1 + t);
-	H[6] = 0.125*(1 + r)*(1 + s)*(1 + t);
-	H[7] = 0.125*(1 - r)*(1 + s)*(1 + t);
+	// allocate shape classes
+	m_shapeP.resize(2);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_HEX8));
+
+	// initialize base class
+	FESolidElementTraits::init();
 }
 
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FEHex8_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	Hr[0] = -0.125*(1 - s)*(1 - t);
-	Hr[1] =  0.125*(1 - s)*(1 - t);
-	Hr[2] =  0.125*(1 + s)*(1 - t);
-	Hr[3] = -0.125*(1 + s)*(1 - t);
-	Hr[4] = -0.125*(1 - s)*(1 + t);
-	Hr[5] =  0.125*(1 - s)*(1 + t);
-	Hr[6] =  0.125*(1 + s)*(1 + t);
-	Hr[7] = -0.125*(1 + s)*(1 + t);
-		
-	Hs[0] = -0.125*(1 - r)*(1 - t);
-	Hs[1] = -0.125*(1 + r)*(1 - t);
-	Hs[2] =  0.125*(1 + r)*(1 - t);
-	Hs[3] =  0.125*(1 - r)*(1 - t);
-	Hs[4] = -0.125*(1 - r)*(1 + t);
-	Hs[5] = -0.125*(1 + r)*(1 + t);
-	Hs[6] =  0.125*(1 + r)*(1 + t);
-	Hs[7] =  0.125*(1 - r)*(1 + t);
-		
-	Ht[0] = -0.125*(1 - r)*(1 - s);
-	Ht[1] = -0.125*(1 + r)*(1 - s);
-	Ht[2] = -0.125*(1 + r)*(1 + s);
-	Ht[3] = -0.125*(1 - r)*(1 + s);
-	Ht[4] =  0.125*(1 - r)*(1 - s);
-	Ht[5] =  0.125*(1 + r)*(1 - s);
-	Ht[6] =  0.125*(1 + r)*(1 + s);
-	Ht[7] =  0.125*(1 - r)*(1 + s);
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-void FEHex8_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	Hrr[0] = 0.0; Hss[0] = 0.0; Htt[0] = 0.0;
-	Hrr[1] = 0.0; Hss[1] = 0.0; Htt[1] = 0.0;
-	Hrr[2] = 0.0; Hss[2] = 0.0; Htt[2] = 0.0;
-	Hrr[3] = 0.0; Hss[3] = 0.0; Htt[3] = 0.0;
-	Hrr[4] = 0.0; Hss[4] = 0.0; Htt[4] = 0.0;
-	Hrr[5] = 0.0; Hss[5] = 0.0; Htt[5] = 0.0;
-	Hrr[6] = 0.0; Hss[6] = 0.0; Htt[6] = 0.0;
-	Hrr[7] = 0.0; Hss[7] = 0.0; Htt[7] = 0.0;
-		
-	Hrs[0] =  0.125*(1 - t);
-	Hrs[1] = -0.125*(1 - t);
-	Hrs[2] =  0.125*(1 - t);
-	Hrs[3] = -0.125*(1 - t);
-	Hrs[4] =  0.125*(1 + t);
-	Hrs[5] = -0.125*(1 + t);
-	Hrs[6] =  0.125*(1 + t);
-	Hrs[7] = -0.125*(1 + t);
-		
-	Hrt[0] =  0.125*(1 - s);
-	Hrt[1] = -0.125*(1 - s);
-	Hrt[2] = -0.125*(1 + s);
-	Hrt[3] =  0.125*(1 + s);
-	Hrt[4] = -0.125*(1 - s);
-	Hrt[5] =  0.125*(1 - s);
-	Hrt[6] =  0.125*(1 + s);
-	Hrt[7] = -0.125*(1 + s);
-		
-	Hst[0] =  0.125*(1 - r);
-	Hst[1] =  0.125*(1 + r);
-	Hst[2] = -0.125*(1 + r);
-	Hst[3] = -0.125*(1 - r);
-	Hst[4] = -0.125*(1 - r);
-	Hst[5] = -0.125*(1 + r);
-	Hst[6] =  0.125*(1 + r);
-	Hst[7] =  0.125*(1 - r);
-}
 
 //*****************************************************************************
 //                          H E X 8 G 8 
@@ -211,18 +308,18 @@ FEHex8G8::FEHex8G8() : FEHex8_(NINT, FE_HEX8G8)
 	gr[6] =  a; gs[6] =  a; gt[6] =  a; gw[6] = 1;
 	gr[7] = -a; gs[7] =  a; gt[7] =  a; gw[7] = 1;
 	init();
-	Hi = H.inverse();
+	m_Hi = m_H.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FEHex8G8::project_to_nodes(double* ai, double* ao)
+void FEHex8G8::project_to_nodes(double* ai, double* ao) const
 {
 	for (int j=0; j<NELN; ++j)
 	{
 		ao[j] = 0;
 		for (int k=0; k<NINT; ++k) 
 		{
-			ao[j] += Hi[j][k]*ai[k];
+			ao[j] += m_Hi[j][k]*ai[k];
 		}
 	}
 }
@@ -248,7 +345,7 @@ FEHex8RI::FEHex8RI(): FEHex8_(NINT, FE_HEX8RI)
 
 //-----------------------------------------------------------------------------
 //! \todo implement this
-void FEHex8RI::project_to_nodes(double* ai, double* ao)
+void FEHex8RI::project_to_nodes(double* ai, double* ao) const
 {
 	
 }
@@ -265,7 +362,7 @@ FEHex8G1::FEHex8G1() : FEHex8_(NINT, FE_HEX8G1)
 }
 
 //-----------------------------------------------------------------------------
-void FEHex8G1::project_to_nodes(double* ai, double* ao)
+void FEHex8G1::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[0];
@@ -281,39 +378,16 @@ void FEHex8G1::project_to_nodes(double* ai, double* ao)
 //                              F E T E T 4
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FETet4_::shape_fnc(double* H, double r, double s, double t)
+//! initialize element traits data
+void FETet4_::init()
 {
-	H[0] = 1 - r - s - t;
-	H[1] = r;
-	H[2] = s;
-	H[3] = t;
-}
+	// allocate shape classes
+	m_shapeP.resize(2);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TET4));
 
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FETet4_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	Hr[0] = -1; Hs[0] = -1; Ht[0] = -1;
-	Hr[1] =  1;	Hs[1] =  0; Ht[1] =  0;
-	Hr[2] =  0;	Hs[2] =  1; Ht[2] =  0;
-	Hr[3] =  0;	Hs[3] =  0; Ht[3] =  1;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-void FETet4_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	Hrr[0] =  0.0; Hss[0] =  0.0; Htt[0] =  0.0;
-	Hrr[1] =  0.0; Hss[1] =  0.0; Htt[1] =  0.0;
-	Hrr[2] =  0.0; Hss[2] =  0.0; Htt[2] =  0.0;
-	Hrr[3] =  0.0; Hss[3] =  0.0; Htt[3] =  0.0;
-
-	Hrs[0] =  0.0; Hst[0] =  0.0; Hrt[0] =  0.0;
-	Hrs[1] =  0.0; Hst[1] =  0.0; Hrt[1] =  0.0;
-	Hrs[2] =  0.0; Hst[2] =  0.0; Hrt[2] =  0.0;
-	Hrs[3] =  0.0; Hst[3] =  0.0; Hrt[3] =  0.0;
+	// initialize base class
+	FESolidElementTraits::init();
 }
 
 //=============================================================================
@@ -333,21 +407,65 @@ FETet4G4::FETet4G4() : FETet4_(NINT, FE_TET4G4)
 	gr[3] = b; gs[3] = b; gt[3] = a; gw[3] = w;
 
 	init();
-	Hi = H.inverse();
+	m_Hi = m_H.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETet4G4::project_to_nodes(double* ai, double* ao)
+void FETet4G4::project_to_nodes(double* ai, double* ao) const
 {
 	for (int j=0; j<NELN; ++j)
 	{
 		ao[j] = 0;
 		for (int k=0; k<NINT; ++k) 
 		{
-			ao[j] += Hi[j][k]*ai[k];
+			ao[j] += m_Hi[j][k]*ai[k];
 		}
 	}
 }
+
+//=============================================================================
+//                              F E T E T 5
+//=============================================================================
+
+//! initialize element traits data
+void FETet5_::init()
+{
+	// allocate shape classes
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TET4));
+	m_shapeP[2] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TET5));
+
+	// initialize base class
+	FESolidElementTraits::init();
+}
+
+//=============================================================================
+//                          T E T 5 G 4
+//=============================================================================
+
+FETet5G4::FETet5G4() : FETet5_(NINT, FE_TET5G4)
+{
+	// gaussian integration for tetrahedral elements
+	const double a = 0.58541020;
+	const double b = 0.13819660;
+	const double w = 1.0 / 24.0;
+
+	gr[0] = b; gs[0] = b; gt[0] = b; gw[0] = w;
+	gr[1] = a; gs[1] = b; gt[1] = b; gw[1] = w;
+	gr[2] = b; gs[2] = a; gt[2] = b; gw[2] = w;
+	gr[3] = b; gs[3] = b; gt[3] = a; gw[3] = w;
+
+	init();
+}
+
+//-----------------------------------------------------------------------------
+void FETet5G4::project_to_nodes(double* ai, double* ao) const
+{
+	// TODO: implement this
+	assert(false);
+}
+
 
 //=============================================================================
 //                          F E G 1 T E T E L E M E N T
@@ -364,7 +482,7 @@ FETet4G1::FETet4G1() : FETet4_(NINT, FE_TET4G1)
 }
 
 //-----------------------------------------------------------------------------
-void FETet4G1::project_to_nodes(double* ai, double* ao)
+void FETet4G1::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[0];
@@ -376,61 +494,15 @@ void FETet4G1::project_to_nodes(double* ai, double* ao)
 //                       P E N T A 6
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FEPenta6_::shape_fnc(double* H, double r, double s, double t)
+void FEPenta6_::init()
 {
-	H[0] = 0.5*(1 - t)*(1 - r - s);
-	H[1] = 0.5*(1 - t)*r;
-	H[2] = 0.5*(1 - t)*s;
-	H[3] = 0.5*(1 + t)*(1 - r - s);
-	H[4] = 0.5*(1 + t)*r;
-	H[5] = 0.5*(1 + t)*s;
-}
+	// allocate shape classes
+	m_shapeP.resize(2);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_PENTA6));
 
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FEPenta6_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	Hr[0] = -0.5*(1 - t);
-	Hr[1] =  0.5*(1 - t);
-	Hr[2] =  0.0;
-	Hr[3] = -0.5*(1 + t);
-	Hr[4] =  0.5*(1 + t);
-	Hr[5] =  0.0;
-		
-	Hs[0] = -0.5*(1 - t);
-	Hs[1] =  0.0;
-	Hs[2] =  0.5*(1 - t);
-	Hs[3] = -0.5*(1 + t);
-	Hs[4] =  0.0;
-	Hs[5] =  0.5*(1 + t);
-		
-	Ht[0] = -0.5*(1 - r - s);
-	Ht[1] = -0.5*r;
-	Ht[2] = -0.5*s;
-	Ht[3] =  0.5*(1 - r - s);
-	Ht[4] =  0.5*r;
-	Ht[5] =  0.5*s;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-void FEPenta6_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	Hrr[0] =  0.0; Hss[0] =  0.0; Htt[0] =  0.0;
-	Hrr[1] =  0.0; Hss[1] =  0.0; Htt[1] =  0.0;
-	Hrr[2] =  0.0; Hss[2] =  0.0; Htt[2] =  0.0;
-	Hrr[3] =  0.0; Hss[3] =  0.0; Htt[3] =  0.0;
-	Hrr[4] =  0.0; Hss[4] =  0.0; Htt[4] =  0.0;
-	Hrr[5] =  0.0; Hss[5] =  0.0; Htt[5] =  0.0;
-		
-	Hrs[0] =  0.0; Hst[0] =  0.5; Hrt[0] =  0.5;
-	Hrs[1] =  0.0; Hst[1] =  0.0; Hrt[1] = -0.5;
-	Hrs[2] =  0.0; Hst[2] = -0.5; Hrt[2] =  0.0;
-	Hrs[3] =  0.0; Hst[3] = -0.5; Hrt[3] = -0.5;
-	Hrs[4] =  0.0; Hst[4] =  0.0; Hrt[4] =  0.5;
-	Hrs[5] =  0.0; Hst[5] =  0.5; Hrt[5] =  0.0;
+	// initialize base class
+	FESolidElementTraits::init();
 }
 
 //=============================================================================
@@ -454,18 +526,18 @@ FEPenta6G6::FEPenta6G6(): FEPenta6_(NINT, FE_PENTA6G6)
 
 	init();
 
-	Hi = H.inverse();
+	m_Hi = m_H.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FEPenta6G6::project_to_nodes(double* ai, double* ao)
+void FEPenta6G6::project_to_nodes(double* ai, double* ao) const
 {
 	for (int j=0; j<NELN; ++j)
 	{
 		ao[j] = 0;
 		for (int k=0; k<NINT; ++k) 
 		{
-			ao[j] += Hi[j][k]*ai[k];
+			ao[j] += m_Hi[j][k]*ai[k];
 		}
 	}
 }
@@ -473,183 +545,6 @@ void FEPenta6G6::project_to_nodes(double* ai, double* ao)
 //=============================================================================
 //                       P E N T A 1 5
 //=============================================================================
-
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FEPenta15_::shape_fnc(double* H, double r, double s, double t)
-{
-    double u = 1 - r - s;
-    
-    H[ 0] = -((1 - t*t)*u)/2. + ((1 - t)*u*(-1 + 2*u))/2.;
-    H[ 1] = (r*(-1 + 2*r)*(1 - t))/2. - (r*(1 - t*t))/2.;
-    H[ 2] = (s*(-1 + 2*s)*(1 - t))/2. - (s*(1 - t*t))/2.;
-    H[ 3] = -((1 - t*t)*u)/2. + ((1 + t)*u*(-1 + 2*u))/2.;
-    H[ 4] = (r*(-1 + 2*r)*(1 + t))/2. - (r*(1 - t*t))/2.;
-    H[ 5] = (s*(-1 + 2*s)*(1 + t))/2. - (s*(1 - t*t))/2.;
-    H[ 6] = 2*r*(1 - t)*u;
-    H[ 7] = 2*r*s*(1 - t);
-    H[ 8] = 2*s*(1 - t)*u;
-    H[ 9] = 2*r*(1 + t)*u;
-    H[10] = 2*r*s*(1 + t);
-    H[11] = 2*s*(1 + t)*u;
-    H[12] = (1 - t*t)*u;
-    H[13] = r*(1 - t*t);
-    H[14] = s*(1 - t*t);
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FEPenta15_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-    Hr[ 0] = -((-1 + t)*(-2 + 4*r + 4*s + t))/2.;
-    Hr[ 1] = (-2 - 4*r*(-1 + t) + t + t*t)/2.;
-    Hr[ 2] = 0;
-    Hr[ 3] = ((-2 + 4*r + 4*s - t)*(1 + t))/2.;
-    Hr[ 4] = ((1 + t)*(-2 + 4*r + t))/2.;
-    Hr[ 5] = 0;
-    Hr[ 6] = 2*(-1 + 2*r + s)*(-1 + t);
-    Hr[ 7] = -2*s*(-1 + t);
-    Hr[ 8] = 2*s*(-1 + t);
-    Hr[ 9] = -2*(-1 + 2*r + s)*(1 + t);
-    Hr[10] = 2*s*(1 + t);
-    Hr[11] = -2*s*(1 + t);
-    Hr[12] = -1 + t*t;
-    Hr[13] = 1 - t*t;
-    Hr[14] = 0;
-    
-    Hs[ 0] = -((-1 + t)*(-2 + 4*r + 4*s + t))/2.;
-    Hs[ 1] = 0;
-    Hs[ 2] = (-2 - 4*s*(-1 + t) + t + t*t)/2.;
-    Hs[ 3] = ((-2 + 4*r + 4*s - t)*(1 + t))/2.;
-    Hs[ 4] = 0;
-    Hs[ 5] = ((1 + t)*(-2 + 4*s + t))/2.;
-    Hs[ 6] = 2*r*(-1 + t);
-    Hs[ 7] = -2*r*(-1 + t);
-    Hs[ 8] = 2*(-1 + r + 2*s)*(-1 + t);
-    Hs[ 9] = -2*r*(1 + t);
-    Hs[10] = 2*r*(1 + t);
-    Hs[11] = -2*(-1 + r + 2*s)*(1 + t);
-    Hs[12] = -1 + t*t;
-    Hs[13] = 0;
-    Hs[14] = 1 - t*t;
-    
-    Ht[ 0] = -((-1 + r + s)*(-1 + 2*r + 2*s + 2*t))/2.;
-    Ht[ 1] = (r*(1 - 2*r + 2*t))/2.;
-    Ht[ 2] = (s*(1 - 2*s + 2*t))/2.;
-    Ht[ 3] = ((-1 + r + s)*(-1 + 2*r + 2*s - 2*t))/2.;
-    Ht[ 4] = r*(-0.5 + r + t);
-    Ht[ 5] = s*(-0.5 + s + t);
-    Ht[ 6] = 2*r*(-1 + r + s);
-    Ht[ 7] = -2*r*s;
-    Ht[ 8] = 2*s*(-1 + r + s);
-    Ht[ 9] = -2*r*(-1 + r + s);
-    Ht[10] = 2*r*s;
-    Ht[11] = -2*s*(-1 + r + s);
-    Ht[12] = 2*(-1 + r + s)*t;
-    Ht[13] = -2*r*t;
-    Ht[14] = -2*s*t;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-void FEPenta15_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-    Hrr[ 0] = 2 - 2*t;
-    Hrr[ 1] = 2 - 2*t;
-    Hrr[ 2] = 0;
-    Hrr[ 3] = 2*(1 + t);
-    Hrr[ 4] = 2*(1 + t);
-    Hrr[ 5] = 0;
-    Hrr[ 6] = 4*(-1 + t);
-    Hrr[ 7] = 0;
-    Hrr[ 8] = 0;
-    Hrr[ 9] = -4*(1 + t);
-    Hrr[10] = 0;
-    Hrr[11] = 0;
-    Hrr[12] = 0;
-    Hrr[13] = 0;
-    Hrr[14] = 0;
-    
-    Hss[ 0] = 2 - 2*t;
-    Hss[ 1] = 0;
-    Hss[ 2] = 2 - 2*t;
-    Hss[ 3] = 2*(1 + t);
-    Hss[ 4] = 0;
-    Hss[ 5] = 2*(1 + t);
-    Hss[ 6] = 0;
-    Hss[ 7] = 0;
-    Hss[ 8] = 4*(-1 + t);
-    Hss[ 9] = 0;
-    Hss[10] = 0;
-    Hss[11] = -4*(1 + t);
-    Hss[12] = 0;
-    Hss[13] = 0;
-    Hss[14] = 0;
-    
-    Htt[ 0] = 1 - r - s;
-    Htt[ 1] = r;
-    Htt[ 2] = s;
-    Htt[ 3] = 1 - r - s;
-    Htt[ 4] = r;
-    Htt[ 5] = s;
-    Htt[ 6] = 0;
-    Htt[ 7] = 0;
-    Htt[ 8] = 0;
-    Htt[ 9] = 0;
-    Htt[10] = 0;
-    Htt[11] = 0;
-    Htt[12] = 2*(-1 + r + s);
-    Htt[13] = -2*r;
-    Htt[14] = -2*s;
-    
-    Hrs[ 0] = 2 - 2*t;
-    Hrs[ 1] = 0;
-    Hrs[ 2] = 0;
-    Hrs[ 3] = 2*(1 + t);
-    Hrs[ 4] = 0;
-    Hrs[ 5] = 0;
-    Hrs[ 6] = 2*(-1 + t);
-    Hrs[ 7] = 2 - 2*t;
-    Hrs[ 8] = 2*(-1 + t);
-    Hrs[ 9] = -2*(1 + t);
-    Hrs[10] = 2*(1 + t);
-    Hrs[11] = -2*(1 + t);
-    Hrs[12] = 0;
-    Hrs[13] = 0;
-    Hrs[14] = 0;
-    
-    Hst[ 0] = 1.5 - 2*r - 2*s - t;
-    Hst[ 1] = 0;
-    Hst[ 2] = 0.5 - 2*s + t;
-    Hst[ 3] = -1.5 + 2*r + 2*s - t;
-    Hst[ 4] = 0;
-    Hst[ 5] = -0.5 + 2*s + t;
-    Hst[ 6] = 2*r;
-    Hst[ 7] = -2*r;
-    Hst[ 8] = 2*(-1 + r + 2*s);
-    Hst[ 9] = -2*r;
-    Hst[10] = 2*r;
-    Hst[11] = -2*(-1 + r + 2*s);
-    Hst[12] = 2*t;
-    Hst[13] = 0;
-    Hst[14] = -2*t;
-    
-    Hrt[ 0] = 1.5 - 2*r - 2*s - t;
-    Hrt[ 1] = 0.5 - 2*r + t;
-    Hrt[ 2] = 0;
-    Hrt[ 3] = -1.5 + 2*r + 2*s - t;
-    Hrt[ 4] = -0.5 + 2*r + t;
-    Hrt[ 5] = 0;
-    Hrt[ 6] = 2*(-1 + 2*r + s);
-    Hrt[ 7] = -2*s;
-    Hrt[ 8] = 2*s;
-    Hrt[ 9] = -2*(-1 + 2*r + s);
-    Hrt[10] = 2*s;
-    Hrt[11] = -2*s;
-    Hrt[12] = 2*t;
-    Hrt[13] = -2*t;
-    Hrt[14] = 0;
-}
 
 //=============================================================================
 //                          F E P E N T A 1 5 G 8
@@ -674,26 +569,26 @@ FEPenta15G8::FEPenta15G8() : FEPenta15_(NINT, FE_PENTA15G8)
     
     init();
     
-    MT.resize(NELN, NINT);
+	m_MT.resize(NELN, NINT);
     for (int i=0; i<NINT; ++i)
         for (int n=0; n<NELN; ++n)
-            MT(n,i) = H(i,n);
+			m_MT(n,i) = m_H(i,n);
     
-    Hi.resize(NELN, NELN);
-    Hi = MT*MT.transpose();
-    Hi = Hi.inverse();
+	m_Hi.resize(NELN, NELN);
+	m_Hi = m_MT*m_MT.transpose();
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
 //! Use least-squares extrapolation
-void FEPenta15G8::project_to_nodes(double* ai, double* ao)
+void FEPenta15G8::project_to_nodes(double* ai, double* ao) const
 {
     double v[NELN];
     for (int n=0; n<NELN; ++n) {
         v[n] = 0;
         for (int i=0; i<NINT; ++i) {
-            v[n] += MT(n,i)*ai[i];
+            v[n] += m_MT(n,i)*ai[i];
         }
     }
     for (int j=0; j<NELN; ++j)
@@ -701,7 +596,7 @@ void FEPenta15G8::project_to_nodes(double* ai, double* ao)
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*v[k];
+            ao[j] += m_Hi[j][k]*v[k];
         }
     }
 }
@@ -742,23 +637,23 @@ FEPenta15G21::FEPenta15G21() : FEPenta15_(NINT, FE_PENTA15G21)
 
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEPenta15G21::project_to_nodes(double* ai, double* ao)
+void FEPenta15G21::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -767,90 +662,17 @@ void FEPenta15G21::project_to_nodes(double* ai, double* ao)
 //                           T E T 1 0
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FETet10_::shape_fnc(double* H, double r, double s, double t)
+//! initialize element traits data
+void FETet10_::init()
 {
-	double r1 = 1.0 - r - s - t;
-	double r2 = r;
-	double r3 = s;
-	double r4 = t;
+	// allocate shape classes
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TET4));
+	m_shapeP[2] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TET10));
 
-	H[0] = r1*(2.0*r1 - 1.0);
-	H[1] = r2*(2.0*r2 - 1.0);
-	H[2] = r3*(2.0*r3 - 1.0);
-	H[3] = r4*(2.0*r4 - 1.0);
-	H[4] = 4.0*r1*r2;
-	H[5] = 4.0*r2*r3;
-	H[6] = 4.0*r3*r1;
-	H[7] = 4.0*r1*r4;
-	H[8] = 4.0*r2*r4;
-	H[9] = 4.0*r3*r4;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FETet10_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	Hr[0] = -3.0 + 4.0*r + 4.0*(s + t);
-	Hr[1] =  4.0*r - 1.0;
-	Hr[2] =  0.0;
-	Hr[3] =  0.0;
-	Hr[4] =  4.0 - 8.0*r - 4.0*(s + t);
-	Hr[5] =  4.0*s;
-	Hr[6] = -4.0*s;
-	Hr[7] = -4.0*t;
-	Hr[8] =  4.0*t;
-	Hr[9] =  0.0;
-
-	Hs[0] = -3.0 + 4.0*s + 4.0*(r + t);
-	Hs[1] =  0.0;
-	Hs[2] =  4.0*s - 1.0;
-	Hs[3] =  0.0;
-	Hs[4] = -4.0*r;
-	Hs[5] =  4.0*r;
-	Hs[6] =  4.0 - 8.0*s - 4.0*(r + t);
-	Hs[7] = -4.0*t;
-	Hs[8] =  0.0;
-	Hs[9] =  4.0*t;
-
-	Ht[0] = -3.0 + 4.0*t + 4.0*(r + s);
-	Ht[1] =  0.0;
-	Ht[2] =  0.0;
-	Ht[3] =  4.0*t - 1.0;
-	Ht[4] = -4.0*r;
-	Ht[5] =  0.0;
-	Ht[6] = -4.0*s;
-	Ht[7] =  4.0 - 8.0*t - 4.0*(r + s);
-	Ht[8] =  4.0*r;
-	Ht[9] =  4.0*s;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-void FETet10_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	Hrr[0] =  4.0; Hss[0] =  4.0; Htt[0] =  4.0;
-	Hrr[1] =  4.0; Hss[1] =  0.0; Htt[1] =  0.0;
-	Hrr[2] =  0.0; Hss[2] =  4.0; Htt[2] =  0.0;
-	Hrr[3] =  0.0; Hss[3] =  0.0; Htt[3] =  4.0;
-	Hrr[4] = -8.0; Hss[4] =  0.0; Htt[4] =  0.0;
-	Hrr[5] =  0.0; Hss[5] =  0.0; Htt[5] =  0.0;
-	Hrr[6] =  0.0; Hss[6] = -8.0; Htt[6] =  0.0;
-	Hrr[7] =  0.0; Hss[7] =  0.0; Htt[7] =  -8.0;
-	Hrr[8] =  0.0; Hss[8] =  0.0; Htt[8] =  0.0;
-	Hrr[9] =  0.0; Hss[9] =  0.0; Htt[9] =  0.0;
-
-	Hrs[0] =  4.0; Hst[0] =  4.0; Hrt[0] =  4.0;
-	Hrs[1] =  0.0; Hst[1] =  0.0; Hrt[1] =  0.0;
-	Hrs[2] =  0.0; Hst[2] =  0.0; Hrt[2] =  0.0;
-	Hrs[3] =  0.0; Hst[3] =  0.0; Hrt[3] =  0.0;
-	Hrs[4] = -4.0; Hst[4] =  0.0; Hrt[4] = -4.0;
-	Hrs[5] =  4.0; Hst[5] =  0.0; Hrt[5] =  0.0;
-	Hrs[6] = -4.0; Hst[6] = -4.0; Hrt[6] =  0.0;
-	Hrs[7] =  0.0; Hst[7] = -4.0; Hrt[7] = -4.0;
-	Hrs[8] =  0.0; Hst[8] =  0.0; Hrt[8] =  4.0;
-	Hrs[9] =  0.0; Hst[9] =  4.0; Hrt[9] =  0.0;
+	// initialize base class
+	FESolidElementTraits::init();
 }
 
 //=============================================================================
@@ -868,7 +690,7 @@ FETet10G1::FETet10G1() : FETet10_(NINT, FE_TET10G1)
 }
 
 //-----------------------------------------------------------------------------
-void FETet10G1::project_to_nodes(double* ai, double* ao)
+void FETet10G1::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[0];
@@ -920,7 +742,7 @@ FETet10G4::FETet10G4() : FETet10_(NINT, FE_TET10G4)
 }
 
 //-----------------------------------------------------------------------------
-void FETet10G4::project_to_nodes(double* ai, double* ao)
+void FETet10G4::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = Ai[0][0]*ai[0] + Ai[0][1]*ai[1] + Ai[0][2]*ai[2] + Ai[0][3]*ai[3];
 	ao[1] = Ai[1][0]*ai[0] + Ai[1][1]*ai[1] + Ai[1][2]*ai[2] + Ai[1][3]*ai[3];
@@ -973,7 +795,7 @@ FETet10G8::FETet10G8() : FETet10_(NINT, FE_TET10G8)
 }
 
 //-----------------------------------------------------------------------------
-void FETet10G8::project_to_nodes(double* ai, double* ao)
+void FETet10G8::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(4);
 	for (int i=0; i<4; ++i)
@@ -1039,7 +861,7 @@ FETet10GL11::FETet10GL11() : FETet10_(NINT, FE_TET10GL11)
 }
 
 //-----------------------------------------------------------------------------
-void FETet10GL11::project_to_nodes(double* ai, double* ao)
+void FETet10GL11::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0]; ao[1] = ai[1]; ao[2] = ai[2]; ao[3] = ai[3];
 	ao[4] = ai[4]; ao[5] = ai[5]; ao[6] = ai[6]; ao[7] = ai[7]; ao[8] = ai[8]; ao[9] = ai[9];
@@ -1048,207 +870,6 @@ void FETet10GL11::project_to_nodes(double* ai, double* ao)
 //=============================================================================
 //                           T E T 1 5
 //=============================================================================
-
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FETet15_::shape_fnc(double* H, double r, double s, double t)
-{
-	double r1 = 1.0 - r - s - t;
-	double r2 = r;
-	double r3 = s;
-	double r4 = t;
-
-	H[14] = 256*r1*r2*r3*r4;
-
-	H[10] = 27.0*r1*r2*r3 - 27.0*H[14]/64.0;
-	H[11] = 27.0*r1*r2*r4 - 27.0*H[14]/64.0;
-	H[12] = 27.0*r2*r3*r4 - 27.0*H[14]/64.0;
-	H[13] = 27.0*r3*r1*r4 - 27.0*H[14]/64.0;
-
-	H[0] = r1*(2.0*r1 - 1.0) + (H[10] + H[11] + H[13])/9.0 + H[14]/8.0;
-	H[1] = r2*(2.0*r2 - 1.0) + (H[10] + H[11] + H[12])/9.0 + H[14]/8.0;
-	H[2] = r3*(2.0*r3 - 1.0) + (H[10] + H[12] + H[13])/9.0 + H[14]/8.0;
-	H[3] = r4*(2.0*r4 - 1.0) + (H[11] + H[12] + H[13])/9.0 + H[14]/8.0;
-
-	H[4] = 4.0*r1*r2 - 4.0*(H[10] + H[11])/9.0 - H[14]/4.0;
-	H[5] = 4.0*r2*r3 - 4.0*(H[10] + H[12])/9.0 - H[14]/4.0;
-	H[6] = 4.0*r3*r1 - 4.0*(H[10] + H[13])/9.0 - H[14]/4.0;
-	H[7] = 4.0*r1*r4 - 4.0*(H[11] + H[13])/9.0 - H[14]/4.0;
-	H[8] = 4.0*r2*r4 - 4.0*(H[11] + H[12])/9.0 - H[14]/4.0;
-	H[9] = 4.0*r3*r4 - 4.0*(H[12] + H[13])/9.0 - H[14]/4.0;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FETet15_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	double u = 1.0 - r - s - t;
-
-	Hr[14] = 256.0*s*t*(u - r);
-	Hs[14] = 256.0*r*t*(u - s);
-	Ht[14] = 256.0*r*s*(u - t);
-
-	Hr[10] =  27.0*s*(u - r) - 27.0*Hr[14]/64.0;
-	Hr[11] =  27.0*t*(u - r) - 27.0*Hr[14]/64.0;
-	Hr[12] =  27.0*s*t 		 - 27.0*Hr[14]/64.0;
-	Hr[13] = -27.0*s*t 		 - 27.0*Hr[14]/64.0;
-
-	Hs[10] =  27.0*r*(u - s) - 27.0*Hs[14]/64.0;
-	Hs[11] = -27.0*r*t 	     - 27.0*Hs[14]/64.0;
-	Hs[12] =  27.0*r*t 		 - 27.0*Hs[14]/64.0;
-	Hs[13] =  27.0*t*(u - s) - 27.0*Hs[14]/64.0;
-
-	Ht[10] = -27.0*r*s       - 27.0*Ht[14]/64.0;
-	Ht[11] =  27.0*r*(u - t) - 27.0*Ht[14]/64.0;
-	Ht[12] =  27.0*r*s 		 - 27.0*Ht[14]/64.0;
-	Ht[13] =  27.0*s*(u - t) - 27.0*Ht[14]/64.0;
-
-	Hr[0] = -(4.0*u - 1.0) + (Hr[10] + Hr[11] + Hr[13])/9.0 + Hr[14]/8.0;
-	Hr[1] =  (4.0*r - 1.0) + (Hr[10] + Hr[11] + Hr[12])/9.0 + Hr[14]/8.0;
-	Hr[2] =  0.0		   + (Hr[10] + Hr[12] + Hr[13])/9.0 + Hr[14]/8.0;
-	Hr[3] =  0.0		   + (Hr[11] + Hr[12] + Hr[13])/9.0 + Hr[14]/8.0;
-	Hr[4] =  4.0*(u - r) - 4.0*(Hr[10] + Hr[11])/9.0 - Hr[14]/4.0;
-	Hr[5] =  4.0*s		 - 4.0*(Hr[10] + Hr[12])/9.0 - Hr[14]/4.0;
-	Hr[6] = -4.0*s		 - 4.0*(Hr[10] + Hr[13])/9.0 - Hr[14]/4.0;
-	Hr[7] = -4.0*t		 - 4.0*(Hr[11] + Hr[13])/9.0 - Hr[14]/4.0;
-	Hr[8] =  4.0*t		 - 4.0*(Hr[11] + Hr[12])/9.0 - Hr[14]/4.0;
-	Hr[9] =  0.0		 - 4.0*(Hr[12] + Hr[13])/9.0 - Hr[14]/4.0;
-
-	Hs[0] = -(4.0*u - 1.0) + (Hs[10] + Hs[11] + Hs[13])/9.0 + Hs[14]/8.0;
-	Hs[1] =  0.0		   + (Hs[10] + Hs[11] + Hs[12])/9.0 + Hs[14]/8.0;
-	Hs[2] =  (4.0*s - 1.0) + (Hs[10] + Hs[12] + Hs[13])/9.0 + Hs[14]/8.0;
-	Hs[3] =  0.0		   + (Hs[11] + Hs[12] + Hs[13])/9.0 + Hs[14]/8.0;
-	Hs[4] = -4.0*r		 - 4.0*(Hs[10] + Hs[11])/9.0 - Hs[14]/4.0;
-	Hs[5] =  4.0*r		 - 4.0*(Hs[10] + Hs[12])/9.0 - Hs[14]/4.0;
-	Hs[6] =  4.0*(u - s) - 4.0*(Hs[10] + Hs[13])/9.0 - Hs[14]/4.0;
-	Hs[7] = -4.0*t		 - 4.0*(Hs[11] + Hs[13])/9.0 - Hs[14]/4.0;
-	Hs[8] =  0.0		 - 4.0*(Hs[11] + Hs[12])/9.0 - Hs[14]/4.0;
-	Hs[9] =  4.0*t		 - 4.0*(Hs[12] + Hs[13])/9.0 - Hs[14]/4.0;
-
-	Ht[0] = -(4.0*u - 1.0) + (Ht[10] + Ht[11] + Ht[13])/9.0 + Ht[14]/8.0;
-	Ht[1] =  0.0		   + (Ht[10] + Ht[11] + Ht[12])/9.0 + Ht[14]/8.0;
-	Ht[2] =  0.0		   + (Ht[10] + Ht[12] + Ht[13])/9.0 + Ht[14]/8.0;
-	Ht[3] =  (4.0*t - 1.0) + (Ht[11] + Ht[12] + Ht[13])/9.0 + Ht[14]/8.0;
-	Ht[4] = -4.0*r		 - 4.0*(Ht[10] + Ht[11])/9.0 - Ht[14]/4.0;
-	Ht[5] =  0.0		 - 4.0*(Ht[10] + Ht[12])/9.0 - Ht[14]/4.0;
-	Ht[6] = -4.0*s		 - 4.0*(Ht[10] + Ht[13])/9.0 - Ht[14]/4.0;
-	Ht[7] =  4.0*(u - t) - 4.0*(Ht[11] + Ht[13])/9.0 - Ht[14]/4.0;
-	Ht[8] =  4.0*r		 - 4.0*(Ht[11] + Ht[12])/9.0 - Ht[14]/4.0;
-	Ht[9] =  4.0*s		 - 4.0*(Ht[12] + Ht[13])/9.0 - Ht[14]/4.0;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-//! \todo implement this
-void FETet15_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	double u = 1.0 - r - s - t;
-
-	Hrr[14] = -512*s*t;
-	Hss[14] = -512*r*t;
-	Htt[14] = -512*r*s;
-	Hrs[14] =  256.0*t*(u - r - s);
-	Hst[14] =  256.0*r*(u - s - t);
-	Hrt[14] =  256.0*s*(u - r - t);
-
-	Hrr[10] = -54.0*s           - 27.0*Hrr[14]/64.0;
-	Hss[10] = -54.0*r           - 27.0*Hss[14]/64.0;
-	Htt[10] =  0.0              - 27.0*Htt[14]/64.0;
-	Hrs[10] =  27.0*(u - r - s) - 27.0*Hrs[14]/64.0;
-	Hst[10] = -27.0*r           - 27.0*Hst[14]/64.0;
-	Hrt[10] = -27.0*s           - 27.0*Hrt[14]/64.0;
-
-	Hrr[11] = -54.0*t           - 27.0*Hrr[14]/64.0;
-	Hss[11] =  0.0   	        - 27.0*Hss[14]/64.0;
-	Htt[11] = -54.*r            - 27.0*Htt[14]/64.0;
-	Hrs[11] = -27.0*t           - 27.0*Hrs[14]/64.0;
-	Hst[11] = -27.0*r           - 27.0*Hst[14]/64.0;
-	Hrt[11] =  27.0*(u - r - t) - 27.0*Hrt[14]/64.0;
-
-	Hrr[12] =  0.0              - 27.0*Hrr[14]/64.0;
-	Hss[12] =  0.0              - 27.0*Hss[14]/64.0;
-	Htt[12] =  0.0              - 27.0*Htt[14]/64.0;
-	Hrs[12] =  27.0*t           - 27.0*Hrs[14]/64.0;
-	Hst[12] =  27.0*r           - 27.0*Hst[14]/64.0;
-	Hrt[12] =  27.0*s           - 27.0*Hrt[14]/64.0;
-
-	Hrr[13] =  0.0 		        - 27.0*Hrr[14]/64.0;
-	Hss[13] = -54.0*t           - 27.0*Hss[14]/64.0;
-	Htt[13] = -54.0*s           - 27.0*Htt[14]/64.0;
-	Hrs[13] = -27.0*t           - 27.0*Hrs[14]/64.0;
-	Hst[13] =  27.0*(u - t - s) - 27.0*Hst[14]/64.0;
-	Hrt[13] = -27.0*s           - 27.0*Hrt[14]/64.0;
-
-	Hrr[0] = 4.0 + (Hrr[10] + Hrr[11] + Hrr[13])/9.0 + Hrr[14]/8.0;
-	Hss[0] = 4.0 + (Hss[10] + Hss[11] + Hss[13])/9.0 + Hss[14]/8.0;
-	Htt[0] = 4.0 + (Htt[10] + Htt[11] + Htt[13])/9.0 + Htt[14]/8.0;
-	Hrs[0] = 4.0 + (Hrs[10] + Hrs[11] + Hrs[13])/9.0 + Hrs[14]/8.0;
-	Hst[0] = 4.0 + (Hst[10] + Hst[11] + Hst[13])/9.0 + Hst[14]/8.0;
-	Hrt[0] = 4.0 + (Hrt[10] + Hrt[11] + Hrt[13])/9.0 + Hrt[14]/8.0;
-
-	Hrr[1] = 4.0 + (Hrr[10] + Hrr[11] + Hrr[12])/9.0 + Hrr[14]/8.0;
-	Hss[1] = 0.0 + (Hss[10] + Hss[11] + Hss[12])/9.0 + Hss[14]/8.0;
-	Htt[1] = 0.0 + (Htt[10] + Htt[11] + Htt[12])/9.0 + Htt[14]/8.0;
-	Hrs[1] = 0.0 + (Hrs[10] + Hrs[11] + Hrs[12])/9.0 + Hrs[14]/8.0;
-	Hst[1] = 0.0 + (Hst[10] + Hst[11] + Hst[12])/9.0 + Hst[14]/8.0;
-	Hrt[1] = 0.0 + (Hrt[10] + Hrt[11] + Hrt[12])/9.0 + Hrt[14]/8.0;
-
-	Hrr[2] = 0.0 + (Hrr[10] + Hrr[12] + Hrr[13])/9.0 + Hrr[14]/8.0;
-	Hss[2] = 4.0 + (Hss[10] + Hss[12] + Hss[13])/9.0 + Hss[14]/8.0;
-	Htt[2] = 0.0 + (Htt[10] + Htt[12] + Htt[13])/9.0 + Htt[14]/8.0;
-	Hrs[2] = 0.0 + (Hrs[10] + Hrs[12] + Hrs[13])/9.0 + Hrs[14]/8.0;
-	Hst[2] = 0.0 + (Hst[10] + Hst[12] + Hst[13])/9.0 + Hst[14]/8.0;
-	Hrt[2] = 0.0 + (Hrt[10] + Hrt[12] + Hrt[13])/9.0 + Hrt[14]/8.0;
-
-	Hrr[3] = 0.0 + (Hrr[11] + Hrr[12] + Hrr[13])/9.0 + Hrr[14]/8.0;
-	Hss[3] = 0.0 + (Hss[11] + Hss[12] + Hss[13])/9.0 + Hss[14]/8.0;
-	Htt[3] = 4.0 + (Htt[11] + Htt[12] + Htt[13])/9.0 + Htt[14]/8.0;
-	Hrs[3] = 0.0 + (Hrs[11] + Hrs[12] + Hrs[13])/9.0 + Hrs[14]/8.0;
-	Hst[3] = 0.0 + (Hst[11] + Hst[12] + Hst[13])/9.0 + Hst[14]/8.0;
-	Hrt[3] = 0.0 + (Hrt[11] + Hrt[12] + Hrt[13])/9.0 + Hrt[14]/8.0;
-
-	Hrr[4] = -8.0 - 4.0*(Hrr[10] + Hrr[11])/9.0 - Hrr[14]/4.0;
-	Hss[4] =  0.0 - 4.0*(Hss[10] + Hss[11])/9.0 - Hss[14]/4.0;
-	Htt[4] =  0.0 - 4.0*(Htt[10] + Htt[11])/9.0 - Htt[14]/4.0;
-	Hrs[4] = -4.0 - 4.0*(Hrs[10] + Hrs[11])/9.0 - Hrs[14]/4.0;
-	Hst[4] =  0.0 - 4.0*(Hst[10] + Hst[11])/9.0 - Hst[14]/4.0;
-	Hrt[4] = -4.0 - 4.0*(Hrt[10] + Hrt[11])/9.0 - Hrt[14]/4.0;
-
-	Hrr[5] =  0.0 - 4.0*(Hrr[10] + Hrr[12])/9.0 - Hrr[14]/4.0;
-	Hss[5] =  0.0 - 4.0*(Hss[10] + Hss[12])/9.0 - Hss[14]/4.0;
-	Htt[5] =  0.0 - 4.0*(Htt[10] + Htt[12])/9.0 - Htt[14]/4.0;
-	Hrs[5] =  4.0 - 4.0*(Hrs[10] + Hrs[12])/9.0 - Hrs[14]/4.0;
-	Hst[5] =  0.0 - 4.0*(Hst[10] + Hst[12])/9.0 - Hst[14]/4.0;
-	Hrt[5] =  0.0 - 4.0*(Hrt[10] + Hrt[12])/9.0 - Hrt[14]/4.0;
-
-	Hrr[6] =  0.0 - 4.0*(Hrr[10] + Hrr[13])/9.0 - Hrr[14]/4.0;
-	Hss[6] = -8.0 - 4.0*(Hss[10] + Hss[13])/9.0 - Hss[14]/4.0;
-	Htt[6] =  0.0 - 4.0*(Htt[10] + Htt[13])/9.0 - Htt[14]/4.0;
-	Hrs[6] = -4.0 - 4.0*(Hrs[10] + Hrs[13])/9.0 - Hrs[14]/4.0;
-	Hst[6] = -4.0 - 4.0*(Hst[10] + Hst[13])/9.0 - Hst[14]/4.0;
-	Hrt[6] =  0.0 - 4.0*(Hrt[10] + Hrt[13])/9.0 - Hrt[14]/4.0;
-
-	Hrr[7] =  0.0 - 4.0*(Hrr[11] + Hrr[13])/9.0 - Hrr[14]/4.0;
-	Hss[7] =  0.0 - 4.0*(Hss[11] + Hss[13])/9.0 - Hss[14]/4.0;
-	Htt[7] = -8.0 - 4.0*(Htt[11] + Htt[13])/9.0 - Htt[14]/4.0;
-	Hrs[7] =  0.0 - 4.0*(Hrs[11] + Hrs[13])/9.0 - Hrs[14]/4.0;
-	Hst[7] = -4.0 - 4.0*(Hst[11] + Hst[13])/9.0 - Hst[14]/4.0;
-	Hrt[7] = -4.0 - 4.0*(Hrt[11] + Hrt[13])/9.0 - Hrt[14]/4.0;
-
-	Hrr[8] = 0.0 - 4.0*(Hrr[11] + Hrr[12])/9.0 - Hrr[14]/4.0;
-	Hss[8] = 0.0 - 4.0*(Hss[11] + Hss[12])/9.0 - Hss[14]/4.0;
-	Htt[8] = 0.0 - 4.0*(Htt[11] + Htt[12])/9.0 - Htt[14]/4.0;
-	Hrs[8] = 0.0 - 4.0*(Hrs[11] + Hrs[12])/9.0 - Hrs[14]/4.0;
-	Hst[8] = 0.0 - 4.0*(Hst[11] + Hst[12])/9.0 - Hst[14]/4.0;
-	Hrt[8] = 4.0 - 4.0*(Hrt[11] + Hrt[12])/9.0 - Hrt[14]/4.0;
-
-	Hrr[9] = 0.0 - 4.0*(Hrr[12] + Hrr[13])/9.0 - Hrr[14]/4.0;
-	Hss[9] = 0.0 - 4.0*(Hss[12] + Hss[13])/9.0 - Hss[14]/4.0;
-	Htt[9] = 0.0 - 4.0*(Htt[12] + Htt[13])/9.0 - Htt[14]/4.0;
-	Hrs[9] = 0.0 - 4.0*(Hrs[12] + Hrs[13])/9.0 - Hrs[14]/4.0;
-	Hst[9] = 4.0 - 4.0*(Hst[12] + Hst[13])/9.0 - Hst[14]/4.0;
-	Hrt[9] = 0.0 - 4.0*(Hrt[12] + Hrt[13])/9.0 - Hrt[14]/4.0;
-}
 
 //=============================================================================
 //                          T E T 1 5 G 4
@@ -1286,7 +907,7 @@ FETet15G4::FETet15G4() : FETet15_(NINT, FE_TET15G4)
 }
 
 //-----------------------------------------------------------------------------
-void FETet15G4::project_to_nodes(double* ai, double* ao)
+void FETet15G4::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = Ai[0][0]*ai[0] + Ai[0][1]*ai[1] + Ai[0][2]*ai[2] + Ai[0][3]*ai[3];
 	ao[1] = Ai[1][0]*ai[0] + Ai[1][1]*ai[1] + Ai[1][2]*ai[2] + Ai[1][3]*ai[3];
@@ -1347,7 +968,7 @@ FETet15G8::FETet15G8() : FETet15_(NINT, FE_TET15G8)
 }
 
 //-----------------------------------------------------------------------------
-void FETet15G8::project_to_nodes(double* ai, double* ao)
+void FETet15G8::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(4);
 	for (int i=0; i<4; ++i)
@@ -1417,7 +1038,7 @@ FETet15G11::FETet15G11() : FETet15_(NINT, FE_TET15G11)
 }
 
 //-----------------------------------------------------------------------------
-void FETet15G11::project_to_nodes(double* ai, double* ao)
+void FETet15G11::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(4);
 	for (int i=0; i<4; ++i)
@@ -1492,7 +1113,7 @@ FETet15G15::FETet15G15() : FETet15_(NINT, FE_TET15G15)
 }
 
 //-----------------------------------------------------------------------------
-void FETet15G15::project_to_nodes(double* ai, double* ao)
+void FETet15G15::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(4);
 	for (int i=0; i<4; ++i)
@@ -1536,119 +1157,6 @@ FETet15G15RI4::FETet15G15RI4()
 //                           T E T 2 0
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FETet20_::shape_fnc(double* H, double r, double s, double t)
-{
-	double L1 = 1.0 - r - s - t;
-	double L2 = r;
-	double L3 = s;
-	double L4 = t;
-
-	H[0] = 0.5*(3*L1 - 1)*(3*L1 - 2)*L1;
-	H[1] = 0.5*(3*L2 - 1)*(3*L2 - 2)*L2;
-	H[2] = 0.5*(3*L3 - 1)*(3*L3 - 2)*L3;
-	H[3] = 0.5*(3*L4 - 1)*(3*L4 - 2)*L4;
-	H[4] = 9.0/2.0*(3*L1 - 1)*L1*L2;
-	H[5] = 9.0/2.0*(3*L2 - 1)*L1*L2;
-	H[6] = 9.0/2.0*(3*L2 - 1)*L2*L3;
-	H[7] = 9.0/2.0*(3*L3 - 1)*L2*L3;
-	H[8] = 9.0/2.0*(3*L1 - 1)*L1*L3;
-	H[9] = 9.0/2.0*(3*L3 - 1)*L1*L3;
-	H[10] = 9.0/2.0*(3*L1 - 1)*L1*L4;
-	H[11] = 9.0/2.0*(3*L4 - 1)*L1*L4;
-	H[12] = 9.0/2.0*(3*L2 - 1)*L2*L4;
-	H[13] = 9.0/2.0*(3*L4 - 1)*L2*L4;
-	H[14] = 9.0/2.0*(3*L3 - 1)*L3*L4;
-	H[15] = 9.0/2.0*(3*L4 - 1)*L3*L4;
-	H[16] = 27.0*L1*L2*L4;
-	H[17] = 27.0*L2*L3*L4;
-	H[18] = 27.0*L1*L3*L4;
-	H[19] = 27.0*L1*L2*L3;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FETet20_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	double L1 = 1.0 - r - s - t;
-	double L2 = r;
-	double L3 = s;
-	double L4 = t;
-
-	Hr[ 0] = -3./2.*(3*L1 - 2)*L1 - 3./2.*(3*L1 - 1)*L1 - 0.5*(3*L1 - 1)*(3*L1 - 2);
-	Hr[ 1] =  3./2.*(3*L2 - 2)*L2 + 3./2.*(3*L2 - 1)*L2 + 0.5*(3*L2 - 1)*(3*L2 - 2);
-	Hr[ 2] =  0.0;
-	Hr[ 3] =  0.0;
-	Hr[ 4] = -27./2.*L1*L2 - 9.0/2.0*(3*L1 - 1)*L2 + 9.0/2.0*(3*L1 - 1)*L1;
-	Hr[ 5] =  27./2.*L1*L2 - 9.0/2.0*(3*L2 - 1)*L2 + 9.0/2.0*(3*L2 - 1)*L1;
-	Hr[ 6] =  27./2.*L2*L3 + 9.0/2.0*(3*L2 - 1)*L3;
-	Hr[ 7] =  9.0/2.0*(3*L3 - 1)*L3;
-	Hr[ 8] = -27./2.*L1*L3 - 9.0/2.0*(3*L1 - 1)*L3;
-	Hr[ 9] = -9.0/2.0*(3*L3-1)*L3;
-	Hr[10] = -27./2.*L1*L4 - 9.0/2.0*(3*L1 - 1)*L4;
-	Hr[11] = -9./2.*(3*L4 - 1)*L4;
-	Hr[12] =  27./2.*L2*L4 + 9./2.*(3*L2 - 1)*L4;
-	Hr[13] =  9./2.*(3*L4 - 1)*L4;
-	Hr[14] =  0.0;
-	Hr[15] =  0.0;
-	Hr[16] = -27*L2*L4 + 27*L1*L4;
-	Hr[17] =  27*L3*L4;
-	Hr[18] = -27*L3*L4;
-	Hr[19] = -27*L2*L3 + 27*L1*L3;
-
-	Hs[ 0] = -3./2.*(3*L1 - 2)*L1 - 3./2.*(3*L1 - 1)*L1 - 0.5*(3*L1 - 1)*(3*L1 - 2);
-	Hs[ 1] =  0.0;
-	Hs[ 2] =  3./2.*(3*L3 - 2)*L3 + 3./2.*(3*L3-1)*L3 + 0.5*(3*L3 - 1)*(3*L3 - 2);
-	Hs[ 3] =  0.0;
-	Hs[ 4] = -27./2.*L1*L2 - 9./2.*(3*L1 - 1)*L2;
-	Hs[ 5] = -9./2.*(3*L2 - 1)*L2;
-	Hs[ 6] =  9./2.*(3*L2 - 1)*L2;
-	Hs[ 7] =  27./2.*L2*L3 + 9./2.*(3*L3-1)*L2;
-	Hs[ 8] = -27./2.*L1*L3 - 9./2.*(3*L1 - 1)*L3 + 9./2.*(3*L1 - 1)*L1;
-	Hs[ 9] =  27./2.*L1*L3 - 9./2.*(3*L3 - 1)*L3 + 9./2.*(3*L3 - 1)*L1;
-	Hs[10] = -27./2.*L1*L4 - 9./2.*(3*L1 - 1)*L4;
-	Hs[11] = -9./2.*(3*L4 - 1)*L4;
-	Hs[12] =  0.0;
-	Hs[13] =  0.0;
-	Hs[14] =  27./2.*L3*L4 + 9./2.*(3*L3 - 1)*L4;
-	Hs[15] =  9./2.*(3*L4 - 1)*L4;
-	Hs[16] = -27*L2*L4;
-	Hs[17] =  27*L2*L4;
-	Hs[18] = -27*L3*L4 + 27*L1*L4;
-	Hs[19] = -27*L2*L3 + 27*L1*L2;
-
-	Ht[ 0] = -3./2.*(3*L1 - 2)*L1 - 3./2.*(3*L1 - 1)*L1 - 0.5*(3*L1 - 1)*(3*L1 - 2);
-	Ht[ 1] = 0.0;
-	Ht[ 2] = 0.0;
-	Ht[ 3] = 3./2.*(3*L4 - 2)*L4 + 3./2.*(3*L4 - 1)*L4 + 0.5*(3*L4 - 1)*(3*L4 - 2);
-	Ht[ 4] = -27./2.*L1*L2 - 9./2.*(3*L1 - 1)*L2;
-	Ht[ 5] = -9./2.*(3*L2 - 1)*L2;
-	Ht[ 6] =  0.0;
-	Ht[ 7] =  0.0;
-	Ht[ 8] = -27./2.*L1*L3 - 9./2.*(3*L1 - 1)*L3;
-	Ht[ 9] = -9./2.*(3*L3 - 1)*L3;
-	Ht[10] = -27./2.*L1*L4 - 9./2.*(3*L1 - 1)*L4 + 9./2.*(3*L1 - 1)*L1;
-	Ht[11] =  27./2.*L1*L4 - 9./2.*(3*L4 - 1)*L4 + 9./2.*(3*L4 - 1)*L1;
-	Ht[12] =  9./2.*(3*L2 - 1)*L2;
-	Ht[13] =  27./2.*L2*L4 + 9./2.*(3*L4 - 1)*L2;
-	Ht[14] =  9./2.*(3*L3 - 1)*L3;
-	Ht[15] =  27./2.*L3*L4 + 9./2.*(3*L4 - 1)*L3;
-	Ht[16] = -27*L2*L4 + 27*L1*L2;
-	Ht[17] =  27*L2*L3;
-	Ht[18] = -27*L3*L4 + 27*L1*L3;
-	Ht[19] = -27*L2*L3;
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-//! \todo implement this
-void FETet20_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	// do this
-}
-
-
 //=============================================================================
 //                          T E T 2 0 G 1 5
 //=============================================================================
@@ -1674,259 +1182,89 @@ FETet20G15::FETet20G15() : FETet20_(NINT, FE_TET20G15)
 	gr[14] = 0.433449846426336; gs[14] = 0.433449846426336; gt[14] = 0.066550153573664; gw[14] = 0.010949141561386;
 
 	init();
+
+	// setup the shape function matrix
+	N.resize(15, 4);
+	for (int i = 0; i<15; ++i)
+	{
+		N[i][0] = 1.0 - gr[i] - gs[i] - gt[i];
+		N[i][1] = gr[i];
+		N[i][2] = gs[i];
+		N[i][3] = gt[i];
+	}
+
+	matrix A(4, 4);
+	A = N.transpose()*N;
+
+	// calculate inverse matrix
+	Ai.resize(4, 4);
+	Ai = A.inverse();
 }
 
-void FETet20G15::project_to_nodes(double* ai, double* ao)
+void FETet20G15::project_to_nodes(double* ai, double* ao) const
 {
-	// do this
+	vector<double> b(4);
+	for (int i = 0; i<4; ++i)
+	{
+		b[i] = 0;
+		for (int j = 0; j<NINT; ++j) b[i] += N[j][i] * ai[j];
+	}
+
+	for (int i = 0; i<4; ++i)
+	{
+		ao[i] = 0.0;
+		for (int j = 0; j<4; ++j) ao[i] += Ai[i][j] * b[j];
+	}
+
+	const double w1 = 1.0 / 3.0;
+	const double w2 = 2.0 / 3.0;
+
+	ao[ 4] = ao[0] * w2 + ao[1] * w1;
+	ao[ 5] = ao[0] * w1 + ao[1] * w2;
+	ao[ 6] = ao[1] * w2 + ao[2] * w1;
+	ao[ 7] = ao[1] * w1 + ao[2] * w2;
+	ao[ 8] = ao[0] * w2 + ao[2] * w1;
+	ao[ 9] = ao[0] * w1 + ao[2] * w2;
+	ao[10] = ao[0] * w2 + ao[3] * w1;
+	ao[11] = ao[0] * w1 + ao[3] * w2;
+	ao[12] = ao[1] * w2 + ao[3] * w1;
+	ao[13] = ao[1] * w1 + ao[3] * w2;
+	ao[14] = ao[2] * w2 + ao[3] * w1;
+	ao[15] = ao[2] * w1 + ao[3] * w2;
+
+	ao[16] = (ao[0] + ao[1] + ao[3]) / 3.0;
+	ao[17] = (ao[1] + ao[2] + ao[3]) / 3.0;
+	ao[18] = (ao[2] + ao[0] + ao[3]) / 3.0;
+	ao[19] = (ao[0] + ao[1] + ao[2]) / 3.0;
 }
 
 //=============================================================================
 //              H E X 2 0
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FEHex20_::shape_fnc(double* H, double r, double s, double t)
+int FEHex20_::Nodes(int order)
 {
-	H[ 8] = 0.25*(1 - r*r)*(1 - s)*(1 - t);
-	H[ 9] = 0.25*(1 - s*s)*(1 + r)*(1 - t);
-	H[10] = 0.25*(1 - r*r)*(1 + s)*(1 - t);
-	H[11] = 0.25*(1 - s*s)*(1 - r)*(1 - t);
-	H[12] = 0.25*(1 - r*r)*(1 - s)*(1 + t);
-	H[13] = 0.25*(1 - s*s)*(1 + r)*(1 + t);
-	H[14] = 0.25*(1 - r*r)*(1 + s)*(1 + t);
-	H[15] = 0.25*(1 - s*s)*(1 - r)*(1 + t);
-	H[16] = 0.25*(1 - t*t)*(1 - r)*(1 - s);
-	H[17] = 0.25*(1 - t*t)*(1 + r)*(1 - s);
-	H[18] = 0.25*(1 - t*t)*(1 + r)*(1 + s);
-	H[19] = 0.25*(1 - t*t)*(1 - r)*(1 + s);
-
-	H[0] = 0.125*(1 - r)*(1 - s)*(1 - t) - 0.5*(H[ 8] + H[11] + H[16]);
-	H[1] = 0.125*(1 + r)*(1 - s)*(1 - t) - 0.5*(H[ 8] + H[ 9] + H[17]);
-	H[2] = 0.125*(1 + r)*(1 + s)*(1 - t) - 0.5*(H[ 9] + H[10] + H[18]);
-	H[3] = 0.125*(1 - r)*(1 + s)*(1 - t) - 0.5*(H[10] + H[11] + H[19]);
-	H[4] = 0.125*(1 - r)*(1 - s)*(1 + t) - 0.5*(H[12] + H[15] + H[16]);
-	H[5] = 0.125*(1 + r)*(1 - s)*(1 + t) - 0.5*(H[12] + H[13] + H[17]);
-	H[6] = 0.125*(1 + r)*(1 + s)*(1 + t) - 0.5*(H[13] + H[14] + H[18]);
-	H[7] = 0.125*(1 - r)*(1 + s)*(1 + t) - 0.5*(H[14] + H[15] + H[19]);
+	switch (order)
+	{
+	case 2: return 20; break;
+	case 1: return 8; break;
+	case 0: return 1; break;
+	default:
+		assert(false);
+		return 20;
+	}
 }
 
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FEHex20_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
+void FEHex20_::init()
 {
-	Hr[ 8] = -0.5*r*(1 - s)*(1 - t);
-	Hr[ 9] =  0.25*(1 - s*s)*(1 - t);
-	Hr[10] = -0.5*r*(1 + s)*(1 - t);
-	Hr[11] = -0.25*(1 - s*s)*(1 - t);
-	Hr[12] = -0.5*r*(1 - s)*(1 + t);
-	Hr[13] =  0.25*(1 - s*s)*(1 + t);
-	Hr[14] = -0.5*r*(1 + s)*(1 + t);
-	Hr[15] = -0.25*(1 - s*s)*(1 + t);
-	Hr[16] = -0.25*(1 - t*t)*(1 - s);
-	Hr[17] =  0.25*(1 - t*t)*(1 - s);
-	Hr[18] =  0.25*(1 - t*t)*(1 + s);
-	Hr[19] = -0.25*(1 - t*t)*(1 + s);
+	// allocate shape classes
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_HEX8));
+	m_shapeP[2] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_HEX20));
 
-	Hr[0] = -0.125*(1 - s)*(1 - t) - 0.5*(Hr[ 8] + Hr[11] + Hr[16]);
-	Hr[1] =  0.125*(1 - s)*(1 - t) - 0.5*(Hr[ 8] + Hr[ 9] + Hr[17]);
-	Hr[2] =  0.125*(1 + s)*(1 - t) - 0.5*(Hr[ 9] + Hr[10] + Hr[18]);
-	Hr[3] = -0.125*(1 + s)*(1 - t) - 0.5*(Hr[10] + Hr[11] + Hr[19]);
-	Hr[4] = -0.125*(1 - s)*(1 + t) - 0.5*(Hr[12] + Hr[15] + Hr[16]);
-	Hr[5] =  0.125*(1 - s)*(1 + t) - 0.5*(Hr[12] + Hr[13] + Hr[17]);
-	Hr[6] =  0.125*(1 + s)*(1 + t) - 0.5*(Hr[13] + Hr[14] + Hr[18]);
-	Hr[7] = -0.125*(1 + s)*(1 + t) - 0.5*(Hr[14] + Hr[15] + Hr[19]);
-		
-	Hs[ 8] = -0.25*(1 - r*r)*(1 - t);
-	Hs[ 9] = -0.5*s*(1 + r)*(1 - t);
-	Hs[10] = 0.25*(1 - r*r)*(1 - t);
-	Hs[11] = -0.5*s*(1 - r)*(1 - t);
-	Hs[12] = -0.25*(1 - r*r)*(1 + t);
-	Hs[13] = -0.5*s*(1 + r)*(1 + t);
-	Hs[14] = 0.25*(1 - r*r)*(1 + t);
-	Hs[15] = -0.5*s*(1 - r)*(1 + t);
-	Hs[16] = -0.25*(1 - t*t)*(1 - r);
-	Hs[17] = -0.25*(1 - t*t)*(1 + r);
-	Hs[18] =  0.25*(1 - t*t)*(1 + r);
-	Hs[19] =  0.25*(1 - t*t)*(1 - r);
-
-	Hs[0] = -0.125*(1 - r)*(1 - t) - 0.5*(Hs[ 8] + Hs[11] + Hs[16]);
-	Hs[1] = -0.125*(1 + r)*(1 - t) - 0.5*(Hs[ 8] + Hs[ 9] + Hs[17]);
-	Hs[2] =  0.125*(1 + r)*(1 - t) - 0.5*(Hs[ 9] + Hs[10] + Hs[18]);
-	Hs[3] =  0.125*(1 - r)*(1 - t) - 0.5*(Hs[10] + Hs[11] + Hs[19]);
-	Hs[4] = -0.125*(1 - r)*(1 + t) - 0.5*(Hs[12] + Hs[15] + Hs[16]);
-	Hs[5] = -0.125*(1 + r)*(1 + t) - 0.5*(Hs[12] + Hs[13] + Hs[17]);
-	Hs[6] =  0.125*(1 + r)*(1 + t) - 0.5*(Hs[13] + Hs[14] + Hs[18]);
-	Hs[7] =  0.125*(1 - r)*(1 + t) - 0.5*(Hs[14] + Hs[15] + Hs[19]);
-
-	Ht[ 8] = -0.25*(1 - r*r)*(1 - s);
-	Ht[ 9] = -0.25*(1 - s*s)*(1 + r);
-	Ht[10] = -0.25*(1 - r*r)*(1 + s);
-	Ht[11] = -0.25*(1 - s*s)*(1 - r);
-	Ht[12] =  0.25*(1 - r*r)*(1 - s);
-	Ht[13] =  0.25*(1 - s*s)*(1 + r);
-	Ht[14] =  0.25*(1 - r*r)*(1 + s);
-	Ht[15] =  0.25*(1 - s*s)*(1 - r);
-	Ht[16] = -0.5*t*(1 - r)*(1 - s);
-	Ht[17] = -0.5*t*(1 + r)*(1 - s);
-	Ht[18] = -0.5*t*(1 + r)*(1 + s);
-	Ht[19] = -0.5*t*(1 - r)*(1 + s);
-		
-	Ht[0] = -0.125*(1 - r)*(1 - s) - 0.5*(Ht[ 8] + Ht[11] + Ht[16]);
-	Ht[1] = -0.125*(1 + r)*(1 - s) - 0.5*(Ht[ 8] + Ht[ 9] + Ht[17]);
-	Ht[2] = -0.125*(1 + r)*(1 + s) - 0.5*(Ht[ 9] + Ht[10] + Ht[18]);
-	Ht[3] = -0.125*(1 - r)*(1 + s) - 0.5*(Ht[10] + Ht[11] + Ht[19]);
-	Ht[4] =  0.125*(1 - r)*(1 - s) - 0.5*(Ht[12] + Ht[15] + Ht[16]);
-	Ht[5] =  0.125*(1 + r)*(1 - s) - 0.5*(Ht[12] + Ht[13] + Ht[17]);
-	Ht[6] =  0.125*(1 + r)*(1 + s) - 0.5*(Ht[13] + Ht[14] + Ht[18]);
-	Ht[7] =  0.125*(1 - r)*(1 + s) - 0.5*(Ht[14] + Ht[15] + Ht[19]);
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-//! \todo implement this (needed for biphasic problems)
-void FEHex20_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	// Hrr
-	Hrr[ 8] = -0.5*(1 - s)*(1 - t);
-	Hrr[ 9] =  0.;
-	Hrr[10] = -0.5*(1 + s)*(1 - t);
-	Hrr[11] =  0.;
-	Hrr[12] = -0.5*(1 - s)*(1 + t);
-	Hrr[13] =  0.;
-	Hrr[14] = -0.5*(1 + s)*(1 + t);
-	Hrr[15] =  0.;
-	Hrr[16] =  0.;
-	Hrr[17] =  0.;
-	Hrr[18] =  0.;
-	Hrr[19] =  0.;
-
-	Hrr[0] = - 0.5*(Hrr[ 8] + Hrr[11] + Hrr[16]);
-	Hrr[1] = - 0.5*(Hrr[ 8] + Hrr[ 9] + Hrr[17]);
-	Hrr[2] = - 0.5*(Hrr[ 9] + Hrr[10] + Hrr[18]);
-	Hrr[3] = - 0.5*(Hrr[10] + Hrr[11] + Hrr[19]);
-	Hrr[4] = - 0.5*(Hrr[12] + Hrr[15] + Hrr[16]);
-	Hrr[5] = - 0.5*(Hrr[12] + Hrr[13] + Hrr[17]);
-	Hrr[6] = - 0.5*(Hrr[13] + Hrr[14] + Hrr[18]);
-	Hrr[7] = - 0.5*(Hrr[14] + Hrr[15] + Hrr[19]);
-
-	// Hss
-	Hss[ 8] =  0.;
-	Hss[ 9] = -0.5*(1 + r)*(1 - t);
-	Hss[10] =  0.;
-	Hss[11] = -0.5*(1 - r)*(1 - t);
-	Hss[12] =  0.;
-	Hss[13] = -0.5*(1 + r)*(1 + t);
-	Hss[14] =  0.;
-	Hss[15] = -0.5*(1 - r)*(1 + t);
-	Hss[16] =  0.;
-	Hss[17] =  0.;
-	Hss[18] =  0.;
-	Hss[19] =  0.;
-
-	Hss[0] = - 0.5*(Hss[ 8] + Hss[11] + Hss[16]);
-	Hss[1] = - 0.5*(Hss[ 8] + Hss[ 9] + Hss[17]);
-	Hss[2] = - 0.5*(Hss[ 9] + Hss[10] + Hss[18]);
-	Hss[3] = - 0.5*(Hss[10] + Hss[11] + Hss[19]);
-	Hss[4] = - 0.5*(Hss[12] + Hss[15] + Hss[16]);
-	Hss[5] = - 0.5*(Hss[12] + Hss[13] + Hss[17]);
-	Hss[6] = - 0.5*(Hss[13] + Hss[14] + Hss[18]);
-	Hss[7] = - 0.5*(Hss[14] + Hss[15] + Hss[19]);
-
-	// Htt
-	Htt[ 8] =  0.;
-	Htt[ 9] =  0.;
-	Htt[10] =  0.;
-	Htt[11] =  0.;
-	Htt[12] =  0.;
-	Htt[13] =  0.;
-	Htt[14] =  0.;
-	Htt[15] =  0.;
-	Htt[16] = -0.5*(1 - r)*(1 - s);
-	Htt[17] = -0.5*(1 + r)*(1 - s);
-	Htt[18] = -0.5*(1 + r)*(1 + s);
-	Htt[19] = -0.5*(1 - r)*(1 + s);
-
-	Htt[0] = - 0.5*(Htt[ 8] + Htt[11] + Htt[16]);
-	Htt[1] = - 0.5*(Htt[ 8] + Htt[ 9] + Htt[17]);
-	Htt[2] = - 0.5*(Htt[ 9] + Htt[10] + Htt[18]);
-	Htt[3] = - 0.5*(Htt[10] + Htt[11] + Htt[19]);
-	Htt[4] = - 0.5*(Htt[12] + Htt[15] + Htt[16]);
-	Htt[5] = - 0.5*(Htt[12] + Htt[13] + Htt[17]);
-	Htt[6] = - 0.5*(Htt[13] + Htt[14] + Htt[18]);
-	Htt[7] = - 0.5*(Htt[14] + Htt[15] + Htt[19]);
-
-	// Hrs
-	Hrs[ 8] =  0.5*r*(1 - t);
-	Hrs[ 9] = -0.5*s*(1 - t);
-	Hrs[10] = -0.5*r*(1 - t);
-	Hrs[11] =  0.5*s*(1 - t);
-	Hrs[12] =  0.5*r*(1 + t);
-	Hrs[13] = -0.5*s*(1 + t);
-	Hrs[14] = -0.5*r*(1 + t);
-	Hrs[15] =  0.5*s*(1 + t);
-	Hrs[16] =  0.25*(1 - t*t);
-	Hrs[17] = -0.25*(1 - t*t);
-	Hrs[18] =  0.25*(1 - t*t);
-	Hrs[19] = -0.25*(1 - t*t);
-
-	Hrs[0] =  0.125*(1 - t) - 0.5*(Hrs[ 8] + Hrs[11] + Hrs[16]);
-	Hrs[1] = -0.125*(1 - t) - 0.5*(Hrs[ 8] + Hrs[ 9] + Hrs[17]);
-	Hrs[2] =  0.125*(1 - t) - 0.5*(Hrs[ 9] + Hrs[10] + Hrs[18]);
-	Hrs[3] = -0.125*(1 - t) - 0.5*(Hrs[10] + Hrs[11] + Hrs[19]);
-	Hrs[4] =  0.125*(1 + t) - 0.5*(Hrs[12] + Hrs[15] + Hrs[16]);
-	Hrs[5] = -0.125*(1 + t) - 0.5*(Hrs[12] + Hrs[13] + Hrs[17]);
-	Hrs[6] =  0.125*(1 + t) - 0.5*(Hrs[13] + Hrs[14] + Hrs[18]);
-	Hrs[7] = -0.125*(1 + t) - 0.5*(Hrs[14] + Hrs[15] + Hrs[19]);
-
-	// Hst
-	Hst[ 8] =  0.25*(1 - r*r);
-	Hst[ 9] =  0.5*s*(1 + r);
-	Hst[10] = -0.25*(1 - r*r);
-	Hst[11] =  0.5*s*(1 - r);
-	Hst[12] = -0.25*(1 - r*r);
-	Hst[13] = -0.5*s*(1 + r);
-	Hst[14] =  0.25*(1 - r*r);
-	Hst[15] = -0.5*s*(1 - r);
-	Hst[16] =  0.5*t*(1 - r);
-	Hst[17] =  0.5*t*(1 + r);
-	Hst[18] = -0.5*t*(1 + r);
-	Hst[19] = -0.5*t*(1 - r);
-
-	Hst[0] =  0.125*(1 - r) - 0.5*(Hst[ 8] + Hst[11] + Hst[16]);
-	Hst[1] =  0.125*(1 + r) - 0.5*(Hst[ 8] + Hst[ 9] + Hst[17]);
-	Hst[2] = -0.125*(1 + r) - 0.5*(Hst[ 9] + Hst[10] + Hst[18]);
-	Hst[3] = -0.125*(1 - r) - 0.5*(Hst[10] + Hst[11] + Hst[19]);
-	Hst[4] = -0.125*(1 - r) - 0.5*(Hst[12] + Hst[15] + Hst[16]);
-	Hst[5] = -0.125*(1 + r) - 0.5*(Hst[12] + Hst[13] + Hst[17]);
-	Hst[6] =  0.125*(1 + r) - 0.5*(Hst[13] + Hst[14] + Hst[18]);
-	Hst[7] =  0.125*(1 - r) - 0.5*(Hst[14] + Hst[15] + Hst[19]);
-
-	// Hrt
-	Hrt[ 8] =  0.5*r*(1 - s);
-	Hrt[ 9] = -0.25*(1 - s*s);
-	Hrt[10] =  0.5*r*(1 + s);
-	Hrt[11] =  0.25*(1 - s*s);
-	Hrt[12] = -0.5*r*(1 - s);
-	Hrt[13] =  0.25*(1 - s*s);
-	Hrt[14] = -0.5*r*(1 + s);
-	Hrt[15] = -0.25*(1 - s*s);
-	Hrt[16] =  0.5*t*(1 - s);
-	Hrt[17] = -0.5*t*(1 - s);
-	Hrt[18] = -0.5*t*(1 + s);
-	Hrt[19] =  0.5*t*(1 + s);	
-	
-	Hrt[0] =  0.125*(1 - s) - 0.5*(Hrt[ 8] + Hrt[11] + Hrt[16]);
-	Hrt[1] = -0.125*(1 - s) - 0.5*(Hrt[ 8] + Hrt[ 9] + Hrt[17]);
-	Hrt[2] = -0.125*(1 + s) - 0.5*(Hrt[ 9] + Hrt[10] + Hrt[18]);
-	Hrt[3] =  0.125*(1 + s) - 0.5*(Hrt[10] + Hrt[11] + Hrt[19]);
-	Hrt[4] = -0.125*(1 - s) - 0.5*(Hrt[12] + Hrt[15] + Hrt[16]);
-	Hrt[5] =  0.125*(1 - s) - 0.5*(Hrt[12] + Hrt[13] + Hrt[17]);
-	Hrt[6] =  0.125*(1 + s) - 0.5*(Hrt[13] + Hrt[14] + Hrt[18]);
-	Hrt[7] = -0.125*(1 + s) - 0.5*(Hrt[14] + Hrt[15] + Hrt[19]);
-
-
+	// initialize base class
+	FESolidElementTraits::init();
 }
 
 //=============================================================================
@@ -1953,7 +1291,7 @@ FEHex20G8::FEHex20G8() : FEHex20_(NINT, FE_HEX20G8)
     MT.resize(NELN, NINT);
     for (int i=0; i<NINT; ++i)
         for (int n=0; n<NELN; ++n)
-            MT(n,i) = H(i,n);
+            MT(n,i) = m_H(i,n);
     
     Hi.resize(NELN, NELN);
     Hi = MT*MT.transpose();
@@ -1962,7 +1300,7 @@ FEHex20G8::FEHex20G8() : FEHex20_(NINT, FE_HEX20G8)
 
 //-----------------------------------------------------------------------------
 //! Use least-squares extrapolation
-void FEHex20G8::project_to_nodes(double* ai, double* ao)
+void FEHex20G8::project_to_nodes(double* ai, double* ao) const
 {
     double v[NELN];
     for (int n=0; n<NELN; ++n) {
@@ -2026,13 +1364,13 @@ FEHex20G27::FEHex20G27() : FEHex20_(NINT, FE_HEX20G27)
     Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
+            Hi(i,n) = m_H(ni[i],n);
     Hi = Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! \todo implement this
-void FEHex20G27::project_to_nodes(double* ai, double* ao)
+void FEHex20G27::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
@@ -2047,146 +1385,16 @@ void FEHex20G27::project_to_nodes(double* ai, double* ao)
 //=============================================================================
 //              H E X 2 7
 //=============================================================================
-// Lookup table for 27-node hex that maps a node index into a triplet that identifies
-// the shape functions.
-static int HEX27_LUT[27][3] = {
-	{0,0,0},
-	{1,0,0},
-	{1,1,0},
-	{0,1,0},
-	{0,0,1},
-	{1,0,1},
-	{1,1,1},
-	{0,1,1},
-	{2,0,0},
-	{1,2,0},
-	{2,1,0},
-	{0,2,0},
-	{2,0,1},
-	{1,2,1},
-	{2,1,1},
-	{0,2,1},
-	{0,0,2},
-	{1,0,2},
-	{1,1,2},
-	{0,1,2},
-	{2,0,2},
-	{1,2,2},
-	{2,1,2},
-	{0,2,2},
-	{2,2,0},
-	{2,2,1},
-	{2,2,2}
-};
 
-//-----------------------------------------------------------------------------
-//! values of shape functions
-void FEHex27_::shape_fnc(double* H, double r, double s, double t)
+void FEHex27_::init()
 {
-	double R[3] = {0.5*r*(r-1.0), 0.5*r*(r+1.0), 1.0 - r*r};
-	double S[3] = {0.5*s*(s-1.0), 0.5*s*(s+1.0), 1.0 - s*s};
-	double T[3] = {0.5*t*(t-1.0), 0.5*t*(t+1.0), 1.0 - t*t};
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_HEX8));
+	m_shapeP[2] = dynamic_cast<FESolidElementShape*>(FEElementLibrary::GetElementShapeClass(ET_HEX27));
 
-	H[ 0] = R[0]*S[0]*T[0];
-	H[ 1] = R[1]*S[0]*T[0];
-	H[ 2] = R[1]*S[1]*T[0];
-	H[ 3] = R[0]*S[1]*T[0];
-	H[ 4] = R[0]*S[0]*T[1];
-	H[ 5] = R[1]*S[0]*T[1];
-	H[ 6] = R[1]*S[1]*T[1];
-	H[ 7] = R[0]*S[1]*T[1];
-	H[ 8] = R[2]*S[0]*T[0];
-	H[ 9] = R[1]*S[2]*T[0];
-	H[10] = R[2]*S[1]*T[0];
-	H[11] = R[0]*S[2]*T[0];
-	H[12] = R[2]*S[0]*T[1];
-	H[13] = R[1]*S[2]*T[1];
-	H[14] = R[2]*S[1]*T[1];
-	H[15] = R[0]*S[2]*T[1];
-	H[16] = R[0]*S[0]*T[2];
-	H[17] = R[1]*S[0]*T[2];
-	H[18] = R[1]*S[1]*T[2];
-	H[19] = R[0]*S[1]*T[2];
-	H[20] = R[2]*S[0]*T[2];
-	H[21] = R[1]*S[2]*T[2];
-	H[22] = R[2]*S[1]*T[2];
-	H[23] = R[0]*S[2]*T[2];
-	H[24] = R[2]*S[2]*T[0];
-	H[25] = R[2]*S[2]*T[1];
-	H[26] = R[2]*S[2]*T[2];
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function derivatives
-void FEHex27_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	double R[3] = {0.5*r*(r-1.0), 0.5*r*(r+1.0), 1.0 - r*r};
-	double S[3] = {0.5*s*(s-1.0), 0.5*s*(s+1.0), 1.0 - s*s};
-	double T[3] = {0.5*t*(t-1.0), 0.5*t*(t+1.0), 1.0 - t*t};
-
-	double DR[3] = {r - 0.5, r  + 0.5, -2.0*r};
-	double DS[3] = {s - 0.5, s  + 0.5, -2.0*s};
-	double DT[3] = {t - 0.5, t  + 0.5, -2.0*t};
-
-	Hr[ 0] = DR[0]*S[0]*T[0]; Hs[ 0] = R[0]*DS[0]*T[0]; Ht[ 0] = R[0]*S[0]*DT[0];
-	Hr[ 1] = DR[1]*S[0]*T[0]; Hs[ 1] = R[1]*DS[0]*T[0];	Ht[ 1] = R[1]*S[0]*DT[0];
-	Hr[ 2] = DR[1]*S[1]*T[0]; Hs[ 2] = R[1]*DS[1]*T[0];	Ht[ 2] = R[1]*S[1]*DT[0];
-	Hr[ 3] = DR[0]*S[1]*T[0]; Hs[ 3] = R[0]*DS[1]*T[0];	Ht[ 3] = R[0]*S[1]*DT[0];
-	Hr[ 4] = DR[0]*S[0]*T[1]; Hs[ 4] = R[0]*DS[0]*T[1];	Ht[ 4] = R[0]*S[0]*DT[1];
-	Hr[ 5] = DR[1]*S[0]*T[1]; Hs[ 5] = R[1]*DS[0]*T[1];	Ht[ 5] = R[1]*S[0]*DT[1];
-	Hr[ 6] = DR[1]*S[1]*T[1]; Hs[ 6] = R[1]*DS[1]*T[1];	Ht[ 6] = R[1]*S[1]*DT[1];
-	Hr[ 7] = DR[0]*S[1]*T[1]; Hs[ 7] = R[0]*DS[1]*T[1];	Ht[ 7] = R[0]*S[1]*DT[1];
-	Hr[ 8] = DR[2]*S[0]*T[0]; Hs[ 8] = R[2]*DS[0]*T[0];	Ht[ 8] = R[2]*S[0]*DT[0];
-	Hr[ 9] = DR[1]*S[2]*T[0]; Hs[ 9] = R[1]*DS[2]*T[0];	Ht[ 9] = R[1]*S[2]*DT[0];
-	Hr[10] = DR[2]*S[1]*T[0]; Hs[10] = R[2]*DS[1]*T[0];	Ht[10] = R[2]*S[1]*DT[0];
-	Hr[11] = DR[0]*S[2]*T[0]; Hs[11] = R[0]*DS[2]*T[0];	Ht[11] = R[0]*S[2]*DT[0];
-	Hr[12] = DR[2]*S[0]*T[1]; Hs[12] = R[2]*DS[0]*T[1];	Ht[12] = R[2]*S[0]*DT[1];
-	Hr[13] = DR[1]*S[2]*T[1]; Hs[13] = R[1]*DS[2]*T[1];	Ht[13] = R[1]*S[2]*DT[1];
-	Hr[14] = DR[2]*S[1]*T[1]; Hs[14] = R[2]*DS[1]*T[1];	Ht[14] = R[2]*S[1]*DT[1];
-	Hr[15] = DR[0]*S[2]*T[1]; Hs[15] = R[0]*DS[2]*T[1];	Ht[15] = R[0]*S[2]*DT[1];
-	Hr[16] = DR[0]*S[0]*T[2]; Hs[16] = R[0]*DS[0]*T[2];	Ht[16] = R[0]*S[0]*DT[2];
-	Hr[17] = DR[1]*S[0]*T[2]; Hs[17] = R[1]*DS[0]*T[2];	Ht[17] = R[1]*S[0]*DT[2];
-	Hr[18] = DR[1]*S[1]*T[2]; Hs[18] = R[1]*DS[1]*T[2];	Ht[18] = R[1]*S[1]*DT[2];
-	Hr[19] = DR[0]*S[1]*T[2]; Hs[19] = R[0]*DS[1]*T[2];	Ht[19] = R[0]*S[1]*DT[2];
-	Hr[20] = DR[2]*S[0]*T[2]; Hs[20] = R[2]*DS[0]*T[2];	Ht[20] = R[2]*S[0]*DT[2];
-	Hr[21] = DR[1]*S[2]*T[2]; Hs[21] = R[1]*DS[2]*T[2];	Ht[21] = R[1]*S[2]*DT[2];
-	Hr[22] = DR[2]*S[1]*T[2]; Hs[22] = R[2]*DS[1]*T[2];	Ht[22] = R[2]*S[1]*DT[2];
-	Hr[23] = DR[0]*S[2]*T[2]; Hs[23] = R[0]*DS[2]*T[2];	Ht[23] = R[0]*S[2]*DT[2];
-	Hr[24] = DR[2]*S[2]*T[0]; Hs[24] = R[2]*DS[2]*T[0];	Ht[24] = R[2]*S[2]*DT[0];
-	Hr[25] = DR[2]*S[2]*T[1]; Hs[25] = R[2]*DS[2]*T[1];	Ht[25] = R[2]*S[2]*DT[1];
-	Hr[26] = DR[2]*S[2]*T[2]; Hs[26] = R[2]*DS[2]*T[2];	Ht[26] = R[2]*S[2]*DT[2];
-}
-
-//-----------------------------------------------------------------------------
-//! values of shape function second derivatives
-void FEHex27_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	double NR[3] = {0.5*r*(r-1.0), 0.5*r*(r+1.0), 1.0 - r*r};
-	double NS[3] = {0.5*s*(s-1.0), 0.5*s*(s+1.0), 1.0 - s*s};
-	double NT[3] = {0.5*t*(t-1.0), 0.5*t*(t+1.0), 1.0 - t*t};
-
-	double DR[3] = {r - 0.5, r  + 0.5, -2.0*r};
-	double DS[3] = {s - 0.5, s  + 0.5, -2.0*s};
-	double DT[3] = {t - 0.5, t  + 0.5, -2.0*t};
-
-	double HR[3] = {1.0, 1.0, -2.0};
-	double HS[3] = {1.0, 1.0, -2.0};
-	double HT[3] = {1.0, 1.0, -2.0};
-
-	for (int a=0; a<27; ++a)
-	{
-		int i = HEX27_LUT[a][0];
-		int j = HEX27_LUT[a][1];
-		int k = HEX27_LUT[a][2];
-
-		Hrr[a] = HR[i]*NS[j]*NT[k];
-		Hss[a] = NR[i]*HS[j]*NT[k];
-		Htt[a] = NR[i]*NS[j]*HT[k];
-
-		Hrs[a] = DR[i]*DS[j]*NT[k];
-		Hst[a] = NR[i]*DS[j]*DT[k];
-		Hrt[a] = DR[i]*NS[j]*DT[k];
-	}
+	// initialize base class
+	FESolidElementTraits::init();
 }
 
 //=============================================================================
@@ -2228,19 +1436,19 @@ FEHex27G27::FEHex27G27() : FEHex27_(NINT, FE_HEX27G27)
 	gr[26] =  a; gs[26] =  a; gt[26] =  a; gw[26] = w1*w1*w1;
 
 	init();
-    Hi = H.inverse();
+	m_Hi = m_H.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! \todo implement this
-void FEHex27G27::project_to_nodes(double* ai, double* ao)
+void FEHex27G27::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NINT; ++k)
         {
-            ao[j] += Hi[j][k]*ai[k];
+            ao[j] += m_Hi[j][k]*ai[k];
         }
     }
 }
@@ -2248,54 +1456,6 @@ void FEHex27G27::project_to_nodes(double* ai, double* ao)
 //=============================================================================
 //              P Y R A 5
 //=============================================================================
-
-//! values of shape functions
-void FEPyra5_::shape_fnc(double* H, double r, double s, double t)
-{
-	H[0] = 0.125*(1.0 - r)*(1.0 - s)*(1.0 - t);
-	H[1] = 0.125*(1.0 + r)*(1.0 - s)*(1.0 - t);
-	H[2] = 0.125*(1.0 + r)*(1.0 + s)*(1.0 - t);
-	H[3] = 0.125*(1.0 - r)*(1.0 + s)*(1.0 - t);
-	H[4] = 0.5*(1.0 + t);
-}
-
-//! values of shape function derivatives
-void FEPyra5_::shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t)
-{
-	Hr[0] = -0.125*(1.0 - s)*(1.0 - t);
-	Hr[1] =  0.125*(1.0 - s)*(1.0 - t);
-	Hr[2] =  0.125*(1.0 + s)*(1.0 - t);
-	Hr[3] = -0.125*(1.0 + s)*(1.0 - t);
-	Hr[4] =  0.0;
-
-	Hs[0] = -0.125*(1.0 - r)*(1.0 - t);
-	Hs[1] = -0.125*(1.0 + r)*(1.0 - t);
-	Hs[2] =  0.125*(1.0 + r)*(1.0 - t);
-	Hs[3] =  0.125*(1.0 - r)*(1.0 - t);
-	Hs[4] =  0.0;
-
-	Ht[0] = -0.125*(1.0 - r)*(1.0 - s);
-	Ht[1] = -0.125*(1.0 + r)*(1.0 - s);
-	Ht[2] = -0.125*(1.0 + r)*(1.0 + s);
-	Ht[3] = -0.125*(1.0 - r)*(1.0 + s);
-	Ht[4] =  0.5;
-}
-
-//! values of shape function second derivatives
-void FEPyra5_::shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t)
-{
-	Hrr[0] = 0.0; Hss[0] = 0.0; Htt[0] = 0.0;
-	Hrr[1] = 0.0; Hss[1] = 0.0; Htt[1] = 0.0;
-	Hrr[2] = 0.0; Hss[2] = 0.0; Htt[2] = 0.0;
-	Hrr[3] = 0.0; Hss[3] = 0.0; Htt[3] = 0.0;
-	Hrr[4] = 0.0; Hss[4] = 0.0; Htt[4] = 0.0;
-
-	Hrs[0] =  0.125*(1.0 - t); Hrt[0] =  0.125*(1.0 - s); Hst[0] =  0.125*(1.0 - r);
-	Hrs[1] = -0.125*(1.0 - t); Hrt[1] = -0.125*(1.0 - s); Hst[1] =  0.125*(1.0 + r);
-	Hrs[2] =  0.125*(1.0 - t); Hrt[2] = -0.125*(1.0 + s); Hst[2] = -0.125*(1.0 + r);
-	Hrs[3] = -0.125*(1.0 - t); Hrt[3] =  0.125*(1.0 + s); Hst[3] = -0.125*(1.0 - r);
-	Hrs[4] =              0.0; Hrt[4] =              0.0; Hst[4] =              0.0;
-}
 
 //=============================================================================
 //              P Y R A 5 G 8
@@ -2317,25 +1477,71 @@ FEPyra5G8::FEPyra5G8() : FEPyra5_(NINT, FE_PYRA5G8)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN, NELN);
-	Ai.resize(NELN, NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN, NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
-void FEPyra5G8::project_to_nodes(double* ai, double* ao)
+void FEPyra5G8::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i = 0; i<NELN; ++i)
 	{
 		b[i] = 0;
-		for (int j = 0; j<NINT; ++j) b[i] += H[j][i] * ai[j];
+		for (int j = 0; j<NINT; ++j) b[i] += m_H[j][i] * ai[j];
 	}
 
 	for (int i = 0; i<NELN; ++i)
 	{
 		ao[i] = 0;
-		for (int j = 0; j<NELN; ++j) ao[i] += Ai[i][j] * b[j];
+		for (int j = 0; j<NELN; ++j) ao[i] += m_Ai[i][j] * b[j];
 	}
+}
+
+
+//=============================================================================
+//              P Y R A 1 3
+//=============================================================================
+
+//=============================================================================
+//              P Y R A 1 3 G 8
+//=============================================================================
+
+FEPyra13G8::FEPyra13G8() : FEPyra13_(NINT, FE_PYRA13G8)
+{
+    // integration point coordinates
+    const double a = 1.0 / sqrt(3.0);
+    gr[0] = -a; gs[0] = -a; gt[0] = -a; gw[0] = 1;
+    gr[1] = a; gs[1] = -a; gt[1] = -a; gw[1] = 1;
+    gr[2] = a; gs[2] = a; gt[2] = -a; gw[2] = 1;
+    gr[3] = -a; gs[3] = a; gt[3] = -a; gw[3] = 1;
+    gr[4] = -a; gs[4] = -a; gt[4] = a; gw[4] = 1;
+    gr[5] = a; gs[5] = -a; gt[5] = a; gw[5] = 1;
+    gr[6] = a; gs[6] = a; gt[6] = a; gw[6] = 1;
+    gr[7] = -a; gs[7] = a; gt[7] = a; gw[7] = 1;
+    init();
+    
+    // we need Ai to project integration point data to the nodes
+    matrix A(NELN, NELN);
+    m_Ai.resize(NELN, NELN);
+    A = m_H.transpose()*m_H;
+    m_Ai = A.inverse();
+}
+
+void FEPyra13G8::project_to_nodes(double* ai, double* ao) const
+{
+    vector<double> b(NELN);
+    for (int i = 0; i<NELN; ++i)
+    {
+        b[i] = 0;
+        for (int j = 0; j<NINT; ++j) b[i] += m_H[j][i] * ai[j];
+    }
+    
+    for (int i = 0; i<NELN; ++i)
+    {
+        ao[i] = 0;
+        for (int j = 0; j<NELN; ++j) ao[i] += m_Ai[i][j] * b[j];
+    }
 }
 
 
@@ -2360,60 +1566,133 @@ FESurfaceElementTraits::FESurfaceElementTraits(int ni, int ne, FE_Element_Shape 
 //
 void FESurfaceElementTraits::init()
 {
-	assert(nint > 0);
-	assert(neln > 0);
+	assert(m_nint > 0);
+	assert(m_neln > 0);
+
+	// get shape class
+	m_shape = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(m_spec.eshape));
+	assert(m_shape && (m_shape->shape() == m_spec.eshape));
 
 	// evaluate shape functions
 	const int NE = FEElement::MAX_NODES;
 	double N[NE];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
-		shape(N, gr[n], gs[n]);
-		for (int i=0; i<neln; ++i) H[n][i] = N[i]; 
+		shape_fnc(N, gr[n], gs[n]);
+		for (int i=0; i<m_neln; ++i) m_H[n][i] = N[i];
 	}
 	
 	// evaluate shape function derivatives
 	double Nr[NE], Ns[NE];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
 		shape_deriv(Nr, Ns, gr[n], gs[n]);
-		for (int i=0; i<neln; ++i)
+		for (int i=0; i<m_neln; ++i)
 		{
 			Gr[n][i] = Nr[i];
 			Gs[n][i] = Ns[i];
 		}
 	}
+
+	// NOTE: Below, is a new interface for dealing with mixed element formulations.
+	//       This is still a work in progress.
+
+	// Get the max interpolation order
+	const int maxOrder = (int)m_shapeP.size() - 1;
+	m_Hp.resize(maxOrder + 1);
+	Gr_p.resize(maxOrder + 1);
+	Gs_p.resize(maxOrder + 1);
+	for (int i = 0; i <= maxOrder; ++i)
+	{
+		FESurfaceElementShape* shape = m_shapeP[i];
+		matrix& H = m_Hp[i];
+		matrix& Gr = Gr_p[i];
+		matrix& Gs = Gs_p[i];
+		if (i == 0)
+		{
+			H.resize(m_nint, 1);
+			Gr.resize(m_nint, 1);
+			Gs.resize(m_nint, 1);
+			for (int n = 0; n < m_nint; ++n)
+			{
+				H[n][0] = 1.0;
+				Gr[n][0] = Gs[n][0] = 0.0;
+			}
+		}
+		else if (m_shapeP[i])
+		{
+			// get the nodes
+			int neln = shape->nodes();
+
+			// shape function values
+			H.resize(m_nint, neln);
+			for (int n = 0; n<m_nint; ++n)
+			{
+				m_shapeP[i]->shape_fnc(N, gr[n], gs[n]);
+				for (int j = 0; j<neln; ++j) H[n][j] = N[j];
+			}
+
+			// calculate local derivatives of shape functions at gauss points
+			Gr.resize(m_nint, neln);
+			Gs.resize(m_nint, neln);
+			for (int n = 0; n<m_nint; ++n)
+			{
+				shape->shape_deriv(Nr, Ns, gr[n], gs[n]);
+				for (int j = 0; j<neln; ++j)
+				{
+					Gr[n][j] = Nr[j];
+					Gs[n][j] = Ns[j];
+				}
+			}
+		}
+	}
+}
+
+// shape functions at (r,s)
+void FESurfaceElementTraits::shape_fnc(double* H, double r, double s)
+{
+	m_shape->shape_fnc(H, r, s);
+}
+
+// shape function derivatives at (r,s)
+void FESurfaceElementTraits::shape_deriv(double* Gr, double* Gs, double r, double s)
+{
+	m_shape->shape_deriv(Gr, Gs, r, s);
+}
+
+// shape function derivatives at (r,s)
+void FESurfaceElementTraits::shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s)
+{
+	m_shape->shape_deriv2(Grr, Gss, Grs, r, s);
+}
+
+// shape functions at (r,s)
+void FESurfaceElementTraits::shape_fnc(int order, double* H, double r, double s)
+{
+	if (order == -1) m_shape->shape_fnc(H, r, s);
+	else m_shapeP[order]->shape_fnc(H, r, s);
+}
+
+// shape function derivatives at (r,s)
+void FESurfaceElementTraits::shape_deriv(int order, double* Gr, double* Gs, double r, double s)
+{
+	if (order == -1) shape_deriv(Gr, Gs, r, s);
+	else m_shapeP[order]->shape_deriv(Gr, Gs, r, s);
 }
 
 //=============================================================================
 //                          F E Q U A D 4
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-void FEQuad4_::shape(double* H, double r, double s)
+void FEQuad4_::init()
 {
-	H[0] = 0.25*(1-r)*(1-s);
-	H[1] = 0.25*(1+r)*(1-s);
-	H[2] = 0.25*(1+r)*(1+s);
-	H[3] = 0.25*(1-r)*(1+s);
-}
+	// allocate shape classes
+	m_shapeP.resize(2);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_QUAD4));
 
-//-----------------------------------------------------------------------------
-void FEQuad4_::shape_deriv(double* Hr, double* Hs, double r, double s)
-{
-	Hr[0] = -0.25*(1-s); Hs[0] = -0.25*(1-r);
-	Hr[1] =  0.25*(1-s); Hs[1] = -0.25*(1+r);
-	Hr[2] =  0.25*(1+s); Hs[2] =  0.25*(1+r);
-	Hr[3] = -0.25*(1+s); Hs[3] =  0.25*(1-r);
-}
-
-//-----------------------------------------------------------------------------
-void FEQuad4_::shape_deriv2(double* Hrr, double* Hrs, double* Hss, double r, double s)
-{
-	Hrr[0] = 0; Hrs[0] =  0.25; Hss[0] = 0;
-	Hrr[1] = 0; Hrs[1] = -0.25; Hss[1] = 0;
-	Hrr[2] = 0; Hrs[2] =  0.25; Hss[2] = 0;
-	Hrr[3] = 0; Hrs[3] = -0.25; Hss[3] = 0;
+	// initialize base class
+	FESurfaceElementTraits::init();
 }
 
 //=============================================================================
@@ -2428,11 +1707,11 @@ FEQuad4G4::FEQuad4G4() : FEQuad4_(NINT, FE_QUAD4G4)
 	gr[2] =  a; gs[2] =  a; gw[2] = 1;
 	gr[3] = -a; gs[3] =  a; gw[3] = 1;
 	init(); 
-	Hi = H.inverse();
+	m_Hi = m_H.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FEQuad4G4::project_to_nodes(double* ai, double* ao)
+void FEQuad4G4::project_to_nodes(double* ai, double* ao) const
 {
 	int ni = NINT;
 	int ne = NELN;
@@ -2440,7 +1719,7 @@ void FEQuad4G4::project_to_nodes(double* ai, double* ao)
 	for (int i=0; i<ne; ++i)
 	{
 		ao[i] = 0;
-		for (int j=0; j<ni; ++j) ao[i] += Hi[i][j]*ai[j];
+		for (int j=0; j<ni; ++j) ao[i] += m_Hi[i][j]*ai[j];
 	}
 }
 
@@ -2458,7 +1737,7 @@ FEQuad4NI::FEQuad4NI() : FEQuad4_(NINT, FE_QUAD4NI)
 }
 
 //-----------------------------------------------------------------------------
-void FEQuad4NI::project_to_nodes(double* ai, double* ao)
+void FEQuad4NI::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[1];
@@ -2470,28 +1749,15 @@ void FEQuad4NI::project_to_nodes(double* ai, double* ao)
 //                          F E T R I 
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-void FETri3_::shape(double* H, double r, double s)
+void FETri3_::init()
 {
-	H[0] = 1.0 - r - s;
-	H[1] = r;
-	H[2] = s;
-}
+	// allocate shape classes
+	m_shapeP.resize(2);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TRI3));
 
-//-----------------------------------------------------------------------------
-void FETri3_::shape_deriv(double* Hr, double* Hs, double r, double s)
-{
-	Hr[0] = -1; Hs[0] = -1;
-	Hr[1] =  1; Hs[1] =  0;
-	Hr[2] =  0; Hs[2] =  1;
-}
-
-//-----------------------------------------------------------------------------
-void FETri3_::shape_deriv2(double* Hrr, double* Hrs, double* Hss, double r, double s)
-{
-	Hrr[0] = 0; Hrs[0] = 0; Hss[0] = 0;
-	Hrr[1] = 0; Hrs[1] = 0; Hss[1] = 0;
-	Hrr[2] = 0; Hrs[2] = 0; Hss[2] = 0;
+	// initialize base class
+	FESurfaceElementTraits::init();
 }
 
 //=============================================================================
@@ -2507,7 +1773,7 @@ FETri3G1::FETri3G1() : FETri3_(NINT, FE_TRI3G1)
 }
 
 //-----------------------------------------------------------------------------
-void FETri3G1::project_to_nodes(double* ai, double* ao)
+void FETri3G1::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[0];
@@ -2527,17 +1793,17 @@ FETri3G3::FETri3G3() : FETri3_(NINT, FE_TRI3G3)
 	gr[1] = b; gs[1] = a; gw[1] = a;
 	gr[2] = a; gs[2] = b; gw[2] = a;
 	init(); 
-	Hi = H.inverse();
+	m_Hi = m_H.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETri3G3::project_to_nodes(double* ai, double* ao)
+void FETri3G3::project_to_nodes(double* ai, double* ao) const
 {
 	assert(NINT == NELN);
 	for (int i=0; i<NELN; ++i)
 	{
 		ao[i] = 0;
-		for (int j=0; j<NINT; ++j) ao[i] += Hi[i][j]*ai[j];
+		for (int j=0; j<NINT; ++j) ao[i] += m_Hi[i][j]*ai[j];
 	}
 }
 
@@ -2560,25 +1826,25 @@ FETri3G7::FETri3G7() : FETri3_(NINT, FE_TRI3G7)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETri3G7::project_to_nodes(double* ai, double* ao)
+void FETri3G7::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
 
@@ -2597,7 +1863,7 @@ FETri3NI::FETri3NI() : FETri3_(NINT, FE_TRI3NI)
 }
 
 //-----------------------------------------------------------------------------
-void FETri3NI::project_to_nodes(double* ai, double* ao)
+void FETri3NI::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[1];
@@ -2608,48 +1874,16 @@ void FETri3NI::project_to_nodes(double* ai, double* ao)
 //                             F E T R I 6
 //============================================================================
 
-//-----------------------------------------------------------------------------
-void FETri6_::shape(double* H, double r, double s)
+void FETri6_::init()
 {
-	double r1 = 1.0 - r - s;
-	double r2 = r;
-	double r3 = s;
+	// allocate shape classes
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TRI3));
+	m_shapeP[2] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TRI6));
 
-	H[0] = r1*(2.0*r1 - 1.0);
-	H[1] = r2*(2.0*r2 - 1.0);
-	H[2] = r3*(2.0*r3 - 1.0);
-	H[3] = 4.0*r1*r2;
-	H[4] = 4.0*r2*r3;
-	H[5] = 4.0*r3*r1;
-}
-
-//-----------------------------------------------------------------------------
-void FETri6_::shape_deriv(double* Hr, double* Hs, double r, double s)
-{
-	Hr[0] = -3.0 + 4.0*r + 4.0*s;
-	Hr[1] =  4.0*r - 1.0;
-	Hr[2] =  0.0;
-	Hr[3] =  4.0 - 8.0*r - 4.0*s;
-	Hr[4] =  4.0*s;
-	Hr[5] = -4.0*s;
-
-	Hs[0] = -3.0 + 4.0*s + 4.0*r;
-	Hs[1] =  0.0;
-	Hs[2] =  4.0*s - 1.0;
-	Hs[3] = -4.0*r;
-	Hs[4] =  4.0*r;
-	Hs[5] =  4.0 - 8.0*s - 4.0*r;
-}
-
-//-----------------------------------------------------------------------------
-void FETri6_::shape_deriv2(double* Hrr, double* Hrs, double* Hss, double r, double s)
-{
-	Hrr[0] =  4.0; Hrs[0] =  4.0; Hss[0] =  4.0;
-	Hrr[1] =  4.0; Hrs[1] =  0.0; Hss[1] =  0.0;
-	Hrr[2] =  0.0; Hrs[2] =  0.0; Hss[2] =  4.0;
-	Hrr[3] = -8.0; Hrs[3] = -4.0; Hss[3] =  0.0;
-	Hrr[4] =  0.0; Hrs[4] =  4.0; Hss[4] =  0.0;
-	Hrr[5] =  0.0; Hrs[5] = -4.0; Hss[5] = -8.0;
+	// initialize base class
+	FESurfaceElementTraits::init();
 }
 
 //=============================================================================
@@ -2667,7 +1901,7 @@ FETri6G3::FETri6G3() : FETri6_(NINT, FE_TRI6G3)
 }
 
 //-----------------------------------------------------------------------------
-void FETri6G3::project_to_nodes(double* ai, double* ao)
+void FETri6G3::project_to_nodes(double* ai, double* ao) const
 {
 	matrix H(3, 3);
 	for (int n=0; n<3; ++n)
@@ -2707,7 +1941,7 @@ FETri6G4::FETri6G4() : FETri6_(NINT, FE_TRI6G4)
 
 //-----------------------------------------------------------------------------
 //! \todo implement this
-void FETri6G4::project_to_nodes(double* ai, double* ao)
+void FETri6G4::project_to_nodes(double* ai, double* ao) const
 {
 	
 }
@@ -2730,25 +1964,25 @@ FETri6G7::FETri6G7() : FETri6_(NINT, FE_TRI6G7)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETri6G7::project_to_nodes(double* ai, double* ao)
+void FETri6G7::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
 
@@ -2771,7 +2005,7 @@ FETri6GL7::FETri6GL7() : FETri6_(NINT, FE_TRI6GL7)
 }
 
 //-----------------------------------------------------------------------------
-void FETri6GL7::project_to_nodes(double* ai, double* ao)
+void FETri6GL7::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0]; ao[1] = ai[1]; ao[2] = ai[2];
 	ao[3] = ai[3]; ao[4] = ai[4]; ao[5] = ai[5];
@@ -2795,7 +2029,7 @@ FETri6NI::FETri6NI() : FETri6_(NINT, FE_TRI6NI)
 }
 
 //-----------------------------------------------------------------------------
-void FETri6NI::project_to_nodes(double* ai, double* ao)
+void FETri6NI::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[1];
@@ -2808,7 +2042,7 @@ void FETri6NI::project_to_nodes(double* ai, double* ao)
 //============================================================================
 //                             F E T R I 6 M
 //============================================================================
-
+/*
 // parameter used in the tri6m (6-node triangle with modified shape functions)
 const double fetri6m_alpha = 0.2;
 
@@ -2925,27 +2159,28 @@ FETri6mG7::FETri6mG7() : FETri6m_(NINT, FE_TRI6MG7)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETri6mG7::project_to_nodes(double* ai, double* ao)
+void FETri6mG7::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
+*/
 
 //=============================================================================
 //                          F E T R I 7 G 3
@@ -2962,7 +2197,7 @@ FETri7G3::FETri7G3() : FETri7_(NINT, FE_TRI7G3)
 }
 
 //-----------------------------------------------------------------------------
-void FETri7G3::project_to_nodes(double* ai, double* ao)
+void FETri7G3::project_to_nodes(double* ai, double* ao) const
 {
 	matrix H(3, 3);
 	for (int n=0; n<3; ++n)
@@ -3003,7 +2238,7 @@ FETri7G4::FETri7G4() : FETri7_(NINT, FE_TRI7G4)
 
 //-----------------------------------------------------------------------------
 //! \todo implement this
-void FETri7G4::project_to_nodes(double* ai, double* ao)
+void FETri7G4::project_to_nodes(double* ai, double* ao) const
 {
 	
 }
@@ -3012,57 +2247,17 @@ void FETri7G4::project_to_nodes(double* ai, double* ao)
 //                             F E T R I 7
 //============================================================================
 
-//-----------------------------------------------------------------------------
-void FETri7_::shape(double* H, double r, double s)
+void FETri7_::init()
 {
-	double r1 = 1.0 - r - s;
-	double r2 = r;
-	double r3 = s;
+	// allocate shape classes
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TRI3));
+	m_shapeP[2] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TRI7));
 
-	H[6] = 27.0*r1*r2*r3;
-	H[0] = r1*(2.0*r1 - 1.0) + H[6]/9.0;
-	H[1] = r2*(2.0*r2 - 1.0) + H[6]/9.0;
-	H[2] = r3*(2.0*r3 - 1.0) + H[6]/9.0;
-	H[3] = 4.0*r1*r2 - 4.0*H[6]/9.0;
-	H[4] = 4.0*r2*r3 - 4.0*H[6]/9.0;
-	H[5] = 4.0*r3*r1 - 4.0*H[6]/9.0;
+	// initialize base class
+	FESurfaceElementTraits::init();
 }
-
-//-----------------------------------------------------------------------------
-void FETri7_::shape_deriv(double* Hr, double* Hs, double r, double s)
-{
-	Hr[6] = 27.0*s*(1.0 - 2.0*r - s);
-	Hr[0] = -3.0 + 4.0*r + 4.0*s     + Hr[6]/9.0;
-	Hr[1] =  4.0*r - 1.0             + Hr[6]/9.0;
-	Hr[2] =  0.0                     + Hr[6]/9.0;
-	Hr[3] =  4.0 - 8.0*r - 4.0*s - 4.0*Hr[6]/9.0;
-	Hr[4] =  4.0*s               - 4.0*Hr[6]/9.0;
-	Hr[5] = -4.0*s               - 4.0*Hr[6]/9.0;
-
-	Hs[6] = 27.0*r*(1.0 - r - 2.0*s);
-	Hs[0] = -3.0 + 4.0*s + 4.0*r     + Hs[6]/9.0;
-	Hs[1] =  0.0                     + Hs[6]/9.0;
-	Hs[2] =  4.0*s - 1.0             + Hs[6]/9.0;
-	Hs[3] = -4.0*r               - 4.0*Hs[6]/9.0;
-	Hs[4] =  4.0*r               - 4.0*Hs[6]/9.0;
-	Hs[5] =  4.0 - 8.0*s - 4.0*r - 4.0*Hs[6]/9.0;
-}
-
-//-----------------------------------------------------------------------------
-void FETri7_::shape_deriv2(double* Hrr, double* Hrs, double* Hss, double r, double s)
-{
-	Hrr[6] = -54.0*s;
-	Hss[6] = -54.0*r;
-	Hrs[6] = 27.0*(1.0 - 2.0*r - 2.0*s);
-
-	Hrr[0] =  4.0 +     Hrr[6]/9.0; Hrs[0] =  4.0 +     Hrs[6]/9.0; Hss[0] =  4.0 +     Hss[6]/9.0;
-	Hrr[1] =  4.0 +     Hrr[6]/9.0; Hrs[1] =  0.0 +     Hrs[6]/9.0; Hss[1] =  0.0 +     Hss[6]/9.0;
-	Hrr[2] =  0.0 +     Hrr[6]/9.0; Hrs[2] =  0.0 +     Hrs[6]/9.0; Hss[2] =  4.0 +     Hss[6]/9.0;
-	Hrr[3] = -8.0 - 4.0*Hrr[6]/9.0; Hrs[3] = -4.0 - 4.0*Hrs[6]/9.0; Hss[3] =  0.0 - 4.0*Hss[6]/9.0;
-	Hrr[4] =  0.0 - 4.0*Hrr[6]/9.0; Hrs[4] =  4.0 - 4.0*Hrs[6]/9.0; Hss[4] =  0.0 - 4.0*Hss[6]/9.0;
-	Hrr[5] =  0.0 - 4.0*Hrr[6]/9.0; Hrs[5] = -4.0 - 4.0*Hrs[6]/9.0; Hss[5] = -8.0 - 4.0*Hss[6]/9.0;
-}
-
 
 //=============================================================================
 //                          F E T R I 7 G 7
@@ -3082,25 +2277,25 @@ FETri7G7::FETri7G7() : FETri7_(NINT, FE_TRI7G7)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETri7G7::project_to_nodes(double* ai, double* ao)
+void FETri7G7::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
 
@@ -3124,7 +2319,7 @@ FETri7GL7::FETri7GL7() : FETri7_(NINT, FE_TRI7GL7)
 }
 
 //-----------------------------------------------------------------------------
-void FETri7GL7::project_to_nodes(double* ai, double* ao)
+void FETri7GL7::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0]; ao[1] = ai[1]; ao[2] = ai[2];
 	ao[3] = ai[3]; ao[4] = ai[4]; ao[5] = ai[5];
@@ -3135,61 +2330,18 @@ void FETri7GL7::project_to_nodes(double* ai, double* ao)
 //                             F E T R I 1 0
 //============================================================================
 
-//-----------------------------------------------------------------------------
-void FETri10_::shape(double* H, double r, double s)
+void FETri10_::init()
 {
-	double L1 = 1.0 - r - s;
-	double L2 = r;
-	double L3 = s;
+	// allocate shape classes
+	m_shapeP.resize(4);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TRI3));
+	m_shapeP[2] = 0; // this element cannot be used for quadratic interpolation!
+	m_shapeP[3] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_TRI10));
 
-	H[0] = 0.5*(3*L1 - 1)*(3*L1 - 2)*L1;
-	H[1] = 0.5*(3*L2 - 1)*(3*L2 - 2)*L2;
-	H[2] = 0.5*(3*L3 - 1)*(3*L3 - 2)*L3;
-	H[3] = 4.5*(3*L1 - 1)*L1*L2;
-	H[4] = 4.5*(3*L2 - 1)*L1*L2;
-	H[5] = 4.5*(3*L2 - 1)*L2*L3;
-	H[6] = 4.5*(3*L3 - 1)*L2*L3;
-	H[7] = 4.5*(3*L1 - 1)*L1*L3;
-	H[8] = 4.5*(3*L3 - 1)*L1*L3;
-	H[9] = 27.*L1*L2*L3;
+	// initialize base class
+	FESurfaceElementTraits::init();
 }
-
-//-----------------------------------------------------------------------------
-void FETri10_::shape_deriv(double* Hr, double* Hs, double r, double s)
-{
-	double L1 = 1.0 - r - s;
-	double L2 = r;
-	double L3 = s;
-
-	Hr[0] = -3./2.*(3*L1 - 2)*L1 - 3./2.*(3*L1 - 1)*L1 - 0.5*(3*L1 - 1)*(3*L1 - 2);
-	Hr[1] =  3./2.*(3*L2 - 2)*L2 + 3./2.*(3*L2 - 1)*L2 + 0.5*(3*L2 - 1)*(3*L2 - 2);
-	Hr[2] =  0.0;
-	Hr[3] = -27./2.*L1*L2 - 9./2.*(3*L1 - 1)*L2 + 9./2.*(3*L1 - 1)*L1;
-	Hr[4] =  27./2.*L1*L2 - 9./2.*(3*L2 - 1)*L2 + 9./2.*(3*L2 - 1)*L1;
-	Hr[5] =  27./2.*L2*L3 + 9./2.*(3*L2 - 1)*L3;
-	Hr[6] =  9./2.*(3*L3 - 1)*L3;
-	Hr[7] = -27./2.*L1*L3 - 9./2.*(3*L1 - 1)*L3;
-	Hr[8] = -9./2.*(3*L3 - 1)*L3;
-	Hr[9] = -27.*L2*L3 + 27.*L1*L3;
-
-	Hs[0] = -3./2.*(3*L1 - 2)*L1 - 3./2.*(3*L1 - 1)*L1 - 0.5*(3*L1 - 1)*(3*L1 - 2);
-	Hs[1] =  0.0;
-	Hs[2] =  3./2.*(3*L3 - 2)*L3 + 3./2.*(3*L3 - 1)*L3 + 0.5*(3*L3 - 1)*(3*L3 - 2);
-	Hs[3] = -27./2.*L1*L2 - 9./2.*(3*L1 - 1)*L2;
-	Hs[4] = -9./2.*(3*L2 - 1)*L2;
-	Hs[5] =  9./2.*(3*L2 - 1)*L2;
-	Hs[6] =  27./2.*L2*L3 + 9./2.*(3*L3 - 1)*L2;
-	Hs[7] = -27./2.*L1*L3 - 9./2.*(3*L1 - 1)*L3 + 9./2.*(3*L1 - 1)*L1;
-	Hs[8] =  27./2.*L1*L3 - 9./2.*(3*L3 - 1)*L3 + 9./2.*(3*L3 - 1)*L1;
-	Hs[9] = -27.*L2*L3 + 27.*L1*L2;
-}
-
-//-----------------------------------------------------------------------------
-void FETri10_::shape_deriv2(double* Hrr, double* Hrs, double* Hss, double r, double s)
-{
-	// TODO: Implement this
-}
-
 
 //=============================================================================
 //                          F E T R I 1 0 G 7
@@ -3209,13 +2361,13 @@ FETri10G7::FETri10G7() : FETri10_(NINT, FE_TRI10G7)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN, NELN);
-	Ai.resize(NELN, NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN, NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETri10G7::project_to_nodes(double* ai, double* ao)
+void FETri10G7::project_to_nodes(double* ai, double* ao) const
 {
 	// TODO: Implement this
 }
@@ -3243,13 +2395,13 @@ FETri10G12::FETri10G12() : FETri10_(NINT, FE_TRI10G12)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN, NELN);
-	Ai.resize(NELN, NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN, NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FETri10G12::project_to_nodes(double* ai, double* ao)
+void FETri10G12::project_to_nodes(double* ai, double* ao) const
 {
 	// TODO: Implement this
 }
@@ -3258,80 +2410,16 @@ void FETri10G12::project_to_nodes(double* ai, double* ao)
 //          F E Q U A D 8 
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-// shape function at (r,s)
-void FEQuad8_::shape(double* H, double r, double s)
+void FEQuad8_::init()
 {
-	H[4] = 0.5*(1 - r*r)*(1 - s);
-	H[5] = 0.5*(1 - s*s)*(1 + r);
-	H[6] = 0.5*(1 - r*r)*(1 + s);
-	H[7] = 0.5*(1 - s*s)*(1 - r);
+	// allocate shape classes
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_QUAD4));
+	m_shapeP[2] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_QUAD8));
 
-	H[0] = 0.25*(1 - r)*(1 - s) - 0.5*(H[4] + H[7]);
-	H[1] = 0.25*(1 + r)*(1 - s) - 0.5*(H[4] + H[5]);
-	H[2] = 0.25*(1 + r)*(1 + s) - 0.5*(H[5] + H[6]);
-	H[3] = 0.25*(1 - r)*(1 + s) - 0.5*(H[6] + H[7]);
-}
-
-//-----------------------------------------------------------------------------
-// shape function derivatives at (r,s)
-void FEQuad8_::shape_deriv(double* Hr, double* Hs, double r, double s)
-{
-	Hr[4] = -r*(1 - s);
-	Hr[5] = 0.5*(1 - s*s);
-	Hr[6] = -r*(1 + s);
-	Hr[7] = -0.5*(1 - s*s);
-
-	Hr[0] = -0.25*(1 - s) - 0.5*(Hr[4] + Hr[7]);
-	Hr[1] =  0.25*(1 - s) - 0.5*(Hr[4] + Hr[5]);
-	Hr[2] =  0.25*(1 + s) - 0.5*(Hr[5] + Hr[6]);
-	Hr[3] = -0.25*(1 + s) - 0.5*(Hr[6] + Hr[7]);
-
-	Hs[4] = -0.5*(1 - r*r);
-	Hs[5] = -s*(1 + r);
-	Hs[6] = 0.5*(1 - r*r);
-	Hs[7] = -s*(1 - r);
-
-	Hs[0] = -0.25*(1 - r) - 0.5*(Hs[4] + Hs[7]);
-	Hs[1] = -0.25*(1 + r) - 0.5*(Hs[4] + Hs[5]);
-	Hs[2] =  0.25*(1 + r) - 0.5*(Hs[5] + Hs[6]);
-	Hs[3] =  0.25*(1 - r) - 0.5*(Hs[6] + Hs[7]);
-}
-
-//-----------------------------------------------------------------------------
-//! shape function derivatives at (r,s)
-//! \todo implement this
-void FEQuad8_::shape_deriv2(double* Hrr, double* Hrs, double* Hss, double r, double s)
-{
-	Hrr[4] = -(1 - s);
-	Hrr[5] = 0.0;
-	Hrr[6] = -(1 + s);
-	Hrr[7] = 0.0;
-
-	Hrs[4] = r;
-	Hrs[5] = -s;
-	Hrs[6] = -r;
-	Hrs[7] = s;
-
-	Hss[4] = 0.0;
-	Hss[5] = -(1 + r);
-	Hss[6] = 0.0;
-	Hss[7] = -(1 - r);
-
-	Hrr[0] = - 0.5*(Hrr[4] + Hrr[7]);
-	Hrr[1] = - 0.5*(Hrr[4] + Hrr[5]);
-	Hrr[2] = - 0.5*(Hrr[5] + Hrr[6]);
-	Hrr[3] = - 0.5*(Hrr[6] + Hrr[7]);
-
-	Hrs[0] =  0.25 - 0.5*(Hrs[4] + Hrs[7]);
-	Hrs[1] = -0.25 - 0.5*(Hrs[4] + Hrs[5]);
-	Hrs[2] =  0.25 - 0.5*(Hrs[5] + Hrs[6]);
-	Hrs[3] = -0.25 - 0.5*(Hrs[6] + Hrs[7]);
-
-	Hss[0] = - 0.5*(Hss[4] + Hss[7]);
-	Hss[1] = - 0.5*(Hss[4] + Hss[5]);
-	Hss[2] = - 0.5*(Hss[5] + Hss[6]);
-	Hss[3] = - 0.5*(Hss[6] + Hss[7]);
+	// initialize base class
+	FESurfaceElementTraits::init();
 }
 
 //=============================================================================
@@ -3358,25 +2446,25 @@ FEQuad8G9::FEQuad8G9() : FEQuad8_(NINT, FE_QUAD8G9)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FEQuad8G9::project_to_nodes(double* ai, double* ao)
+void FEQuad8G9::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
 
@@ -3400,7 +2488,7 @@ FEQuad8NI::FEQuad8NI() : FEQuad8_(NINT, FE_QUAD8NI)
 }
 
 //-----------------------------------------------------------------------------
-void FEQuad8NI::project_to_nodes(double* ai, double* ao)
+void FEQuad8NI::project_to_nodes(double* ai, double* ao) const
 {
     ao[0] = ai[0];
     ao[1] = ai[1];
@@ -3416,74 +2504,16 @@ void FEQuad8NI::project_to_nodes(double* ai, double* ao)
 //          F E Q U A D 9 
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-// shape function at (r,s)
-void FEQuad9_::shape(double* H, double r, double s)
+void FEQuad9_::init()
 {
-	double R[3] = {0.5*r*(r-1.0), 0.5*r*(r+1.0), 1.0 - r*r};
-	double S[3] = {0.5*s*(s-1.0), 0.5*s*(s+1.0), 1.0 - s*s};
+	// allocate shape classes
+	m_shapeP.resize(3);
+	m_shapeP[0] = 0;
+	m_shapeP[1] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_QUAD4));
+	m_shapeP[2] = dynamic_cast<FESurfaceElementShape*>(FEElementLibrary::GetElementShapeClass(ET_QUAD9));
 
-	H[0] = R[0]*S[0];
-	H[1] = R[1]*S[0];
-	H[2] = R[1]*S[1];
-	H[3] = R[0]*S[1];
-	H[4] = R[2]*S[0];
-	H[5] = R[1]*S[2];
-	H[6] = R[2]*S[1];
-	H[7] = R[0]*S[2];
-	H[8] = R[2]*S[2];
-}
-
-//-----------------------------------------------------------------------------
-// shape function derivatives at (r,s)
-void FEQuad9_::shape_deriv(double* Hr, double* Hs, double r, double s)
-{
-	double R[3] = {0.5*r*(r-1.0), 0.5*r*(r+1.0), 1.0 - r*r};
-	double S[3] = {0.5*s*(s-1.0), 0.5*s*(s+1.0), 1.0 - s*s};
-	double DR[3] = {r-0.5, r+0.5, -2.0*r};
-	double DS[3] = {s-0.5, s+0.5, -2.0*s};
-
-	Hr[0] = DR[0]*S[0];
-	Hr[1] = DR[1]*S[0];
-	Hr[2] = DR[1]*S[1];
-	Hr[3] = DR[0]*S[1];
-	Hr[4] = DR[2]*S[0];
-	Hr[5] = DR[1]*S[2];
-	Hr[6] = DR[2]*S[1];
-	Hr[7] = DR[0]*S[2];
-	Hr[8] = DR[2]*S[2];
-
-	Hs[0] = R[0]*DS[0];
-	Hs[1] = R[1]*DS[0];
-	Hs[2] = R[1]*DS[1];
-	Hs[3] = R[0]*DS[1];
-	Hs[4] = R[2]*DS[0];
-	Hs[5] = R[1]*DS[2];
-	Hs[6] = R[2]*DS[1];
-	Hs[7] = R[0]*DS[2];
-	Hs[8] = R[2]*DS[2];
-}
-
-//-----------------------------------------------------------------------------
-//! shape function derivatives at (r,s)
-void FEQuad9_::shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s)
-{
-	double R[3] = {0.5*r*(r-1.0), 0.5*r*(r+1.0), 1.0 - r*r};
-	double S[3] = {0.5*s*(s-1.0), 0.5*s*(s+1.0), 1.0 - s*s};
-	double DR[3] = {r-0.5, r+0.5, -2.0*r};
-	double DS[3] = {s-0.5, s+0.5, -2.0*s};
-	double DDR[3] = {1.0, 1.0, -2.0};
-	double DDS[3] = {1.0, 1.0, -2.0};
-
-	Grr[0] = DDR[0]*S[0]; Grs[0] = DR[0]*DS[0]; Gss[0] = R[0]*DDS[0];
-	Grr[1] = DDR[1]*S[0]; Grs[1] = DR[1]*DS[0]; Gss[1] = R[1]*DDS[0];
-	Grr[2] = DDR[1]*S[1]; Grs[2] = DR[1]*DS[1]; Gss[2] = R[1]*DDS[1];
-	Grr[3] = DDR[0]*S[1]; Grs[3] = DR[0]*DS[1]; Gss[3] = R[0]*DDS[1];
-	Grr[4] = DDR[2]*S[0]; Grs[4] = DR[2]*DS[0]; Gss[4] = R[2]*DDS[0];
-	Grr[5] = DDR[1]*S[2]; Grs[5] = DR[1]*DS[2]; Gss[5] = R[1]*DDS[2];
-	Grr[6] = DDR[2]*S[1]; Grs[6] = DR[2]*DS[1]; Gss[6] = R[2]*DDS[1];
-	Grr[7] = DDR[0]*S[2]; Grs[7] = DR[0]*DS[2]; Gss[7] = R[0]*DDS[2];
-	Grr[8] = DDR[2]*S[2]; Grs[8] = DR[2]*DS[2]; Gss[8] = R[2]*DDS[2];		
+	// initialize base class
+	FESurfaceElementTraits::init();
 }
 
 //=============================================================================
@@ -3510,25 +2540,25 @@ FEQuad9G9::FEQuad9G9() : FEQuad9_(NINT, FE_QUAD9G9)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FEQuad9G9::project_to_nodes(double* ai, double* ao)
+void FEQuad9G9::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
 
@@ -3552,7 +2582,7 @@ FEQuad9NI::FEQuad9NI() : FEQuad9_(NINT, FE_QUAD9NI)
 }
 
 //-----------------------------------------------------------------------------
-void FEQuad9NI::project_to_nodes(double* ai, double* ao)
+void FEQuad9NI::project_to_nodes(double* ai, double* ao) const
 {
     ao[0] = ai[0];
     ao[1] = ai[1];
@@ -3580,48 +2610,35 @@ FEShellElementTraits::FEShellElementTraits(int ni, int ne, FE_Element_Shape es, 
 
 	Hr.resize(ni, ne);
 	Hs.resize(ni, ne);
+
+	m_faces = 1;
 }
 
 //-----------------------------------------------------------------------------
 //! initialize element traits data
 void FEShellElementTraits::init()
 {
-    assert(nint > 0);
-    assert(neln > 0);
+    assert(m_nint > 0);
+    assert(m_neln > 0);
     const int NELN = FEElement::MAX_NODES;
     
     // calculate shape function values at gauss points
     double N[NELN];
-    for (int n=0; n<nint; ++n)
+    for (int n=0; n<m_nint; ++n)
     {
         shape_fnc(N, gr[n], gs[n]);
-        for (int i=0; i<neln; ++i) H[n][i] = N[i];
+        for (int i=0; i<m_neln; ++i) m_H[n][i] = N[i];
     }
     
     // calculate local derivatives of shape functions at gauss points
     double Nr[NELN], Ns[NELN];
-    for (int n=0; n<nint; ++n)
+    for (int n=0; n<m_nint; ++n)
     {
         shape_deriv(Nr, Ns, gr[n], gs[n]);
-        for (int i=0; i<neln; ++i)
+        for (int i=0; i<m_neln; ++i)
         {
             Hr[n][i] = Nr[i];
             Hs[n][i] = Ns[i];
-        }
-    }
-}
-
-//-----------------------------------------------------------------------------
-//! project mat3ds integration point data to nodes
-void FEShellElementTraits::project_to_nodes(mat3ds* si, mat3ds* so)
-{
-    double ai[FEElement::MAX_INTPOINTS];
-    double ao[FEElement::MAX_NODES];
-    for (int i=0; i<3; ++i) {
-        for (int j=i; j<3; ++j) {
-            for (int n=0; n<nint; ++n) ai[n] = si[n](i,j);
-            project_to_nodes(ai, ao);
-            for (int n=0; n<neln; ++n) so[n](i,j) = ao[n];
         }
     }
 }
@@ -3677,23 +2694,23 @@ FEShellQuad4G8::FEShellQuad4G8() : FEShellQuad4_(NINT, FE_SHELL_QUAD4G8)
     
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+    m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellQuad4G8::project_to_nodes(double* ai, double* ao)
+void FEShellQuad4G8::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -3727,23 +2744,23 @@ FEShellQuad4G12::FEShellQuad4G12() : FEShellQuad4_(NINT, FE_SHELL_QUAD4G12)
     
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellQuad4G12::project_to_nodes(double* ai, double* ao)
+void FEShellQuad4G12::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -3795,23 +2812,23 @@ FEShellTri3G6::FEShellTri3G6() : FEShellTri3_(NINT, FE_SHELL_TRI3G6)
 
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellTri3G6::project_to_nodes(double* ai, double* ao)
+void FEShellTri3G6::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -3843,23 +2860,23 @@ FEShellTri3G9::FEShellTri3G9() : FEShellTri3_(NINT, FE_SHELL_TRI3G9)
     
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellTri3G9::project_to_nodes(double* ai, double* ao)
+void FEShellTri3G9::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -3941,23 +2958,23 @@ FEShellQuad8G18::FEShellQuad8G18() : FEShellQuad8_(NINT, FE_SHELL_QUAD8G18)
     
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellQuad8G18::project_to_nodes(double* ai, double* ao)
+void FEShellQuad8G18::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -4004,23 +3021,23 @@ FEShellQuad8G27::FEShellQuad8G27() : FEShellQuad8_(NINT, FE_SHELL_QUAD8G27)
     
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellQuad8G27::project_to_nodes(double* ai, double* ao)
+void FEShellQuad8G27::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -4093,23 +3110,23 @@ FEShellTri6G14::FEShellTri6G14() : FEShellTri6_(NINT, FE_SHELL_TRI6G14)
     
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellTri6G14::project_to_nodes(double* ai, double* ao)
+void FEShellTri6G14::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -4153,23 +3170,23 @@ FEShellTri6G21::FEShellTri6G21() : FEShellTri6_(NINT, FE_SHELL_TRI6G21)
     
     init();
     
-    Hi.resize(NELN, NELN);
+	m_Hi.resize(NELN, NELN);
     for (int i=0; i<NELN; ++i)
         for (int n=0; n<NELN; ++n)
-            Hi(i,n) = H(ni[i],n);
-    Hi = Hi.inverse();
+			m_Hi(i,n) = m_H(ni[i],n);
+	m_Hi = m_Hi.inverse();
 }
 
 //-----------------------------------------------------------------------------
 //! project to nodes
-void FEShellTri6G21::project_to_nodes(double* ai, double* ao)
+void FEShellTri6G21::project_to_nodes(double* ai, double* ao) const
 {
     for (int j=0; j<NELN; ++j)
     {
         ao[j] = 0;
         for (int k=0; k<NELN; ++k)
         {
-            ao[j] += Hi[j][k]*ai[ni[k]];
+            ao[j] += m_Hi[j][k]*ai[ni[k]];
         }
     }
 }
@@ -4210,24 +3227,24 @@ FE2DElementTraits::FE2DElementTraits(int ni, int ne, FE_Element_Shape es, FE_Ele
 //
 void FE2DElementTraits::init()
 {
-	assert(nint > 0);
-	assert(neln > 0);
+	assert(m_nint > 0);
+	assert(m_neln > 0);
 
 	// evaluate shape functions
 	const int NE = FEElement::MAX_NODES;
 	double N[NE];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
 		shape(N, gr[n], gs[n]);
-		for (int i=0; i<neln; ++i) H[n][i] = N[i]; 
+		for (int i=0; i<m_neln; ++i) m_H[n][i] = N[i];
 	}
 	
 	// evaluate shape function derivatives
 	double Nr[NE], Ns[NE];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
 		shape_deriv(Nr, Ns, gr[n], gs[n]);
-		for (int i=0; i<neln; ++i)
+		for (int i=0; i<m_neln; ++i)
 		{
 			Gr[n][i] = Nr[i];
 			Gs[n][i] = Ns[i];
@@ -4276,7 +3293,7 @@ FE2DTri3G1::FE2DTri3G1() : FE2DTri3_(NINT, FE2D_TRI3G1)
 }
 
 //-----------------------------------------------------------------------------
-void FE2DTri3G1::project_to_nodes(double* ai, double* ao)
+void FE2DTri3G1::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[0];
@@ -4346,7 +3363,7 @@ FE2DTri6G3::FE2DTri6G3() : FE2DTri6_(NINT, FE2D_TRI6G3)
 }
 
 //-----------------------------------------------------------------------------
-void FE2DTri6G3::project_to_nodes(double* ai, double* ao)
+void FE2DTri6G3::project_to_nodes(double* ai, double* ao) const
 {
 	matrix H(3, 3);
 	for (int n=0; n<3; ++n)
@@ -4411,11 +3428,11 @@ FE2DQuad4G4::FE2DQuad4G4() : FE2DQuad4_(NINT, FE2D_QUAD4G4)
 	gr[2] =  a; gs[2] =  a; gw[2] = 1;
 	gr[3] = -a; gs[3] =  a; gw[3] = 1;
 	init(); 
-	Hi = H.inverse();
+	m_Hi = m_H.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FE2DQuad4G4::project_to_nodes(double* ai, double* ao)
+void FE2DQuad4G4::project_to_nodes(double* ai, double* ao) const
 {
 	int ni = NINT;
 	int ne = NELN;
@@ -4423,7 +3440,7 @@ void FE2DQuad4G4::project_to_nodes(double* ai, double* ao)
 	for (int i=0; i<ne; ++i)
 	{
 		ao[i] = 0;
-		for (int j=0; j<ni; ++j) ao[i] += Hi[i][j]*ai[j];
+		for (int j=0; j<ni; ++j) ao[i] += m_Hi[i][j]*ai[j];
 	}
 }
 
@@ -4530,25 +3547,25 @@ FE2DQuad8G9::FE2DQuad8G9() : FE2DQuad8_(NINT, FE2D_QUAD8G9)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FE2DQuad8G9::project_to_nodes(double* ai, double* ao)
+void FE2DQuad8G9::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
 
@@ -4650,25 +3667,25 @@ FE2DQuad9G9::FE2DQuad9G9() : FE2DQuad9_(NINT, FE2D_QUAD9G9)
 
 	// we need Ai to project integration point data to the nodes
 	matrix A(NELN,NELN);
-	Ai.resize(NELN,NELN);
-	A = H.transpose()*H;
-	Ai = A.inverse();
+	m_Ai.resize(NELN,NELN);
+	A = m_H.transpose()*m_H;
+	m_Ai = A.inverse();
 }
 
 //-----------------------------------------------------------------------------
-void FE2DQuad9G9::project_to_nodes(double* ai, double* ao)
+void FE2DQuad9G9::project_to_nodes(double* ai, double* ao) const
 {
 	vector<double> b(NELN);
 	for (int i=0; i<NELN; ++i) 
 	{
 		b[i] = 0;
-		for (int j=0; j<NINT; ++j) b[i] += H[j][i]*ai[j];
+		for (int j=0; j<NINT; ++j) b[i] += m_H[j][i]*ai[j];
 	}
 
 	for (int i=0; i<NELN; ++i) 
 	{
 		ao[i] = 0;
-		for (int j=0; j<NELN; ++j) ao[i] += Ai[i][j]*b[j];
+		for (int j=0; j<NELN; ++j) ao[i] += m_Ai[i][j]*b[j];
 	}
 }
 
@@ -4689,24 +3706,24 @@ FELineElementTraits::FELineElementTraits(int ni, int ne, FE_Element_Shape es, FE
 //-----------------------------------------------------------------------------
 void FELineElementTraits::init()
 {
-	assert(nint > 0);
-	assert(neln > 0);
+	assert(m_nint > 0);
+	assert(m_neln > 0);
 
 	// evaluate shape functions
 	const int NE = FEElement::MAX_NODES;
 	double N[NE];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
 		shape(N, gr[n]);
-		for (int i=0; i<neln; ++i) H[n][i] = N[i]; 
+		for (int i=0; i<m_neln; ++i) m_H[n][i] = N[i];
 	}
 	
 	// evaluate shape function derivatives
 	double Nr[NE];
-	for (int n=0; n<nint; ++n)
+	for (int n=0; n<m_nint; ++n)
 	{
 		shape_deriv(Nr, gr[n]);
-		for (int i=0; i<neln; ++i)
+		for (int i=0; i<m_neln; ++i)
 		{
 			Gr[n][i] = Nr[i];
 		}
@@ -4750,7 +3767,7 @@ FELine2G1::FELine2G1() : FELine2_(NINT, FE_LINE2G1)
 }
 
 //-----------------------------------------------------------------------------
-void FELine2G1::project_to_nodes(double* ai, double* ao)
+void FELine2G1::project_to_nodes(double* ai, double* ao) const
 {
 	ao[0] = ai[0];
 	ao[1] = ai[0];

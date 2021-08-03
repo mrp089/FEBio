@@ -1,28 +1,58 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FERigidPrismaticJoint.h"
-#include "FECore/FERigidBody.h"
+#include "FERigidBody.h"
 #include "FECore/log.h"
 #include "FECore/FEModel.h"
 #include "FECore/FEMaterial.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FERigidPrismaticJoint, FERigidConnector);
-    ADD_PARAMETER(m_atol, FE_PARAM_DOUBLE, "tolerance"     );
-    ADD_PARAMETER(m_gtol, FE_PARAM_DOUBLE, "gaptol"        );
-    ADD_PARAMETER(m_qtol, FE_PARAM_DOUBLE, "angtol"        );
-    ADD_PARAMETER(m_eps , FE_PARAM_DOUBLE, "force_penalty" );
-    ADD_PARAMETER(m_ups , FE_PARAM_DOUBLE, "moment_penalty");
-    ADD_PARAMETER(m_cps , FE_PARAM_DOUBLE, "force_damping" );
-    ADD_PARAMETER(m_rps , FE_PARAM_DOUBLE, "moment_damping");
-    ADD_PARAMETER(m_q0  , FE_PARAM_VEC3D , "joint_origin"  );
-    ADD_PARAMETER(m_e0[0], FE_PARAM_VEC3D, "translation_axis" );
-    ADD_PARAMETER(m_e0[1], FE_PARAM_VEC3D, "transverse_axis");
-    ADD_PARAMETER(m_naugmin,FE_PARAM_INT , "minaug"        );
-    ADD_PARAMETER(m_naugmax,FE_PARAM_INT , "maxaug"        );
-    ADD_PARAMETER(m_bd  , FE_PARAM_BOOL  , "prescribed_translation");
-    ADD_PARAMETER(m_dp  , FE_PARAM_DOUBLE, "translation"   );
-    ADD_PARAMETER(m_Fp  , FE_PARAM_DOUBLE, "force"         );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidPrismaticJoint, FERigidConnector);
+    ADD_PARAMETER(m_atol, "tolerance"     );
+    ADD_PARAMETER(m_gtol, "gaptol"        );
+    ADD_PARAMETER(m_qtol, "angtol"        );
+    ADD_PARAMETER(m_eps , "force_penalty" );
+    ADD_PARAMETER(m_ups , "moment_penalty");
+    ADD_PARAMETER(m_cps , "force_damping" );
+    ADD_PARAMETER(m_rps , "moment_damping");
+    ADD_PARAMETER(m_q0  , "joint_origin"  );
+    ADD_PARAMETER(m_e0[0], "translation_axis" );
+    ADD_PARAMETER(m_e0[1], "transverse_axis");
+    ADD_PARAMETER(m_naugmin, "minaug"        );
+    ADD_PARAMETER(m_naugmax, "maxaug"        );
+    ADD_PARAMETER(m_bd  , "prescribed_translation");
+    ADD_PARAMETER(m_dp  , "translation"   );
+    ADD_PARAMETER(m_Fp  , "force"         );
+	ADD_PARAMETER(m_bautopen, "auto_penalty");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FERigidPrismaticJoint::FERigidPrismaticJoint(FEModel* pfem) : FERigidConnector(pfem)
@@ -40,6 +70,12 @@ FERigidPrismaticJoint::FERigidPrismaticJoint(FEModel* pfem) : FERigidConnector(p
     m_cps = m_rps = 0.0;
     m_e0[0] = vec3d(1,0,0);
     m_e0[1] = vec3d(0,1,0);
+	m_bautopen = false;
+}
+
+FERigidPrismaticJoint::~FERigidPrismaticJoint()
+{
+
 }
 
 //-----------------------------------------------------------------------------
@@ -48,7 +84,7 @@ FERigidPrismaticJoint::FERigidPrismaticJoint(FEModel* pfem) : FERigidConnector(p
 bool FERigidPrismaticJoint::Init()
 {
     if (m_bd && (m_Fp != 0)) {
-        felog.printbox("FATAL ERROR", "Translation and force cannot be prescribed simultaneously in rigid connector %d (prismatic joint)\n", m_nID+1);
+        feLogError("Translation and force cannot be prescribed simultaneously in rigid connector %d (prismatic joint)\n", m_nID+1);
         return false;
     }
     
@@ -77,27 +113,42 @@ bool FERigidPrismaticJoint::Init()
 void FERigidPrismaticJoint::Serialize(DumpStream& ar)
 {
 	FERigidConnector::Serialize(ar);
-    if (ar.IsSaving())
-    {
-        ar << m_qa0 << m_qb0;
-        ar << m_L << m_U;
-        ar << m_e0[0] << m_e0[1] << m_e0[2];
-        ar << m_ea0[0] << m_ea0[1] << m_ea0[2];
-        ar << m_eb0[0] << m_eb0[1] << m_eb0[2];
-    }
-    else
-    {
-        ar >> m_qa0 >> m_qb0;
-        ar >> m_L >> m_U;
-        ar >> m_e0[0] >> m_e0[1] >> m_e0[2];
-        ar >> m_ea0[0] >> m_ea0[1] >> m_ea0[2];
-        ar >> m_eb0[0] >> m_eb0[1] >> m_eb0[2];
-    }
+    ar & m_qa0 & m_qb0;
+    ar & m_L & m_U;
+    ar & m_e0;
+    ar & m_ea0;
+    ar & m_eb0;
+}
+
+//-----------------------------------------------------------------------------
+//! initial position 
+vec3d FERigidPrismaticJoint::InitialPosition() const
+{
+	return m_q0;
+}
+
+//-----------------------------------------------------------------------------
+//! current position
+vec3d FERigidPrismaticJoint::Position() const
+{
+	FERigidBody& RBa = *m_rbA;
+	vec3d qa = m_qa0; 
+	RBa.GetRotation().RotateVector(qa);
+	return RBa.m_rt + qa;
+}
+
+//-----------------------------------------------------------------------------
+//! current orientation
+quatd FERigidPrismaticJoint::Orientation() const
+{
+	quatd Q0(vec3d(1, 0, 0), m_e0[0]);
+	FERigidBody& RBa = *m_rbA;
+	return RBa.GetRotation()*Q0;
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidPrismaticJoint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FERigidPrismaticJoint::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
     vector<double> fa(6);
     vector<double> fb(6);
@@ -108,7 +159,7 @@ void FERigidPrismaticJoint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-	double alpha = tp.alpha;
+	double alpha = tp.alphaf;
 
     // body A
     vec3d ra = RBa.m_rt*alpha + RBa.m_rp*(1-alpha);
@@ -194,17 +245,17 @@ void FERigidPrismaticJoint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
     for (int i=0; i<6; ++i) if (RBa.m_LM[i] >= 0) R[RBa.m_LM[i]] += fa[i];
     for (int i=0; i<6; ++i) if (RBb.m_LM[i] >= 0) R[RBb.m_LM[i]] += fb[i];
     
-    RBa.m_Fr += vec3d(fa[0],fa[1],fa[2]);
-    RBa.m_Mr += vec3d(fa[3],fa[4],fa[5]);
-    RBb.m_Fr += vec3d(fb[0],fb[1],fb[2]);
-    RBb.m_Mr += vec3d(fb[3],fb[4],fb[5]);
+    RBa.m_Fr -= vec3d(fa[0],fa[1],fa[2]);
+    RBa.m_Mr -= vec3d(fa[3],fa[4],fa[5]);
+    RBb.m_Fr -= vec3d(fb[0],fb[1],fb[2]);
+    RBb.m_Mr -= vec3d(fb[3],fb[4],fb[5]);
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidPrismaticJoint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FERigidPrismaticJoint::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
-	double alpha = tp.alpha;
+	double alpha = tp.alphaf;
     double beta  = tp.beta;
     double gamma = tp.gamma;
     
@@ -215,10 +266,8 @@ void FERigidPrismaticJoint::StiffnessMatrix(FESolver* psolver, const FETimeInfo&
     vec3d eat[3], eap[3], ea[3];
     vec3d ebt[3], ebp[3], eb[3];
     
-    int j;
-    
     vector<int> LM(12);
-    matrix ke(12,12);
+	FEElementMatrix ke(12, 12);
     ke.zero();
     
 	FERigidBody& RBa = *m_rbA;
@@ -271,7 +320,7 @@ void FERigidPrismaticJoint::StiffnessMatrix(FESolver* psolver, const FETimeInfo&
     m_M = m_U + ksi*m_ups;
     
     mat3d eahat[3], ebhat[3], eathat[3], ebthat[3];
-    for (j=0; j<3; ++j) {
+    for (int j=0; j<3; ++j) {
         eahat[j] = skew(ea[j]);
         ebhat[j] = skew(eb[j]);
         eathat[j] = skew(eat[j]);
@@ -424,13 +473,14 @@ void FERigidPrismaticJoint::StiffnessMatrix(FESolver* psolver, const FETimeInfo&
     ke[10][9] = K[1][0]; ke[10][10] = K[1][1]; ke[10][11] = K[1][2];
     ke[11][9] = K[2][0]; ke[11][10] = K[2][1]; ke[11][11] = K[2][2];
     
-    for (j=0; j<6; ++j)
+    for (int j=0; j<6; ++j)
     {
         LM[j  ] = RBa.m_LM[j];
         LM[j+6] = RBb.m_LM[j];
     }
     
-    psolver->AssembleStiffness(LM, ke);
+	ke.SetIndices(LM);
+	LS.Assemble(ke);
 }
 
 //-----------------------------------------------------------------------------
@@ -448,7 +498,7 @@ bool FERigidPrismaticJoint::Augment(int naug, const FETimeInfo& tp)
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-	double alpha = tp.alpha;
+	double alpha = tp.alphaf;
 
     ra = RBa.m_rt*alpha + RBa.m_rp*(1-alpha);
     rb = RBb.m_rt*alpha + RBb.m_rp*(1-alpha);
@@ -503,22 +553,22 @@ bool FERigidPrismaticJoint::Augment(int naug, const FETimeInfo& tp)
     normM1 = sqrt(Um*Um);
     
     // check convergence of constraints
-    felog.printf(" rigid connector # %d (prismatic joint)\n", m_nID+1);
-    felog.printf("                  CURRENT        REQUIRED\n");
+    feLog(" rigid connector # %d (prismatic joint)\n", m_nID+1);
+    feLog("                  CURRENT        REQUIRED\n");
     double pctn = 0;
     double gap = c.norm();
     double qap = ksi.norm();
     if (fabs(normF1) > 1e-10) pctn = fabs((normF1 - normF0)/normF1);
-    if (m_atol) felog.printf("    force : %15le %15le\n", pctn, m_atol);
-    else        felog.printf("    force : %15le        ***\n", pctn);
-    if (m_gtol) felog.printf("    gap   : %15le %15le\n", gap, m_gtol);
-    else        felog.printf("    gap   : %15le        ***\n", gap);
+    if (m_atol) feLog("    force : %15le %15le\n", pctn, m_atol);
+    else        feLog("    force : %15le        ***\n", pctn);
+    if (m_gtol) feLog("    gap   : %15le %15le\n", gap, m_gtol);
+    else        feLog("    gap   : %15le        ***\n", gap);
     double qctn = 0;
     if (fabs(normM1) > 1e-10) qctn = fabs((normM1 - normM0)/normM1);
-    if (m_atol) felog.printf("    moment: %15le %15le\n", qctn, m_atol);
-    else        felog.printf("    moment: %15le        ***\n", qctn);
-    if (m_qtol) felog.printf("    angle : %15le %15le\n", qap, m_qtol);
-    else        felog.printf("    angle : %15le        ***\n", qap);
+    if (m_atol) feLog("    moment: %15le %15le\n", qctn, m_atol);
+    else        feLog("    moment: %15le        ***\n", qctn);
+    if (m_qtol) feLog("    angle : %15le %15le\n", qap, m_qtol);
+    else        feLog("    angle : %15le        ***\n", qap);
     
     if (m_atol && ((pctn >= m_atol) || (qctn >= m_atol))) bconv = false;
     if (m_gtol && (gap >= m_gtol)) bconv = false;
@@ -533,11 +583,24 @@ bool FERigidPrismaticJoint::Augment(int naug, const FETimeInfo& tp)
         m_U = Um;
     }
     
+    // auto-penalty update (works only with gaptol and angtol)
+	if (m_bautopen)
+	{
+		if (m_gtol && (gap > m_gtol)) {
+			m_eps = fmax(gap / m_gtol, 100)*m_eps;
+			feLog("    force_penalty :         %15le\n", m_eps);
+		}
+		if (m_qtol && (qap > m_qtol)) {
+			m_ups = fmax(qap / m_qtol, 100)*m_ups;
+			feLog("    moment_penalty :        %15le\n", m_ups);
+		}
+	}
+
     return bconv;
 }
 
 //-----------------------------------------------------------------------------
-void FERigidPrismaticJoint::Update(int niter, const FETimeInfo& tp)
+void FERigidPrismaticJoint::Update()
 {
     vec3d ra, rb;
     vec3d za, zb;
@@ -547,7 +610,8 @@ void FERigidPrismaticJoint::Update(int niter, const FETimeInfo& tp)
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-	double alpha = tp.alpha;
+	FETimeInfo& tp = GetFEModel()->GetTime();
+	double alpha = tp.alphaf;
 
     ra = RBa.m_rt*alpha + RBa.m_rp*(1-alpha);
     rb = RBb.m_rt*alpha + RBb.m_rp*(1-alpha);
@@ -631,4 +695,61 @@ void FERigidPrismaticJoint::Reset()
     
     m_ea0[0] = m_e0[0]; m_ea0[1] = m_e0[1]; m_ea0[2] = m_e0[2];
     m_eb0[0] = m_e0[0]; m_eb0[1] = m_e0[1]; m_eb0[2] = m_e0[2];
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidPrismaticJoint::RelativeTranslation(const bool global)
+{
+    FERigidBody& RBa = *m_rbA;
+    FERigidBody& RBb = *m_rbB;
+    
+    // body A
+    vec3d ra = RBa.m_rt;
+    vec3d za = m_qa0; RBa.GetRotation().RotateVector(za);
+    
+    // body B
+    vec3d rb = RBb.m_rt;
+    vec3d zb = m_qb0; RBb.GetRotation().RotateVector(zb);
+
+    // relative translation in global coordinate system
+    vec3d x = rb + zb - ra - za;
+    
+    if (global) return x;
+
+    // evaluate local basis for body A
+    vec3d ea[3];
+    ea[0] = m_ea0[0]; RBa.GetRotation().RotateVector(ea[0]);
+    ea[1] = m_ea0[1]; RBa.GetRotation().RotateVector(ea[1]);
+    ea[2] = m_ea0[2]; RBa.GetRotation().RotateVector(ea[2]);
+
+    // project relative translation onto local basis
+    vec3d y(x*ea[0], x*ea[1], x*ea[2]);
+    
+    return y;
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidPrismaticJoint::RelativeRotation(const bool global)
+{
+    FERigidBody& RBa = *m_rbA;
+    FERigidBody& RBb = *m_rbB;
+    
+    // get relative rotation
+    quatd Q = RBb.GetRotation()*RBa.GetRotation().Inverse(); Q.MakeUnit();
+    
+    // relative rotation vector
+    vec3d q = Q.GetRotationVector();
+    
+    if (global) return q;
+    
+    // evaluate local basis for body A
+    vec3d ea[3];
+    ea[0] = m_ea0[0]; RBa.GetRotation().RotateVector(ea[0]);
+    ea[1] = m_ea0[1]; RBa.GetRotation().RotateVector(ea[1]);
+    ea[2] = m_ea0[2]; RBa.GetRotation().RotateVector(ea[2]);
+
+    // project relative rotation onto local basis
+    vec3d y(q*ea[0], q*ea[1], q*ea[2]);
+    
+    return y;
 }

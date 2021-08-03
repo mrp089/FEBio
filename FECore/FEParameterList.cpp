@@ -1,8 +1,37 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEParameterList.h"
 #include "FECoreKernel.h"
 #include "DumpStream.h"
 #include "tens3d.h"
+#include "FEModelParam.h"
 #include <string>
 #include <assert.h>
 
@@ -34,6 +63,20 @@ void FEParameterList::operator = (FEParameterList& l)
 			case FE_PARAM_MAT3D : d.value<mat3d >() = s.value<mat3d >(); break;
 			case FE_PARAM_MAT3DS: d.value<mat3ds>() = s.value<mat3ds>(); break;
 			case FE_PARAM_TENS3DRS: d.value<tens3drs>() = s.value<tens3drs>(); break;
+			case FE_PARAM_DOUBLE_MAPPED:
+			{
+				FEParamDouble& mat3d = d.value<FEParamDouble>();
+				FEParamDouble& src = s.value<FEParamDouble>();
+				mat3d.setValuator(src.valuator()->copy());
+			}
+			break;
+			case FE_PARAM_MAT3D_MAPPED:
+			{
+				FEParamMat3d& mat3d = d.value<FEParamMat3d>();
+				FEParamMat3d& src = s.value<FEParamMat3d>();
+				mat3d.setValuator(src.valuator()->copy());
+			}
+			break;
 			default:
 				assert(false);
 			}
@@ -61,21 +104,23 @@ void FEParameterList::operator = (FEParameterList& l)
 
 //-----------------------------------------------------------------------------
 // This function adds a parameter to the parameter list
-void FEParameterList::AddParameter(void *pv, FEParamType itype, int ndim, const char *sz)
+FEParam* FEParameterList::AddParameter(void *pv, FEParamType itype, int ndim, const char *sz, bool* watch)
 {
 	// sanity checks
 	assert(pv);
 	assert(sz);
 
 	// create a new parameter object
-	FEParam p(pv, itype, ndim, sz);
+	FEParam p(pv, itype, ndim, sz, watch);
 
 	// add the parameter to the list
 	m_pl.push_back(p);
+
+	return &(m_pl.back());
 }
 //-----------------------------------------------------------------------------
 // This function adds a parameter to the parameter list
-void FEParameterList::AddParameter(void *pv, FEParamType itype, int ndim, FEParamRange rng, double fmin, double fmax, const char *sz)
+FEParam* FEParameterList::AddParameter(void *pv, FEParamType itype, int ndim, FEParamRange rng, double fmin, double fmax, const char *sz)
 {
 	assert(pv);
 	assert(sz);
@@ -87,12 +132,15 @@ void FEParameterList::AddParameter(void *pv, FEParamType itype, int ndim, FEPara
 	// (range checking is only supported for int and double params)
 	if (rng != FE_DONT_CARE)
 	{
-		if (itype == FE_PARAM_INT) p.SetValidator(new FEIntValidator(rng, (int) fmin, (int) fmax));
+		if      (itype == FE_PARAM_INT) p.SetValidator(new FEIntValidator(rng, (int) fmin, (int) fmax));
 		else if (itype == FE_PARAM_DOUBLE) p.SetValidator(new FEDoubleValidator(rng, fmin, fmax));
+		else if (itype == FE_PARAM_DOUBLE_MAPPED) p.SetValidator(new FEParamDoubleValidator(rng, fmin, fmax));
 	}
 
 	// add the parameter to the list
 	m_pl.push_back(p);
+
+	return &(m_pl.back());
 }
 
 //-----------------------------------------------------------------------------
@@ -105,10 +153,31 @@ FEParam* FEParameterList::FindFromData(void* pv)
 		list<FEParam>::iterator it;
 		for (it = m_pl.begin(); it != m_pl.end(); ++it)
 		{
-			if (it->data_ptr() == pv)
+			if (it->dim() <= 1)
 			{
-				pp = &(*it);
-				break;
+				if (it->data_ptr() == pv)
+				{
+					pp = &(*it);
+					return pp;
+				}
+			}
+			else
+			{
+				for (int i = 0; i < it->dim(); ++i)
+				{
+					void* pd = nullptr;
+					switch (it->type())
+					{
+					case FE_PARAM_DOUBLE_MAPPED: pd = &(it->value<FEParamDouble>(i)); break;
+					default:
+						assert(false);
+					}
+					if (pv == pd)
+					{
+						pp = &(*it);
+						return pp;
+					}
+				}
 			}
 		}
 	}
@@ -173,6 +242,14 @@ const FEParameterList& FEParamContainer::GetParameterList() const
 
 //-----------------------------------------------------------------------------
 // Find a parameter from its name
+FEParam* FEParamContainer::GetParameter(const char* szname)
+{
+	FEParameterList& pl = GetParameterList();
+	return pl.FindFromName(szname);
+}
+
+//-----------------------------------------------------------------------------
+// Find a parameter from its name
 FEParam* FEParamContainer::FindParameter(const ParamString& s)
 {
 	FEParameterList& pl = GetParameterList();
@@ -187,19 +264,83 @@ FEParam* FEParamContainer::FindParameterFromData(void* pv)
 }
 
 //-----------------------------------------------------------------------------
-// Add a parameter to the parameter list
-void FEParamContainer::AddParameter(void* pv, FEParamType itype, int ndim, const char* sz)
+//! This function will be overridden by each class that defines a parameter list
+void FEParamContainer::BuildParamList() 
 {
-	assert(m_pParam);
-	m_pParam->AddParameter(pv, itype, ndim, sz);
 }
 
 //-----------------------------------------------------------------------------
 // Add a parameter to the parameter list
-void FEParamContainer::AddParameter(void* pv, FEParamType itype, int ndim, RANGE rng, const char* sz)
+FEParam* FEParamContainer::AddParameter(void* pv, FEParamType itype, int ndim, const char* sz, bool* watch)
 {
 	assert(m_pParam);
-	m_pParam->AddParameter(pv, itype, ndim, rng.m_rt, rng.m_fmin, rng.m_fmax, sz);
+	FEParam* p = m_pParam->AddParameter(pv, itype, ndim, sz, watch);
+	p->setParent(this);
+	return p;
+}
+
+//-----------------------------------------------------------------------------
+// Add a parameter to the parameter list
+FEParam* FEParamContainer::AddParameter(void* pv, FEParamType itype, int ndim, RANGE rng, const char* sz)
+{
+	assert(m_pParam);
+	FEParam* p = m_pParam->AddParameter(pv, itype, ndim, rng.m_rt, rng.m_fmin, rng.m_fmax, sz);
+	p->setParent(this);
+	return p;
+}
+
+//-----------------------------------------------------------------------------
+void FEParamContainer::AddParameter(int&                 v, const char* sz) { AddParameter(&v, FE_PARAM_INT, 1, sz); }
+void FEParamContainer::AddParameter(bool&                v, const char* sz) { AddParameter(&v, FE_PARAM_BOOL, 1, sz); }
+void FEParamContainer::AddParameter(double&              v, const char* sz) { AddParameter(&v, FE_PARAM_DOUBLE, 1, sz); }
+void FEParamContainer::AddParameter(vec2d&               v, const char* sz) { AddParameter(&v, FE_PARAM_VEC2D, 1, sz); }
+void FEParamContainer::AddParameter(vec3d&               v, const char* sz) { AddParameter(&v, FE_PARAM_VEC3D, 1, sz); }
+void FEParamContainer::AddParameter(mat3d&               v, const char* sz) { AddParameter(&v, FE_PARAM_MAT3D, 1, sz); }
+void FEParamContainer::AddParameter(mat3ds&              v, const char* sz) { AddParameter(&v, FE_PARAM_MAT3DS, 1, sz); }
+void FEParamContainer::AddParameter(FEParamDouble&       v, const char* sz) { AddParameter(&v, FE_PARAM_DOUBLE_MAPPED, 1, sz); }
+void FEParamContainer::AddParameter(FEParamVec3&         v, const char* sz) { AddParameter(&v, FE_PARAM_VEC3D_MAPPED, 1, sz); }
+void FEParamContainer::AddParameter(FEParamMat3d&        v, const char* sz) { AddParameter(&v, FE_PARAM_MAT3D_MAPPED, 1, sz); }
+void FEParamContainer::AddParameter(FEParamMat3ds&       v, const char* sz) { AddParameter(&v, FE_PARAM_MAT3DS_MAPPED, 1, sz); }
+void FEParamContainer::AddParameter(FEDataArray&         v, const char* sz) { AddParameter(&v, FE_PARAM_DATA_ARRAY, 1, sz); }
+void FEParamContainer::AddParameter(tens3drs& 		   v, const char* sz) { AddParameter(&v, FE_PARAM_TENS3DRS, 1, sz); }
+void FEParamContainer::AddParameter(std::string&         v, const char* sz) { AddParameter(&v, FE_PARAM_STD_STRING, 1, sz); }
+void FEParamContainer::AddParameter(std::vector<int>&    v, const char* sz) { AddParameter(&v, FE_PARAM_STD_VECTOR_INT, 1, sz); }
+void FEParamContainer::AddParameter(std::vector<double>& v, const char* sz) { AddParameter(&v, FE_PARAM_STD_VECTOR_DOUBLE, 1, sz); }
+void FEParamContainer::AddParameter(std::vector<vec2d>&  v, const char* sz) { AddParameter(&v, FE_PARAM_STD_VECTOR_VEC2D, 1, sz); }
+void FEParamContainer::AddParameter(std::vector<std::string>& v, const char* sz) { AddParameter(&v, FE_PARAM_STD_VECTOR_STRING, 1, sz); }
+void FEParamContainer::AddParameter(FEMaterialPointProperty& v, const char* sz) { AddParameter(&v, FE_PARAM_MATERIALPOINT, 1, sz); }
+void FEParamContainer::AddParameter(Image& v                  , const char* sz) { AddParameter(&v, FE_PARAM_IMAGE_3D, 1, sz); }
+
+void FEParamContainer::AddParameter(int&           v, RANGE rng, const char* sz) { AddParameter(&v, FE_PARAM_INT, 1, rng, sz); }
+void FEParamContainer::AddParameter(double&        v, RANGE rng, const char* sz) { AddParameter(&v, FE_PARAM_DOUBLE, 1, rng, sz); }
+void FEParamContainer::AddParameter(FEParamDouble& v, RANGE rng, const char* sz) { AddParameter(&v, FE_PARAM_DOUBLE_MAPPED, 1, rng, sz); }
+
+void FEParamContainer::AddParameter(double&        v, const char* sz, bool& watch) { AddParameter(&v, FE_PARAM_DOUBLE, 1, sz, &watch); }
+
+void FEParamContainer::AddParameter(int*           v, int ndim, const char* sz) { AddParameter(v, FE_PARAM_INT, ndim, sz); }
+void FEParamContainer::AddParameter(double*        v, int ndim, const char* sz) { AddParameter(v, FE_PARAM_DOUBLE, ndim, sz); }
+void FEParamContainer::AddParameter(FEParamDouble* v, int ndim, const char* sz) { AddParameter(v, FE_PARAM_DOUBLE_MAPPED, ndim, sz); }
+
+void FEParamContainer::AddParameter(int*           v, int ndim, RANGE rng, const char* sz) { AddParameter(v, FE_PARAM_INT, ndim, rng, sz); }
+void FEParamContainer::AddParameter(double*        v, int ndim, RANGE rng, const char* sz) { AddParameter(v, FE_PARAM_DOUBLE, ndim, rng, sz); }
+void FEParamContainer::AddParameter(FEParamDouble* v, int ndim, RANGE rng, const char* sz) { AddParameter(v, FE_PARAM_DOUBLE_MAPPED, ndim, rng, sz); }
+
+//-----------------------------------------------------------------------------
+void FEParamContainer::AddParameter(int& v, const char* sz, unsigned int flags, const char* szenum)
+{
+	FEParam* p = AddParameter(&v, FE_PARAM_INT, 1, sz);
+	p->setParent(this);
+	p->SetFlags(flags);
+	p->SetEnums(szenum);
+}
+
+//-----------------------------------------------------------------------------
+void FEParamContainer::AddParameter(std::vector<int>& v, const char* sz, unsigned int flags, const char* szenum)
+{
+	FEParam* p = AddParameter(&v, FE_PARAM_STD_VECTOR_INT, 1, sz);
+	p->setParent(this);
+	p->SetFlags(flags);
+	p->SetEnums(szenum);
 }
 
 //-----------------------------------------------------------------------------
@@ -221,7 +362,7 @@ void FEParamContainer::Serialize(DumpStream& ar)
 		for (int i=0; i<NP; ++i)
 		{
 			FEParam& p = *it++;
-			p.Serialize(ar);
+			ar << p;
 		}
 	}
 	else
@@ -236,7 +377,7 @@ void FEParamContainer::Serialize(DumpStream& ar)
 			for (int i=0; i<NP; ++i)
 			{
 				FEParam& p = *it++;
-				p.Serialize(ar);
+				ar >> p;
 			}
 		}
 	}
@@ -256,15 +397,21 @@ bool FEParamContainer::Validate()
 		FEParam& p = *pi;
 		if (p.is_valid() == false)
 		{
-            string err = fecore_get_error_string();
-
-			// report the error
-            return fecore_error(err.c_str());
+            return false;
 		}
 	}
 
 	return true;
 }
+
+//-----------------------------------------------------------------------------
+//! This function is called after the parameter was read in from the input file.
+//! It can be used to do additional processing when a parameter is read in.
+void FEParamContainer::SetParameter(FEParam& p) {}
+
+//-----------------------------------------------------------------------------
+//! If a parameter has attributes, this function will be called
+bool FEParamContainer::SetParameterAttribute(FEParam& p, const char* szatt, const char* szval) { return false; }
 
 //-----------------------------------------------------------------------------
 void FEParamContainer::CopyParameterListState(const FEParameterList& pl)

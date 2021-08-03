@@ -1,14 +1,43 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FEBiphasic.h"
 #include "FESolutesMaterialPoint.h"
 #include "FESolute.h"
 #include "FEOsmoticCoefficient.h"
 #include "FESoluteInterface.h"
+#include <FECore/FEModelParam.h>
 
 //-----------------------------------------------------------------------------
 //! Base class for solute diffusion in biphasic materials.
 
-class FEBiphasicSolute : public FEMaterial, public FESoluteInterface
+class FEBIOMIX_API FEBiphasicSolute : public FEMaterial, public FESoluteInterface
 {
 public:
 	FEBiphasicSolute(FEModel* pfem);
@@ -17,7 +46,7 @@ public:
 	FEMaterialPoint* CreateMaterialPointData() override;
 
 	// Get the elastic component (overridden from FEMaterial)
-	FEElasticMaterial* GetElasticMaterial() override { return m_pSolid->GetElasticMaterial(); }
+	FEElasticMaterial* GetElasticMaterial() { return m_pSolid; }
 
 	//! Get the solid
 	FEElasticMaterial* GetSolid() { return m_pSolid; }
@@ -74,7 +103,7 @@ public:
 	
 public: // material parameters
 	double						m_rhoTw;		//!< true fluid density
-	double						m_phi0;			//!< solid volume fraction in reference configuration
+	FEParamDouble				m_phi0;			//!< solid volume fraction in reference configuration
 
 public:
 	double						m_Mu;			//!< solute molecular weight
@@ -83,10 +112,10 @@ public:
 	double						m_Tabs;			//!< absolute temperature
 
 private: // material properties
-	FEPropertyT<FEElasticMaterial>			m_pSolid;		//!< pointer to elastic solid material
-	FEPropertyT<FEHydraulicPermeability>	m_pPerm;		//!< pointer to permeability material
-	FEPropertyT<FEOsmoticCoefficient>		m_pOsmC;		//!< pointer to osmotic coefficient material
-	FEPropertyT<FESolute>					m_pSolute;		//!< pointer to solute material
+	FEElasticMaterial*			m_pSolid;		//!< pointer to elastic solid material
+	FEHydraulicPermeability*	m_pPerm;		//!< pointer to permeability material
+	FEOsmoticCoefficient*		m_pOsmC;		//!< pointer to osmotic coefficient material
+	FESolute*					m_pSolute;		//!< pointer to solute material
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

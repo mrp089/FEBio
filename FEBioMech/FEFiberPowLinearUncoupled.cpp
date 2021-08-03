@@ -1,12 +1,40 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEFiberPowLinearUncoupled.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEFiberPowLinearUncoupled, FEElasticFiberMaterialUC)
-	ADD_PARAMETER2(m_E    , FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "E"    );
-	ADD_PARAMETER2(m_lam0 , FE_PARAM_DOUBLE, FE_RANGE_GREATER(1.0), "lam0" );
-	ADD_PARAMETER2(m_beta , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(2.0), "beta" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFiberPowLinearUncoupled, FEElasticFiberMaterialUC)
+	ADD_PARAMETER(m_E    , FE_RANGE_GREATER(0.0), "E"    );
+	ADD_PARAMETER(m_lam0 , FE_RANGE_GREATER(1.0), "lam0" );
+	ADD_PARAMETER(m_beta , FE_RANGE_GREATER_OR_EQUAL(2.0), "beta" );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEFiberPowLinearUncoupled::FEFiberPowLinearUncoupled(FEModel* pfem) : FEElasticFiberMaterialUC(pfem)
@@ -28,7 +56,7 @@ bool FEFiberPowLinearUncoupled::Validate()
 }
 
 //-----------------------------------------------------------------------------
-mat3ds FEFiberPowLinearUncoupled::DevStress(FEMaterialPoint& mp)
+mat3ds FEFiberPowLinearUncoupled::DevFiberStress(FEMaterialPoint& mp, const vec3d& n0)
 {
     FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
     
@@ -40,15 +68,12 @@ mat3ds FEFiberPowLinearUncoupled::DevStress(FEMaterialPoint& mp)
     mat3ds C = pt.DevRightCauchyGreen();
     mat3ds s;
     
-    // evaluate fiber direction in global coordinate system
-    vec3d n0 = GetFiberVector(mp);
-    
     // Calculate In
     double In = n0*(C*n0);
     
     // only take fibers in tension into consideration
 	const double eps = 0;
-	if (In - 1 > eps)
+	if (In - 1 >= eps)
     {
         // get the global spatial fiber direction in current configuration
         vec3d nt = F*n0/sqrt(In);
@@ -59,7 +84,7 @@ mat3ds FEFiberPowLinearUncoupled::DevStress(FEMaterialPoint& mp)
         // calculate the fiber stress magnitude
         double sn = (In < m_I0) ?
         2*In*m_ksi*pow(In-1, m_beta-1) :
-        2*m_b*In - m_E/2;
+        2*m_b*In - m_E*sqrt(In);
         
         // calculate the fiber stress
         s = N*(sn/J);
@@ -73,7 +98,7 @@ mat3ds FEFiberPowLinearUncoupled::DevStress(FEMaterialPoint& mp)
 }
 
 //-----------------------------------------------------------------------------
-tens4ds FEFiberPowLinearUncoupled::DevTangent(FEMaterialPoint& mp)
+tens4ds FEFiberPowLinearUncoupled::DevFiberTangent(FEMaterialPoint& mp, const vec3d& n0)
 {
     FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
     
@@ -87,14 +112,11 @@ tens4ds FEFiberPowLinearUncoupled::DevTangent(FEMaterialPoint& mp)
     mat3ds s;
     tens4ds c;
     
-    // evaluate fiber direction in global coordinate system
-    vec3d n0 = GetFiberVector(mp);
-    
     // Calculate In
     double In = n0*(C*n0);
     
     // only take fibers in tension into consideration
-    if (In - 1 > eps)
+    if (In - 1 >= eps)
     {
         // get the global spatial fiber direction in current configuration
         vec3d nt = F*n0/sqrt(In);
@@ -106,7 +128,7 @@ tens4ds FEFiberPowLinearUncoupled::DevTangent(FEMaterialPoint& mp)
         // calculate the fiber stress magnitude
         double sn = (In < m_I0) ?
         2*In*m_ksi*pow(In-1, m_beta-1) :
-        2*m_b*In - m_E/2;
+        2*m_b*In - m_E*sqrt(In);
         
         // calculate the fiber stress
         s = N*(sn/J);
@@ -114,7 +136,7 @@ tens4ds FEFiberPowLinearUncoupled::DevTangent(FEMaterialPoint& mp)
         // calculate modulus
         double cn = (In < m_I0) ?
         4*In*In*m_ksi*(m_beta-1)*pow(In-1, m_beta-2) :
-        m_E;
+        m_E*sqrt(In);
         
         // calculate the fiber tangent
         c = NxN*(cn/J);
@@ -135,7 +157,7 @@ tens4ds FEFiberPowLinearUncoupled::DevTangent(FEMaterialPoint& mp)
 }
 
 //-----------------------------------------------------------------------------
-double FEFiberPowLinearUncoupled::DevStrainEnergyDensity(FEMaterialPoint& mp)
+double FEFiberPowLinearUncoupled::DevFiberStrainEnergyDensity(FEMaterialPoint& mp, const vec3d& n0)
 {
     FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
     
@@ -143,20 +165,17 @@ double FEFiberPowLinearUncoupled::DevStrainEnergyDensity(FEMaterialPoint& mp)
     const double eps = 0;
     mat3ds C = pt.DevRightCauchyGreen();
     
-    // evaluate fiber direction in global coordinate system
-    vec3d n0 = GetFiberVector(mp);
-    
     // Calculate In = n0*C*n0
     double In = n0*(C*n0);
     
     // only take fibers in tension into consideration
 	double sed = 0.0;
-	if (In - 1 > eps)
+	if (In - 1 >= eps)
     {
         // calculate strain energy density
         sed = (In < m_I0) ?
         m_ksi/m_beta*pow(In-1, m_beta) :
-        m_b*(In-m_I0) - m_E/4*log(In/m_I0) + m_ksi/m_beta*pow(m_I0-1, m_beta);
+        m_b*(In-m_I0) - m_E*(sqrt(In) - sqrt(m_I0)) + m_ksi/m_beta*pow(m_I0-1, m_beta);
     }
     
     return sed;

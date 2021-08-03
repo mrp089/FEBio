@@ -1,8 +1,35 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#include "FEBioXML/XMLReader.h"
-#include "FECore/FEModel.h"
-#include "FECore/Logfile.h"
-#include "FECore/FECoreTask.h"
+#include <FEBioXML/XMLReader.h>
+#include <FECore/FEModel.h>
+#include <FECore/FECoreTask.h>
 #include "FEObjectiveFunction.h"
 #include <vector>
 #include <string>
@@ -99,7 +126,7 @@ class FEOptimizeData
 {
 public:
 	//! constructor
-	FEOptimizeData(FEModel& fem);
+	FEOptimizeData(FEModel* fem);
 	~FEOptimizeData(void);
 
 	//! input function
@@ -112,7 +139,7 @@ public:
 	bool Solve();
 
 	//! return the FE Model
-	FEModel& GetFEM() { return m_fem; }
+	FEModel* GetFEModel() { return m_fem; }
 
 	//! solve the FE problem with a new set of parameters
 	bool FESolve(const vector<double>& a);
@@ -153,7 +180,7 @@ public:
 	FECoreTask* m_pTask;	// the task that will solve the FE model
 
 protected:
-	FEModel&	m_fem;
+	FEModel*	m_fem;
 
 	FEObjectiveFunction*	m_obj;		//!< the objective function
 

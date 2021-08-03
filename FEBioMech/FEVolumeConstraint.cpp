@@ -1,12 +1,42 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEVolumeConstraint.h"
 #include <FECore/FEModel.h>
 #include <FECore/log.h>
 #include <FECore/FEDataExport.h>
+#include <FECore/DumpStream.h>
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
 //! constructor
-FEVolumeSurface::FEVolumeSurface(FEMesh* pm) : FESurface(pm)
+FEVolumeSurface::FEVolumeSurface(FEModel* fem) : FESurface(fem)
 {
 	m_Lp = 0.0;
 	m_p  = 0.0;
@@ -20,6 +50,8 @@ FEVolumeSurface::FEVolumeSurface(FEMesh* pm) : FESurface(pm)
 //-----------------------------------------------------------------------------
 bool FEVolumeSurface::Init()
 {
+	if (FESurface::Init() == false) return false;
+
 	// evaluate the initial volume
 	m_V0 = Volume();
 	m_Vt = m_V0;
@@ -48,14 +80,7 @@ void FEVolumeSurface::CopyFrom(FEVolumeSurface& s)
 void FEVolumeSurface::Serialize(DumpStream& ar)
 {
 	FESurface::Serialize(ar);
-	if (ar.IsSaving())
-	{
-		ar << m_Lp << m_p << m_V0 << m_Vt;
-	}
-	else
-	{
-		ar >> m_Lp >> m_p >> m_V0 >> m_Vt;
-	}
+	ar & m_Lp & m_p & m_V0 & m_Vt;
 }
 
 //-----------------------------------------------------------------------------
@@ -104,15 +129,15 @@ double FEVolumeSurface::Volume()
 }
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEVolumeConstraint, FESurfaceConstraint);
-	ADD_PARAMETER(m_blaugon, FE_PARAM_BOOL  , "laugon" ); 
-	ADD_PARAMETER(m_atol   , FE_PARAM_DOUBLE, "augtol" );
-	ADD_PARAMETER(m_eps    , FE_PARAM_DOUBLE, "penalty");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEVolumeConstraint, FESurfaceConstraint);
+	ADD_PARAMETER(m_blaugon, "laugon" ); 
+	ADD_PARAMETER(m_atol   , "augtol" );
+	ADD_PARAMETER(m_eps    , "penalty");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! constructor. Set default parameter values
-FEVolumeConstraint::FEVolumeConstraint(FEModel* pfem) : FESurfaceConstraint(pfem), m_s(&pfem->GetMesh())
+FEVolumeConstraint::FEVolumeConstraint(FEModel* pfem) : FESurfaceConstraint(pfem), m_s(pfem)
 {
 	m_eps = 0.0;
 	m_atol = 0.0;
@@ -185,7 +210,7 @@ void FEVolumeConstraint::UnpackLM(FEElement& el, vector<int>& lm)
 }
 
 //-----------------------------------------------------------------------------
-void FEVolumeConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEVolumeConstraint::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	FEMesh& mesh = *m_s.GetMesh();
 
@@ -249,7 +274,7 @@ void FEVolumeConstraint::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FEVolumeConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEVolumeConstraint::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	FEMesh& mesh = *m_s.GetMesh();
 
@@ -257,7 +282,6 @@ void FEVolumeConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp
 	double p = m_s.m_p;
 
 	// element stiffness matrix
-	matrix ke;
 	vector<int> lm;
 	vector<double> fe;
 
@@ -268,6 +292,8 @@ void FEVolumeConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp
 	{
 		// get the next element
 		FESurfaceElement& el = m_s.Element(l);
+
+		FEElementMatrix ke(el);
 
 		// get the nodal coordinates
 		int neln = el.Nodes();
@@ -346,9 +372,10 @@ void FEVolumeConstraint::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp
 
 		// get the element's LM vector
 		UnpackLM(el, lm);
+		ke.SetIndices(lm);
 
 		// assemble element matrix in global stiffness matrix
-		psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
 	}
 }
 
@@ -358,14 +385,14 @@ bool FEVolumeConstraint::Augment(int naug, const FETimeInfo& tp)
 	// make sure we are augmenting
 	if ((m_blaugon == false) || (m_atol <= 0.0)) return true;
 
-	felog.printf("\nvolume constraint:\n");
+	feLog("\nvolume constraint:\n");
 
 	double Dp = m_eps*(m_s.m_Vt - m_s.m_V0);
 	double Lp = m_s.m_p;
 	double err = fabs(Dp/Lp);
-	felog.printf("\tpressure: %lg\n", Lp);
-	felog.printf("\tnorm : %lg (%lg)\n", err, m_atol);
-	felog.printf("\tvolume ratio: %lg\n", m_s.m_Vt / m_s.m_V0);
+	feLog("\tpressure: %lg\n", Lp);
+	feLog("\tnorm : %lg (%lg)\n", err, m_atol);
+	feLog("\tvolume ratio: %lg\n", m_s.m_Vt / m_s.m_V0);
 
 	// check convergence
 	if (err < m_atol) return true;
@@ -382,14 +409,7 @@ void FEVolumeConstraint::Serialize(DumpStream& ar)
 {
 	FENLConstraint::Serialize(ar);
 	m_s.Serialize(ar);
-	if (ar.IsSaving())
-	{
-		ar << m_binit;
-	}
-	else
-	{
-		ar >> m_binit;
-	}
+	ar & m_binit;
 }
 
 //-----------------------------------------------------------------------------
@@ -399,7 +419,7 @@ void FEVolumeConstraint::Reset()
 
 //-----------------------------------------------------------------------------
 // This function is called when the FE model's state needs to be updated.
-void FEVolumeConstraint::Update(int niter, const FETimeInfo& tp)
+void FEVolumeConstraint::Update()
 {
 	// calculate the current volume
 	m_s.m_Vt = m_s.Volume();

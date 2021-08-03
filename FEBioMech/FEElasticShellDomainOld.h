@@ -1,5 +1,34 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#include "FECore/FEShellDomain.h"
+#include <FECore/FEShellDomain.h>
+#include <FECore/FEDofList.h>
 #include "FEElasticDomain.h"
 #include "FESolidMaterial.h"
 
@@ -11,7 +40,7 @@ public:
 	FEElasticShellDomainOld(FEModel* pfem);
 
 	//! \todo do I really need this?
-	FEElasticShellDomainOld& operator = (FEElasticShellDomainOld& d) { m_Elem = d.m_Elem; m_pMesh = d.m_pMesh; return (*this); }
+	FEElasticShellDomainOld& operator = (FEElasticShellDomainOld& d);
 
 	//! Initialize domain
 	bool Init() override;
@@ -27,6 +56,9 @@ public:
 
 	//! set the material
 	void SetMaterial(FEMaterial* pmat) override;
+
+	//! get total dof list
+	const FEDofList& GetDOFList() const override;
 
 public: // overrides from FEElasticDomain
 
@@ -46,13 +78,13 @@ public: // overrides from FEElasticDomain
 	void Update(const FETimeInfo& tp) override;
 
 	//! calculates the global stiffness matrix for this domain
-	void StiffnessMatrix(FESolver* psolver) override;
+	void StiffnessMatrix(FELinearSystem& LS) override;
 
 	// inertial stiffness \todo implement this (removed assert DSR)
-	void MassMatrix(FESolver* psolver, double scale) override { }
+	void MassMatrix(FELinearSystem& LS, double scale) override { }
 
 	// body force stiffness \todo implement this (removed assert DSR)
-	void BodyForceStiffness  (FESolver* psolver, FEBodyForce& bf) override { }
+	void BodyForceStiffness  (FELinearSystem& LS, FEBodyForce& bf) override { }
 
 public:
 	//! calculates covariant basis vectors at an integration point
@@ -102,7 +134,8 @@ public:
 
 protected:
 	FESolidMaterial*	m_pMat;
-	int					m_dofU;
-	int					m_dofV;
-	int					m_dofW;
+	FEDofList			m_dofSU;	// shell displacement dofs
+	FEDofList			m_dofSR;	// shell rotation dofs
+	FEDofList			m_dofR;		// rigid rotation dofs
+	FEDofList			m_dof;
 };

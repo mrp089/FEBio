@@ -1,14 +1,43 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEDamageMooneyRivlin.h"
+#include <FECore/log.h>
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEDamageMooneyRivlin, FEUncoupledMaterial)
-	ADD_PARAMETER2(c1, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "c1");
-	ADD_PARAMETER(c2, FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETER(m_beta, FE_PARAM_DOUBLE, "beta");
-	ADD_PARAMETER(m_smin, FE_PARAM_DOUBLE, "smin");
-	ADD_PARAMETER(m_smax, FE_PARAM_DOUBLE, "smax");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEDamageMooneyRivlin, FEUncoupledMaterial)
+	ADD_PARAMETER(c1, FE_RANGE_GREATER(0.0), "c1");
+	ADD_PARAMETER(c2, "c2");
+	ADD_PARAMETER(m_beta, "beta");
+	ADD_PARAMETER(m_smin, "smin");
+	ADD_PARAMETER(m_smax, "smax");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEDamageMooneyRivlin::FEDamageMooneyRivlin(FEModel* pfem) : FEUncoupledMaterial(pfem)
@@ -23,7 +52,7 @@ FEDamageMooneyRivlin::FEDamageMooneyRivlin(FEModel* pfem) : FEUncoupledMaterial(
 //-----------------------------------------------------------------------------
 bool FEDamageMooneyRivlin::Validate()
 {
-	if (c1 + c2 <= 0) return MaterialError("c1 + c2 must be a positive number.");
+	if (c1 + c2 <= 0) { feLogError("c1 + c2 must be a positive number."); return false; }
 	return FEUncoupledMaterial::Validate();
 }
 
@@ -40,7 +69,7 @@ mat3ds FEDamageMooneyRivlin::DevStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!
@@ -80,7 +109,7 @@ tens4ds FEDamageMooneyRivlin::DevTangent(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	double I1 = B.tr();
@@ -133,7 +162,7 @@ double FEDamageMooneyRivlin::DevStrainEnergyDensity(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
     
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
     
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!
@@ -160,7 +189,7 @@ double FEDamageMooneyRivlin::Damage(FEMaterialPoint &mp)
 
 	// calculate right Cauchy-Green tensor
 	mat3ds C = pt.DevRightCauchyGreen();
-	mat3ds C2 = C*C;
+	mat3ds C2 = C.sqr();
 
 	// Invariants
 	double I1 = C.tr();

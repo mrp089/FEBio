@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FESolver.h"
 #include "FENewtonStrategy.h"
@@ -8,24 +36,40 @@
 // forward declarations
 class FEModel;
 class FEGlobalMatrix;
+class FELinearSystem;
 
 //-----------------------------------------------------------------------------
-// Scheme for assigning equation numbers
-// STAGGERED: | a0, b0, a1, b1, ..., an, bn |
-// BLOCK    : | a0, a1, ..., an, b0, b1, ..., bn |
-enum EQUATION_SCHEME
-{
-	STAGGERED,
-	BLOCK
-};
-
-//-----------------------------------------------------------------------------
-// NOTE: Currently, the value 2 is used as an alternative for Broyden
 enum QN_STRATEGY
 {
 	QN_BFGS,
 	QN_BROYDEN,
-	QN_JFNK = 3
+	QN_JFNK
+};
+
+//-----------------------------------------------------------------------------
+struct ConvergenceInfo
+{
+	int			nvar;		// corresponding solution variable
+	double		tol;		// convergence tolerance
+	double		norm0;		// initial norm
+	double		normi;		// current incremental norm
+	double		norm;		// current total norm
+	double		maxnorm;	// the max norm
+
+	ConvergenceInfo()
+	{
+		nvar = -1;
+		tol = 0.0;
+		norm0 = 0.0;
+		normi = 0.0;
+		norm = 0.0;
+		maxnorm = 0.0;
+	}
+
+	bool IsConverged() const
+	{
+		return (tol > 0 ? normi <= (tol*tol)*norm : true);
+	}
 };
 
 //-----------------------------------------------------------------------------
@@ -57,9 +101,6 @@ public: // overloaded from FESolver
 	//! Initialization
 	bool Init() override;
 
-	//! Initialize linear equation system
-	bool InitEquations() override;
-
 	//! return number of equations
 	int NumberOfEquations() const { return m_neq; }
 
@@ -76,10 +117,7 @@ public: // overloaded from FESolver
 	void Rewind() override;
 
 	//! prep the solver for the QN updates
-	virtual void PrepStep() {}
-
-	//! adjust the residual matrix for prescribed displacements
-	void AssembleStiffness(vector<int>& en, vector<int>& elm, matrix& ke) override;
+	virtual void PrepStep();
 
 public:	// Quasi-Newton methods
 
@@ -95,9 +133,12 @@ public:	// Quasi-Newton methods
 	//! Force a stiffness reformation during next update
 	void QNForceReform(bool b);
 
+	// return line search
+	FELineSearch* GetLineSearch();
+
 public:
 	//! return the stiffness matrix
-	FEGlobalMatrix& GetStiffnessMatrix();
+	FEGlobalMatrix* GetStiffnessMatrix() override;
 
 	//! reform the stiffness matrix
     bool ReformStiffness();
@@ -105,9 +146,21 @@ public:
     //! recalculates the shape of the stiffness matrix
     bool CreateStiffness(bool breset);
 
+	//! get the RHS
+	std::vector<double> GetLoadVector() override;
+
+	//! Get the total solution vector (for current Newton iteration)
+	virtual void GetSolutionVector(std::vector<double>& U);
+
 public:
 	//! do augmentations
 	bool DoAugmentations();
+
+	//! solve the equations
+	void SolveEquations(std::vector<double>& u, std::vector<double>& R);
+
+	//! do a line search
+	double DoLineSearch();
 
 public:
 	//! Set the solution strategy
@@ -121,7 +174,10 @@ public:
 	virtual bool Quasin();
 
     //! calculates the global stiffness matrix (needs to be overwritten by derived classes)
-    virtual bool StiffnessMatrix() = 0;
+    virtual bool StiffnessMatrix();
+
+	//! this is the new method for building the stiffness matrix
+	virtual bool StiffnessMatrix(FELinearSystem& LS);
 
 	//! calculates the global residual vector (needs to be overwritten by derived classes)
 	virtual bool Residual(vector<double>& R) = 0;
@@ -130,25 +186,46 @@ public:
 	//! niter = iteration number
 	//! ui    = search direction
 	//! ls    = line search factor
-	virtual bool CheckConvergence(int niter, const vector<double>& ui, double ls) { return true; };
+	virtual bool CheckConvergence(int niter, const vector<double>& ui, double ls);
+
+	//! return the linear solver
+	LinearSolver* GetLinearSolver() override;
+
+	//! Add a solution variable from a doflist
+	void AddSolutionVariable(FEDofList* dofs, int order, const char* szname, double tol);
+
+	//! Update the state of the model
+	void Update(std::vector<double>& u) override;
+
+	//! TODO: This is a helper function to get around an issue with the current implementation
+	//        regarding prescribed displacements. The purpose of this Update2 function is to update
+	//        all degrees of freedom, including prescribed ones. This is currently only used by the JFNKMatrix class.
+	//        and overridden in FESolidSolver2. 
+	virtual void Update2(const vector<double>& ui);
+
+	//! Update the model
+	virtual void UpdateModel();
+
+protected:
+	bool AllocateLinearSystem();
 
 public:
 	// line search options
 	FELineSearch*	m_lineSearch;
 
 	// solver parameters
-	int					m_nqnmethod;	//!< quasi-Newton strategy that will be selected
-	int					m_maxups;		//!< max number of quasi-newton updates
-	int					m_max_buf_size;	//!< max buffer size for update vector storage
-	bool				m_cycle_buffer;	//!< cycle the qn buffer when updates larger than buffer size
-	double				m_cmax;			//!< max condition numbers
 	int					m_maxref;		//!< max nr of reformations per time step
-	int					m_eq_scheme;	//!< equation number scheme (used in InitEquations)
 	int					m_force_partition;	//!< Force a partition of the global matrix (e.g. for testing with BIPN solver)
+	double				m_Rtol;			//!< residual convergence norm
+	double				m_Etol;			//!< energy convergence norm
+	double				m_Rmin;			//!< min residual value
+	double				m_Rmax;			//!< max residual value
 
 	// solution strategy
-	FENewtonStrategy*	m_strategy;			//!< class handling the specific stiffness update logic
+	int					m_qndefault;
+	FENewtonStrategy*	m_qnstrategy;		//!< class handling the specific stiffness update logic
 	bool				m_breformtimestep;	//!< reform at start of time step
+	bool				m_breformAugment;	//!< reform after each (failed) augmentations
 	bool				m_bforceReform;		//!< forces a reform in QNInit
 	bool				m_bdivreform;		//!< reform when diverging
 	bool				m_bdoreforms;		//!< do reformations
@@ -163,17 +240,31 @@ public:
 	// linear solver data
 	LinearSolver*		m_plinsolve;	//!< the linear solver
 	FEGlobalMatrix*		m_pK;			//!< global stiffness matrix
-	int					m_neq;			//!< number of equations
     bool				m_breshape;		//!< Matrix reshape flag
 
 	// data used by Quasin
 	vector<double> m_R0;	//!< residual at iteration i-1
 	vector<double> m_R1;	//!< residual at iteration i
-	vector<double> m_ui;	//!< displacement increment vector
+	vector<double> m_ui;	//!< solution increment vector
+	vector<double> m_Ut;	//!< total solution vector
+	vector<double> m_Ui;	//!< total solution increments of current time step
+	vector<double> m_up;	//!< solution increment of previous iteration
 	vector<double> m_Fd;	//!< residual correction due to prescribed degrees of freedom
+
+public:
+	// obsolete parameters
+	int					m_maxups;		//!< max number of quasi-newton updates
+	int					m_max_buf_size;	//!< max buffer size for update vector storage
+	bool				m_cycle_buffer;	//!< cycle the qn buffer when updates larger than buffer size
+	double				m_cmax;			//!< max condition numbers
 
 private:
 	double	m_ls;	//!< line search factor calculated in last call to QNSolve
 
-	DECLARE_PARAMETER_LIST();
+private:
+	ConvergenceInfo			m_residuNorm;	// residual convergence info
+	ConvergenceInfo			m_energyNorm;	// energy convergence info
+	vector<ConvergenceInfo>	m_solutionNorm;	// converge info for solution variables
+
+	DECLARE_FECORE_CLASS();
 };

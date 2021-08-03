@@ -1,6 +1,30 @@
-// XMLReader.cpp: implementation of the XMLReader class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "XMLReader.h"
@@ -17,6 +41,7 @@ XMLAtt::XMLAtt()
 {
 	m_szatt[0] = 0;
 	m_szatv[0] = 0;
+	m_bvisited = false;
 }
 
 //-----------------------------------------------------------------------------
@@ -120,6 +145,35 @@ int XMLTag::value(int* pi, int n)
 }
 
 //-----------------------------------------------------------------------------
+int XMLTag::value(std::vector<string>& stringList, int n)
+{
+	stringList.clear();
+
+	char tmp[256] = { 0 };
+
+	const char* sz = m_szval.c_str();
+	int nr = 0;
+	for (int i = 0; i<n; ++i)
+	{
+		const char* sze = strchr(sz, ',');
+		if (sze)
+		{
+			int l = (int)(sze - sz);
+			if (l > 0) strncpy(tmp, sz, l);
+			tmp[l] = 0;
+
+			stringList.push_back(tmp);
+		}
+		else stringList.push_back(sz);
+		nr++;
+
+		if (sze) sz = sze + 1;
+		else break;
+	}
+	return nr;
+}
+
+//-----------------------------------------------------------------------------
 void XMLTag::value(bool& val)
 { 
 	int n=0; 
@@ -131,6 +185,12 @@ void XMLTag::value(bool& val)
 void XMLTag::value(char* szstr)
 {
 	strcpy(szstr, m_szval.c_str()); 
+}
+
+//-----------------------------------------------------------------------------
+void XMLTag::value(std::string& val)
+{
+	val = m_szval;
 }
 
 //-----------------------------------------------------------------------------
@@ -219,7 +279,11 @@ const char* XMLTag::AttributeValue(const char* szat, bool bopt)
 {
 	// find the attribute
 	for (int i=0; i<m_natt; ++i)
-		if (strcmp(m_att[i].m_szatt, szat) == 0) return m_att[i].m_szatv;
+		if (strcmp(m_att[i].m_szatt, szat) == 0)
+		{
+			m_att[i].m_bvisited = true;
+			return m_att[i].m_szatv;
+		}
 
 	// If the attribute was not optional, we throw a fit
 	if (!bopt) throw XMLReader::MissingAttribute(*this, szat);
@@ -234,7 +298,11 @@ XMLAtt* XMLTag::Attribute(const char* szat, bool bopt)
 {
 	// find the attribute
 	for (int i=0; i<m_natt; ++i)
-		if (strcmp(m_att[i].m_szatt, szat) == 0) return m_att+i;
+		if (strcmp(m_att[i].m_szatt, szat) == 0)
+		{
+			m_att[i].m_bvisited = true;
+			return m_att + i;
+		}
 
 	// If the attribute was not optional, we throw a fit
 	if (!bopt) throw XMLReader::MissingAttribute(*this, szat);
@@ -249,7 +317,11 @@ XMLAtt& XMLTag::Attribute(const char* szat)
 {
 	// find the attribute
 	for (int i=0; i<m_natt; ++i)
-		if (strcmp(m_att[i].m_szatt, szat) == 0) return m_att[i];
+		if (strcmp(m_att[i].m_szatt, szat) == 0)
+		{
+			m_att[i].m_bvisited = true;
+			return m_att[i];
+		}
 
 	// throw a fit
 	throw XMLReader::MissingAttribute(*this, szat);
@@ -281,62 +353,52 @@ bool XMLTag::AttributeValue(const char* szat, int& n, bool bopt)
 // XMLReader - Exceptions
 //=============================================================================
 
-//-----------------------------------------------------------------------------
-void XMLReader::Error::SetErrorString(const char* sz, ...)
+// helper function for formatting a string
+string format_string(const char* sz, ...)
 {
 	// get a pointer to the argument list
 	va_list	args;
 
 	// make the message
+	char szbuf[512];
 	va_start(args, sz);
-	vsprintf(m_szerr, sz, args);
+	vsprintf(szbuf, sz, args);
 	va_end(args);
+
+	return szbuf;
 }
 
 //-----------------------------------------------------------------------------
-XMLReader::XMLSyntaxError::XMLSyntaxError()
-{
-	SetErrorString("syntax error");
-}
+XMLReader::Error::Error(XMLTag& tag, const std::string& err) : \
+std::runtime_error(format_string("tag \"%s\" (line %d) : ", tag.Name(), tag.m_nstart_line) + err) {}
 
 //-----------------------------------------------------------------------------
-XMLReader::UnmatchedEndTag::UnmatchedEndTag(XMLTag& tag)
-{
-	const char* sz = tag.m_szroot[tag.m_nlevel];
-	SetErrorString("unmatched end tag for \"%s\"", sz);
-}
+XMLReader::XMLSyntaxError::XMLSyntaxError(int line_number) : \
+XMLReader::Error(format_string("syntax error (line %d)", line_number)) {}
 
 //-----------------------------------------------------------------------------
-XMLReader::InvalidTag::InvalidTag(XMLTag& tag)
-{
-	SetErrorString("unrecognized tag \"%s\"", tag.m_sztag);
-}
+XMLReader::UnmatchedEndTag::UnmatchedEndTag(XMLTag& tag) : \
+XMLReader::Error(tag, "unmatched end tag") {}
 
 //-----------------------------------------------------------------------------
-XMLReader::InvalidValue::InvalidValue(XMLTag& tag)
-{
-	SetErrorString("the value for tag \"%s\" is invalid", tag.m_sztag);
-}
+XMLReader::InvalidTag::InvalidTag(XMLTag& tag) : \
+XMLReader::Error(tag, "unrecognized tag") {}
 
 //-----------------------------------------------------------------------------
-XMLReader::InvalidAttributeValue::InvalidAttributeValue(XMLTag& tag, const char* sza, const char* szv)
-{
-	const char* szt = tag.m_sztag;
-	if (szv) SetErrorString("invalid value \"%s\" for attribute \"%s.%s\"", szv, szt, sza);
-	else SetErrorString("invalid value for attribute \"%s.%s\"", szt, sza);
-}
+XMLReader::InvalidValue::InvalidValue(XMLTag& tag) : \
+XMLReader::Error(tag, "invalid value") {}
 
 //-----------------------------------------------------------------------------
-XMLReader::InvalidAttribute::InvalidAttribute(XMLTag& tag, const char* sza)
-{
-	SetErrorString("Invalid attribute \"%s\" of tag \"%s\"", sza, tag.m_sztag);
-}
+XMLReader::InvalidAttributeValue::InvalidAttributeValue(XMLTag& tag, const char* sza, const char* szv) : \
+XMLReader::Error(tag, format_string("invalid value for attribute \"%s\"", sza)) {}
 
 //-----------------------------------------------------------------------------
-XMLReader::MissingAttribute::MissingAttribute(XMLTag& tag, const char* sza)
-{
-	SetErrorString("Missing attribute \"%s\" of tag \"%s\"", sza, tag.m_sztag);
-}
+XMLReader::InvalidAttribute::InvalidAttribute(XMLTag& tag, const char* sza) :\
+XMLReader::Error(tag, format_string("invalid attribute \"%s\"", sza)) {}
+
+//-----------------------------------------------------------------------------
+XMLReader::MissingAttribute::MissingAttribute(XMLTag& tag, const char* sza) : \
+XMLReader::Error(tag, format_string("missing attribute \"%s\"", sza)) {}
 
 //=============================================================================
 // XMLReader
@@ -347,6 +409,10 @@ XMLReader::XMLReader()
 {
 	m_fp = 0;
 	m_nline = 0;
+	m_bufIndex = 0;
+	m_bufSize = 0;
+	m_eof = false;
+	m_currentPos = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -361,9 +427,14 @@ void XMLReader::Close()
 	if (m_fp)
 	{
 		fclose(m_fp);
-		m_fp = 0;
-		m_nline = 0;
 	}
+
+	m_fp = 0;
+	m_nline = 0;
+	m_bufIndex = 0;
+	m_bufSize = 0;
+	m_eof = false;
+	m_currentPos = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -387,6 +458,8 @@ bool XMLReader::Open(const char* szfile)
 		return false;
 	}
 
+	m_currentPos = 0;
+
 	// This file is ready to be processed
 	return true;
 }
@@ -405,7 +478,7 @@ class XMLPath
 public:
 	XMLPath(const char* xpath)
 	{
-		int l = strlen(xpath);
+		int l = (int)strlen(xpath);
 		m_path = new char[l+1];
 		strncpy(m_path, xpath, l);
 		m_path[l] = 0;
@@ -506,12 +579,14 @@ bool XMLReader::FindTag(const char* xpath, XMLTag& tag)
 {
 	// go to the beginning of the file
 	fseek(m_fp, 0, SEEK_SET);
+	m_bufIndex = m_bufSize = 0;
+	m_currentPos = 0;
+	m_eof = false;
 
 	// set the first tag
 	tag.m_preader = this;
 	tag.m_ncurrent_line = 1;
-	fgetpos(m_fp, &m_currentPos);
-	tag.m_fpos = m_currentPos;
+	tag.m_fpos = currentPos();
 
 	XMLPath path(xpath);
 
@@ -556,10 +631,12 @@ void XMLReader::NextTag(XMLTag& tag)
 	m_nline = tag.m_ncurrent_line;
 
 	// set the current file position
-//	if (m_currentPos != tag.m_fpos)
+	if (m_currentPos != tag.m_fpos)
 	{
-		fsetpos(m_fp, &tag.m_fpos);
+		fseek(m_fp, tag.m_fpos, SEEK_SET);
 		m_currentPos = tag.m_fpos;
+		m_bufSize = m_bufIndex = 0;
+		m_eof = false;
 	}
 
 	// clear tag's content
@@ -589,8 +666,7 @@ void XMLReader::NextTag(XMLTag& tag)
 	tag.m_ncurrent_line = m_nline;
 
 	// store start file pos for next element
-	fgetpos(m_fp, &m_currentPos);
-	tag.m_fpos = m_currentPos;
+	tag.m_fpos = currentPos();
 }
 
 //-----------------------------------------------------------------------------
@@ -606,14 +682,18 @@ void XMLReader::ReadTag(XMLTag& tag)
 	char ch, *sz;
 	while (true)
 	{
-		while ((ch=GetChar())!='<') if (!isspace(ch)) throw XMLSyntaxError();
+		while ((ch=GetChar())!='<') 
+			if (!isspace(ch)) 
+			{
+				throw XMLSyntaxError(m_nline);
+			}
 
 		ch = GetChar();
 		if (ch == '!')
 		{
 			// parse the comment
-			ch = GetChar(); if (ch != '-') throw XMLSyntaxError();
-			ch = GetChar(); if (ch != '-') throw XMLSyntaxError();
+			ch = GetChar(); if (ch != '-') throw XMLSyntaxError(m_nline);
+			ch = GetChar(); if (ch != '-') throw XMLSyntaxError(m_nline);
 
 			// find the end of the comment
 			int n = 0;
@@ -631,7 +711,7 @@ void XMLReader::ReadTag(XMLTag& tag)
 			// parse the xml header tag
 			while ((ch = GetChar()) != '?');
 			ch = GetChar();
-			if (ch != '>') throw XMLSyntaxError();
+			if (ch != '>') throw XMLSyntaxError(m_nline);
 		}
 		else break;
 	}
@@ -649,7 +729,7 @@ void XMLReader::ReadTag(XMLTag& tag)
 	while (isspace(ch)) ch = GetChar();
 
 	// read the tag name
-	if (!isvalid(ch)) throw XMLSyntaxError();
+	if (!isvalid(ch)) throw XMLSyntaxError(m_nline);
 	sz = tag.m_sztag;
 	*sz++ = ch;
 	while (isvalid(ch=GetChar())) *sz++ = ch;
@@ -667,33 +747,36 @@ void XMLReader::ReadTag(XMLTag& tag)
 		{
 			tag.m_bempty = true;
 			ch = GetChar();
-			if (ch != '>') throw XMLSyntaxError();
+			if (ch != '>') throw XMLSyntaxError(m_nline);
 			break;
 		}
 		else if (ch == '>') break;
 
 		// read the attribute's name
 		sz = tag.m_att[n].m_szatt;
-		if (!isvalid(ch)) throw XMLSyntaxError();
+		if (!isvalid(ch)) throw XMLSyntaxError(m_nline);
 		*sz++ = ch;
 		while (isvalid(ch=GetChar())) *sz++ = ch;
 		*sz=0; sz=0;
 
 		// skip whitespace
 		while (isspace(ch)) ch=GetChar();
-		if (ch != '=') throw XMLSyntaxError();
+		if (ch != '=') throw XMLSyntaxError(m_nline);
 
 		// skip whitespace
 		while (isspace(ch=GetChar()));
 
 		// make sure the attribute's value starts with an apostrophe or quotation mark
-		if ((ch != '"')&&(ch != '\'')) throw XMLSyntaxError();
+		if ((ch != '"')&&(ch != '\'')) throw XMLSyntaxError(m_nline);
 		char quot = ch;
 
 		sz = tag.m_att[n].m_szatv;
 		while ((ch=GetChar())!=quot) *sz++ = ch;
 		*sz=0; sz=0;
 		ch=GetChar();
+
+		// mark tag as unvisited
+		tag.m_att[n].m_bvisited = false;
 
 		++n;
 		++tag.m_natt;
@@ -752,14 +835,14 @@ void XMLReader::ReadEndTag(XMLTag& tag)
 
 			// skip whitespace
 			while (isspace(ch)) ch=GetChar();
-			if (ch != '>') throw XMLSyntaxError();
+			if (ch != '>') throw XMLSyntaxError(m_nline);
 
 			// find the start of the next tag
 			if (tag.m_nlevel)
 			{
 				while (isspace(ch=GetChar()));
-				if (ch != '<') throw XMLSyntaxError();
-				fseek(m_fp, -1, SEEK_CUR);
+				if (ch != '<') throw XMLSyntaxError(m_nline);
+				rewind(1);
 			}
 		}
 		else
@@ -768,12 +851,12 @@ void XMLReader::ReadEndTag(XMLTag& tag)
 			// and therefor is not a leaf
 
 			tag.m_bleaf = false;
-			fseek(m_fp, -2, SEEK_CUR);
+			rewind(2);
 		}
 	}
 	else
 	{
-		fseek(m_fp, -1, SEEK_CUR);
+		rewind(1);
 
 		--tag.m_nlevel;
 
@@ -783,11 +866,47 @@ void XMLReader::ReadEndTag(XMLTag& tag)
 }
 
 //-----------------------------------------------------------------------------
+char XMLReader::readNextChar()
+{
+	if (m_bufIndex >= m_bufSize)
+	{
+		if (m_eof) throw EndOfFile();
+
+		m_bufSize = fread(m_buf, 1, BUF_SIZE, m_fp);
+		m_bufIndex = 0;
+		m_eof = (m_bufSize != BUF_SIZE);
+	}
+	m_currentPos++;
+	return m_buf[m_bufIndex++];
+}
+
+//-----------------------------------------------------------------------------
+int64_t XMLReader::currentPos()
+{
+	return m_currentPos;
+}
+
+//-----------------------------------------------------------------------------
+//! move the file pointer
+void XMLReader::rewind(int64_t nstep)
+{
+	m_bufIndex -= nstep;
+	m_currentPos -= nstep;
+
+	if (m_bufIndex < 0)
+	{
+		fseek(m_fp, m_bufIndex - m_bufSize, SEEK_CUR);
+		m_bufIndex = m_bufSize = 0;
+		m_eof = false;
+	}
+}
+
+//-----------------------------------------------------------------------------
 //! Read the next character in the file.
 char XMLReader::GetChar()
 {
 	char ch;
-	while ((ch=fgetc(m_fp))=='\n') ++m_nline;
+	while ((ch=readNextChar())=='\n') ++m_nline;
 
 	// read entity references
 	if (ch=='&')
@@ -797,24 +916,18 @@ char XMLReader::GetChar()
 		int i = 1;
 		do
 		{
-			ch = fgetc(m_fp);
+			ch = readNextChar();
 			szbuf[i++]=ch;
 		}
 		while ((i<16)&&(ch!=';'));
-		if (ch!=';') throw XMLSyntaxError();
+		if (ch!=';') throw XMLSyntaxError(m_nline);
 
 		if      (strcmp(szbuf, "&lt;"  )==0) ch = '<';
 		else if (strcmp(szbuf, "&gt;"  )==0) ch = '>';
 		else if (strcmp(szbuf, "&amp;" )==0) ch = '&';
 		else if (strcmp(szbuf, "&apos;")==0) ch = '\'';
 		else if (strcmp(szbuf, "&quot;")==0) ch = '"';
-		else throw XMLSyntaxError();
-	}
-
-	if (feof(m_fp)) 
-	{
-		int a = 0;
-		throw EndOfFile();
+		else throw XMLSyntaxError(m_nline);
 	}
 	return ch;
 }

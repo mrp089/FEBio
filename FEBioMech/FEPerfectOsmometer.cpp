@@ -1,23 +1,50 @@
-/*
- *  FEPerfectOsmometer.cpp
- *  FEBioXCode
- *
- *  Created by Gerard Ateshian on 7/14/10.
- *
- */
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEPerfectOsmometer.h"
-#include "FECore/FEModel.h"
+#include <FECore/FEModel.h>
+#include <FECore/log.h>
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEPerfectOsmometer, FEElasticMaterial)
-	ADD_PARAMETER2(m_phiwr, FE_PARAM_DOUBLE, FE_RANGE_CLOSED(0.0, 1.0), "phiw0");
-	ADD_PARAMETER2(m_iosm , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "iosm");
-	ADD_PARAMETER2(m_bosm , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "bosm");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEPerfectOsmometer, FEElasticMaterial)
+	ADD_PARAMETER(m_phiwr, FE_RANGE_CLOSED(0.0, 1.0), "phiw0");
+	ADD_PARAMETER(m_iosm , FE_RANGE_GREATER_OR_EQUAL(0.0), "iosm");
+	ADD_PARAMETER(m_bosm , FE_RANGE_GREATER_OR_EQUAL(0.0), "bosm");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
-// FEPerfectOsmometer
+FEPerfectOsmometer::FEPerfectOsmometer(FEModel* pfem) : FEElasticMaterial(pfem)
+{ 
+	m_Rgas = 0; 
+	m_Tabs = 0; 
+}
+
 //-----------------------------------------------------------------------------
 
 bool FEPerfectOsmometer::Init()
@@ -27,8 +54,8 @@ bool FEPerfectOsmometer::Init()
 	m_Rgas = GetFEModel()->GetGlobalConstant("R");
 	m_Tabs = GetFEModel()->GetGlobalConstant("T");
 	
-	if (m_Rgas <= 0) return MaterialError("A positive universal gas constant R must be defined in Globals section");
-	if (m_Tabs <= 0) return MaterialError("A positive absolute temperature T must be defined in Globals section");
+	if (m_Rgas <= 0) { feLogError("A positive universal gas constant R must be defined in Globals section"); return false; }
+	if (m_Tabs <= 0) { feLogError("A positive absolute temperature T must be defined in Globals section");	 return false; }
 
 	return true;
 }

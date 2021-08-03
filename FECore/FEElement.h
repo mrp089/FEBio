@@ -1,24 +1,39 @@
-// FEElement.h: interface for the FEElement class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FEELEMENT_H__2EE38101_58E2_4FEB_B214_BB71B6FB15FB__INCLUDED_)
-#define AFX_FEELEMENT_H__2EE38101_58E2_4FEB_B214_BB71B6FB15FB__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "FEElementLibrary.h"
 #include "FEElementTraits.h"
 #include "FEMaterialPoint.h"
-#include "FE_enum.h"
+#include "fecore_enum.h"
 #include "FEException.h"
 
 class FEMesh;
 //-----------------------------------------------------------------------------
 class FEElementTraits;
-class FEDomain;
+class FEMeshPartition;
 
 //-----------------------------------------------------------------------------
 //! The FEElementState class stores the element state data. The state is defined
@@ -62,6 +77,11 @@ public:
 	enum {MAX_NODES     = 27};	// max nr of nodes
 	enum {MAX_INTPOINTS = 27};	// max nr of integration points
 
+	// Status flags. 
+	enum Status {
+		ACTIVE = 0x01
+	};
+
 public:
 	//! default constructor
 	FEElement();
@@ -70,22 +90,31 @@ public:
 	virtual ~FEElement() {}
 
 	//! get the element ID
-	int GetID() const { return m_nID; }
+	int GetID() const;
 
 	//! set the element ID
-	void SetID(int n) { m_nID = n; }
+	void SetID(int n);
 
 	//! Get the element's material ID
-	int GetMatID() const { return m_mat; }
+	int GetMatID() const;
 
 	//! Set the element's material ID
-	void SetMatID(int id) { m_mat = id; }
+	void SetMatID(int id);
 
-	//Get the domain that contains this element
-	FEDomain * GetDomain() const { return m_dom; }
+	//Get the mesh partition that contains this element
+	FEMeshPartition * GetMeshPartition() const { return m_part; }
 
-	//Set the domain that contains this element
-	void SetDomain(FEDomain * dom){ m_dom = dom; }
+	//Set the mesh partition that contains this element
+	void SetMeshPartition(FEMeshPartition* part){ m_part = part; }
+
+	//! Set the Local ID
+	void SetLocalID(int lid) { m_lid = lid; }
+
+	//! Get the local ID
+	int GetLocalID() const { return m_lid; }
+
+	//! clear material point data
+	void ClearData();
 
 public:
 	//! Set the type of the element
@@ -98,7 +127,7 @@ public:
 	FEElementTraits* GetTraits() { return m_pT; }
 
 	//! return number of nodes
-	int Nodes() const { return m_pT->neln; } 
+	int Nodes() const { return m_pT->m_neln; }
 
 	//! return the element class
 	int Class() const { return m_pT->Class(); }
@@ -110,17 +139,29 @@ public:
 	int Type() const { return m_pT->Type(); }
 
 	//! return number of integration points
-	int GaussPoints() const { return m_pT->nint; } 
+	int GaussPoints() const { return m_pT->m_nint; }
 
 	//! shape function values
-	double* H(int n) { return m_pT->H[n]; }
+	double* H(int n) { return m_pT->m_H[n]; }
+	const double* H(int n) const { return m_pT->m_H[n]; }
+
+	//! return number of faces
+	int Faces() const { return m_pT->Faces(); }
+
+	//! return the nodes of the face
+	int GetFace(int nface, int* nodeList) const;
 
 public:
 	//! Get the material point data
 	FEMaterialPoint* GetMaterialPoint(int n) { return m_State[n]; }
 
 	//! set the material point data
-	void SetMaterialPointData(FEMaterialPoint* pmp, int n) { m_State[n] = pmp; }
+	void SetMaterialPointData(FEMaterialPoint* pmp, int n)
+	{ 
+		pmp->m_elem = this;
+		pmp->m_index = n;
+		m_State[n] = pmp; 
+	}
 
 	//! serialize
 	//! NOTE: state data is not serialized by the element. This has to be done by the domains.
@@ -129,6 +170,7 @@ public:
 public:
 	//! evaluate scalar field at integration point
 	double Evaluate(double* fn, int n);
+	double Evaluate(int order, double* fn, int n);
 
 	//! evaluate scale field at integration point
 	double Evaluate(vector<double>& fn, int n);
@@ -142,338 +184,56 @@ public:
 	// see if this element has the node n
     bool HasNode(int n) const;
 
-	// find local element index of node n    
+    // see if this element has the list of nodes n
+    int HasNodes(int* n, const int ns) const;
+    
+	// find local element index of node n
     int FindNode(int n) const;
-   
+
+	// project data to nodes
+	void project_to_nodes(double* ai, double* ao) const { m_pT->project_to_nodes(ai, ao); }
+	void project_to_nodes(vec3d*  ai, vec3d*  ao) const { m_pT->project_to_nodes(ai, ao); }
+	void project_to_nodes(mat3ds* ai, mat3ds* ao) const { m_pT->project_to_nodes(ai, ao); }
+	void project_to_nodes(mat3d*  ai, mat3d*  ao) const { m_pT->project_to_nodes(ai, ao); }
+
+	// evaluate scalar field at integration point using specific interpolation order
+	double Evaluate(double* fn, int order, int n);
+
+	int ShapeFunctions(int order);
+	double* H(int order, int n);
+
+public:
+	void setStatus(unsigned int n) { m_status = n; }
+	unsigned int status() const { return m_status; }
+	bool isActive() const { return (m_status & ACTIVE); }
+	void setActive() { m_status |= ACTIVE; }
+	void setInactive() { m_status &= ~ACTIVE; }
+
 protected:
 	int		m_nID;		//!< element ID
+	int		m_lid;		//!< local ID
 	int		m_mat;		//!< material index
-	FEDomain * m_dom;
+	unsigned int	m_status;	//!< element status
+	FEMeshPartition * m_part;	//!< parent mesh partition
 
 public:
 	vector<int>		m_node;		//!< connectivity
-	int		m_lm;
 
 	// This array stores the local node numbers, that is the node numbers
 	// into the node list of a domain.
 	vector<int>		m_lnode;	//!< local connectivity
 
+public: 
+	// NOTE: Work in progress
+	// Elements can now also have degrees of freedom, only currently just one.
+	// Like with nodes, a degree of freedom needs an equation number and a value
+	// The equation number is in m_lm and the value is in m_val
+	int		m_lm;	//!< equation number of element degree of freedom
+	double	m_val;	//!< solution value of element degree of freedom
+
 protected:
 	FEElementState		m_State;	//!< element state data
 	FEElementTraits*	m_pT;		//!< pointer to element traits
-};
-
-//-----------------------------------------------------------------------------
-//!  This class defines a solid element
-
-class FECORE_API FESolidElement : public FEElement
-{
-public:
-	//! default constructor
-	FESolidElement(){}
-
-	//! copy constructor
-	FESolidElement(const FESolidElement& el);
-
-	//! assignment operator
-	FESolidElement& operator = (const FESolidElement& el);
-
-	//! set the element traits
-	void SetTraits(FEElementTraits* pt) override;
-
-	double gr(int n) const { return ((FESolidElementTraits*)(m_pT))->gr[n]; }	// integration point coordinate r
-	double gs(int n) const { return ((FESolidElementTraits*)(m_pT))->gs[n]; }	// integration point coordinate s
-	double gt(int n) const { return ((FESolidElementTraits*)(m_pT))->gt[n]; }	// integration point coordinate t
-
-	double* GaussWeights() const { return &((FESolidElementTraits*)(m_pT))->gw[0]; }			// weights of integration points
-
-	double* Gr(int n) const { return ((FESolidElementTraits*)(m_pT))->Gr[n]; }	// shape function derivative to r
-	double* Gs(int n) const { return ((FESolidElementTraits*)(m_pT))->Gs[n]; }	// shape function derivative to s
-	double* Gt(int n) const { return ((FESolidElementTraits*)(m_pT))->Gt[n]; }	// shape function derivative to t
-
-	double* Grr(int n) const { return ((FESolidElementTraits*)(m_pT))->Grr[n]; }	// shape function 2nd derivative to rr
-	double* Gsr(int n) const { return ((FESolidElementTraits*)(m_pT))->Gsr[n]; }	// shape function 2nd derivative to sr
-	double* Gtr(int n) const { return ((FESolidElementTraits*)(m_pT))->Gtr[n]; }	// shape function 2nd derivative to tr
-	
-	double* Grs(int n) const { return ((FESolidElementTraits*)(m_pT))->Grs[n]; }	// shape function 2nd derivative to rs
-	double* Gss(int n) const { return ((FESolidElementTraits*)(m_pT))->Gss[n]; }	// shape function 2nd derivative to ss
-	double* Gts(int n) const { return ((FESolidElementTraits*)(m_pT))->Gts[n]; }	// shape function 2nd derivative to ts
-	
-	double* Grt(int n) const { return ((FESolidElementTraits*)(m_pT))->Grt[n]; }	// shape function 2nd derivative to rt
-	double* Gst(int n) const { return ((FESolidElementTraits*)(m_pT))->Gst[n]; }	// shape function 2nd derivative to st
-	double* Gtt(int n) const { return ((FESolidElementTraits*)(m_pT))->Gtt[n]; }	// shape function 2nd derivative to tt
-
-	//! values of shape functions
-	void shape_fnc(double* H, double r, double s, double t) const { ((FESolidElementTraits*)(m_pT))->shape_fnc(H, r, s, t); }
-
-	//! values of shape function derivatives
-	void shape_deriv(double* Hr, double* Hs, double* Ht, double r, double s, double t) const { ((FESolidElementTraits*)(m_pT))->shape_deriv(Hr, Hs, Ht, r, s, t); }
-
-	//! values of shape function second derivatives
-	void shape_deriv2(double* Hrr, double* Hss, double* Htt, double* Hrs, double* Hst, double* Hrt, double r, double s, double t) const { ((FESolidElementTraits*)(m_pT))->shape_deriv2(Hrr, Hss, Htt, Hrs, Hst, Hrt, r, s, t); }
-
-	//! this function projects data from the gauss-points to the nodal points
-	void project_to_nodes(double* ai, double* ao) const { ((FESolidElementTraits*)m_pT)->project_to_nodes(ai, ao); }
-    void project_to_nodes(mat3ds* si, mat3ds* so) const { ((FESolidElementTraits*)m_pT)->project_to_nodes(si, so); }
-
-	vec3d evaluate(vec3d* v, double r, double s, double t) const;
-
-public:
-	// TODO: This isn't used anywhere. Delete?    
-	int BackShellNodes() const;
-
-public:
-	vector<bool>    m_bitfc;    //!< flag for interface nodes
-	vector<mat3d>	m_J0i;		//!< inverse of reference Jacobian
-};
-
-//-----------------------------------------------------------------------------
-//!  This class defines a surface element
-
-class FECORE_API FESurfaceElement : public FEElement
-{
-public:
-	FESurfaceElement();
-
-	FESurfaceElement(const FESurfaceElement& el);
-
-	FESurfaceElement& operator = (const FESurfaceElement& el);
-
-	virtual void SetTraits(FEElementTraits* pt) override;
-
-	double* GaussWeights() { return &((FESurfaceElementTraits*)(m_pT))->gw[0]; }			// weights of integration points
-	double gr(int n) const { return ((FESurfaceElementTraits*)(m_pT))->gr[n]; }	// integration point coordinate r
-	double gs(int n) const { return ((FESurfaceElementTraits*)(m_pT))->gs[n]; }	// integration point coordinate  s
-
-	double* Gr(int n) const { return ((FESurfaceElementTraits*)(m_pT))->Gr[n]; }	// shape function derivative to r
-	double* Gs(int n) const { return ((FESurfaceElementTraits*)(m_pT))->Gs[n]; }	// shape function derivative to s
-
-	double eval(double* d, int n)
-	{
-		double* N = H(n);
-		int ne = Nodes();
-		double a = 0;
-		for (int i=0; i<ne; ++i) a += N[i]*d[i];
-		return a;
-	}
-
-	double eval(double* d, double r, double s)
-	{
-		int n = Nodes();
-		double H[FEElement::MAX_NODES];
-		shape_fnc(H, r, s);
-		double a = 0;
-		for (int i=0; i<n; ++i) a += H[i]*d[i];
-		return a;
-	}
-
-	vec3d eval(vec3d* d, double r, double s)
-	{
-		int n = Nodes();
-		double H[FEElement::MAX_NODES];
-		shape_fnc(H, r, s);
-		vec3d a(0,0,0);
-		for (int i=0; i<n; ++i) a += d[i]*H[i];
-		return a;
-	}
-
-	vec3d eval(vec3d* d, int n)
-	{
-		int ne = Nodes();
-		double* N = H(n);
-		vec3d a(0,0,0);
-		for (int i=0; i<ne; ++i) a += d[i]*N[i];
-		return a;
-	}
-
-	double eval_deriv1(double* d, int j)
-	{
-		double* Hr = Gr(j);
-		int n = Nodes();
-		double s = 0;
-		for (int i=0; i<n; ++i) s +=  Hr[i]*d[i];
-		return s;
-	}
-
-	double eval_deriv2(double* d, int j)
-	{
-		double* Hs = Gs(j);
-		int n = Nodes();
-		double s = 0;
-		for (int i=0; i<n; ++i) s +=  Hs[i]*d[i];
-		return s;
-	}
-
-	double eval_deriv1(double* d, double r, double s)
-	{
-		double Hr[FEElement::MAX_NODES], Hs[FEElement::MAX_NODES];
-		shape_deriv(Hr, Hs, r, s);
-		int n = Nodes();
-		double a = 0;
-		for (int i=0; i<n; ++i) a +=  Hr[i]*d[i];
-		return a;
-	}
-
-	double eval_deriv2(double* d, double r, double s)
-	{
-		double Hr[FEElement::MAX_NODES], Hs[FEElement::MAX_NODES];
-		shape_deriv(Hr, Hs, r, s);
-		int n = Nodes();
-		double a = 0;
-		for (int i=0; i<n; ++i) a +=  Hs[i]*d[i];
-		return a;
-	}
-
-	void shape_fnc(double* H, double r, double s)
-	{
-		((FESurfaceElementTraits*)m_pT)->shape(H, r, s);
-	}
-
-	void shape_deriv(double* Gr, double* Gs, double r, double s)
-	{
-		((FESurfaceElementTraits*)m_pT)->shape_deriv(Gr, Gs, r, s);
-	}
-
-	void shape_deriv2(double* Grr, double* Grs, double* Gss, double r, double s)
-	{
-		((FESurfaceElementTraits*)m_pT)->shape_deriv2(Grr, Grs, Gss, r, s);
-	}
-
-	//! this function projects data from the gauss-points to the nodal points
-	void project_to_nodes(double* ai, double* ao)
-	{
-		((FESurfaceElementTraits*)m_pT)->project_to_nodes(ai, ao);
-	}
-
-    //! this function projects vector data from the gauss-points to the nodal points
-    void project_to_nodes(vec3d* ai, vec3d* ao);
-    
-    //! return number of edges
-    int facet_edges();
-    
-    //! return node list of edge
-    void facet_edge(int j, int* en);
-
-	//! serialize
-	void Serialize(DumpStream& ar) override;
-    
-public:
-    //! local ID of surface element
-	int		m_lid;
-
-	// indices of solid or shell element this surface is a face of
-	// For solids, a surface element can be connected to two elements 
-	// if the surface is an inside surface. For boundary surfaces
-	// the second element index is -1. 
-	int		m_elem[2];				
-};
-
-//-----------------------------------------------------------------------------
-//!  This class defines the shell element. 
-
-//! A shell element is similar to a surface
-//! element except that it has a thickness. 
-
-class FECORE_API FEShellElement : public FEElement
-{
-public:
-	FEShellElement();
-
-	//! copy constructor
-	FEShellElement(const FEShellElement& el);
-
-	//! assignment operator
-	FEShellElement& operator = (const FEShellElement& el);
-
-	virtual void SetTraits(FEElementTraits* ptraits) override;
-
-    double gr(int n) { return ((FEShellElementTraits*)(m_pT))->gr[n]; }
-    double gs(int n) { return ((FEShellElementTraits*)(m_pT))->gs[n]; }
-    double gt(int n) { return ((FEShellElementTraits*)(m_pT))->gt[n]; }
-    
-	double* GaussWeights() { return &((FEShellElementTraits*)(m_pT))->gw[0]; }	// weights of integration points
-
-	double* Hr(int n) { return ((FEShellElementTraits*)(m_pT))->Hr[n]; }	// shape function derivative to r
-	double* Hs(int n) { return ((FEShellElementTraits*)(m_pT))->Hs[n]; }	// shape function derivative to s
-
-    //! values of shape functions
-    void shape_fnc(double* H, double r, double s) const { ((FEShellElementTraits*)(m_pT))->shape_fnc(H, r, s); }
-    
-    //! values of shape function derivatives
-    void shape_deriv(double* Hr, double* Hs, double r, double s) const { ((FEShellElementTraits*)(m_pT))->shape_deriv(Hr, Hs, r, s); }
-    
-    //! this function projects data from the gauss-points to the nodal points
-    void project_to_nodes(double* ai, double* ao)
-    {
-        ((FEShellElementTraits*)m_pT)->project_to_nodes(ai, ao);
-    }
-    
-    //! serialize data associated with this element
-    void Serialize(DumpStream &ar) override;
-
-public:
-	vector<double>	m_h0;	//!< initial shell thicknesses
-	vector<double>	m_ht;	//!< current shell thickness
-
-    // indices of solid elements this shell element is attached to.
-    // the first element is attached to the back of the shell
-    // and the second element is attached to the front.
-    // the index is -1 if no solid is attached on that side.
-    int        m_elem[2];
-};
-
-//-----------------------------------------------------------------------------
-// Shell element used by old shell formulation
-class FECORE_API FEShellElementOld : public FEShellElement
-{
-public:
-	FEShellElementOld();
-
-	//! copy constructor
-	FEShellElementOld(const FEShellElementOld& el);
-
-	//! assignment operator
-	FEShellElementOld& operator = (const FEShellElementOld& el);
-
-	// set the element traits class
-	void SetTraits(FEElementTraits* ptraits) override;
-
-	//! serialize data associated with this element
-	void Serialize(DumpStream &ar) override;
-
-public:
-	vector<vec3d>	m_D0;	//!< initial shell directors
-};
-
-//-----------------------------------------------------------------------------
-// Shell element used by new shell formulations
-class FECORE_API FEShellElementNew : public FEShellElement
-{
-public:
-	FEShellElementNew();
-
-	//! copy constructor
-	FEShellElementNew(const FEShellElementNew& el);
-
-	//! assignment operator
-	FEShellElementNew& operator = (const FEShellElementNew& el);
-
-	// set the element traits class
-	void SetTraits(FEElementTraits* ptraits) override;
-
-	//! serialize data associated with this element
-	void Serialize(DumpStream &ar) override;
-	
-public: // EAS parameters
-
-	matrix          m_Kaai;
-	matrix          m_fa;
-	matrix          m_alpha;
-	matrix          m_alphat;
-	matrix          m_alphai;
-	vector<matrix>  m_Kua;
-	vector<matrix>  m_Kwa;
-	vector<mat3ds>  m_E;
 };
 
 //-----------------------------------------------------------------------------
@@ -532,9 +292,6 @@ public:
 
 	//! values of shape function derivatives
 	void shape_deriv(double* Hr, double* Hs, double r, double s) { ((FE2DElementTraits*)(m_pT))->shape_deriv(Hr, Hs, r, s); }
-
-	//! this function projects data from the gauss-points to the nodal points
-	void project_to_nodes(double* ai, double* ao) { ((FE2DElementTraits*)m_pT)->project_to_nodes(ai, ao); }
 };
 
 //-----------------------------------------------------------------------------
@@ -548,11 +305,4 @@ public:
 	FELineElement& operator = (const FELineElement& el);
 
 	void SetTraits(FEElementTraits* pt);
-
-	void Serialize(DumpStream& ar);
-
-public:
-	int	m_lid;	//!< local ID
 };
-
-#endif // !defined(AFX_FEELEMENT_H__2EE38101_58E2_4FEB_B214_BB71B6FB15FB__INCLUDED_)

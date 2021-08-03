@@ -1,9 +1,38 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FECore/FEModelLoad.h"
+#include "febiomech_api.h"
 
 //-----------------------------------------------------------------------------
 //! an axial force between two rigid bodies
-class FERigidAxialForce : public FEModelLoad
+class FEBIOMECH_API FERigidAxialForce : public FEModelLoad
 {
 public:
 	//! constructor
@@ -16,10 +45,10 @@ public:
 	void Serialize(DumpStream& ar) override;
 
 	//! Residual
-	void Residual(FEGlobalVector& R, const FETimeInfo& tp) override;
+	void LoadVector(FEGlobalVector& R, const FETimeInfo& tp) override;
 
 	//! Stiffness matrix
-	void StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+	void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
 
 public:
 	int		m_ida, m_idb;		//!< rigid body ID's
@@ -27,7 +56,7 @@ public:
 	double	m_s;				//!< scale factor
 	bool	m_brelative;		//!< if active, the ra0 and rb0 are relative w.r.t. the COM
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 
@@ -37,38 +66,49 @@ public:
 //!       were the force is const, and one where the force is a follower force.
 //!       Perhaps I can derive the const force from FENodalLoad since it applies
 //!       a force directly to the rigid "node".
-class FERigidBodyForce : public FEModelLoad
+class FEBIOMECH_API FERigidBodyForce : public FEModelLoad
 {
 public:
-	enum { RAMP, TARGET };	// values for m_ntype
+	enum { FORCE_LOAD, FORCE_FOLLOW, FORCE_TARGET };	// values for m_ntype
 
 public:
 	FERigidBodyForce(FEModel* pfem);
 
 	//! Activation
-	void Activate();
+	void Activate() override;
 
 	//! initialization
-	bool Init();
+	bool Init() override;
 
 	//! get the current force value
 	double Value();
 
 	//! Serialization
-	void Serialize(DumpStream& ar);
+	void Serialize(DumpStream& ar) override;
 
-	//! Residual
-	void Residual(FEGlobalVector& R, const FETimeInfo& tp);
+	//! forces
+	void LoadVector(FEGlobalVector& R, const FETimeInfo& tp) override;
 
 	//! Stiffness matrix
-	void StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp);
+	void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
 
 public:
-	int		m_ntype;	//!< type of force (0=loadcurve, 1=target)
-	int		id;		// rigid body id
-	int		bc;		// force direction
-	int		lc;		// load curve number
-	double	sf;		// scale factor
-	double	m_trg;	// target force for target case
-	bool	m_bfollow;	//!< follower force if true
+	void SetRigidMaterialID(int nid);
+
+	void SetDOF(int bc);
+
+	void SetLoadType(int loadType);
+
+	void SetForce(double f);
+
+private:
+	int		m_rigidMat;		//!< rigid body material id
+	int		m_dof;			//!< force direction
+
+	int		m_ntype;		//!< type of force (0=loadcurve, 1=target)
+	double	m_force;		//!< applied force
+	double	m_trg;			//!< target force for target case
+	int		m_rid;
+
+	DECLARE_FECORE_CLASS();
 };

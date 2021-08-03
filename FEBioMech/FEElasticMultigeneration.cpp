@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FECore/tens4d.h"
 #include "FECore/log.h"
@@ -6,14 +34,20 @@
 
 //=============================================================================
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEGenerationMaterial, FEElasticMaterial)
-	ADD_PARAMETER(btime, FE_PARAM_DOUBLE, "start_time");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEGenerationMaterial, FEElasticMaterial)
+	
+	// material parameters
+	ADD_PARAMETER(btime, "start_time");
+
+	// the solid property
+	ADD_PROPERTY(m_pMat, "solid");
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEGenerationMaterial::FEGenerationMaterial(FEModel* pfem) : FEElasticMaterial(pfem)
 {
-	AddProperty(&m_pMat, "solid");
+	m_pMat = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -65,18 +99,11 @@ FEMaterialPoint* FEMultigenerationMaterialPoint::Copy()
 //-----------------------------------------------------------------------------
 void FEMultigenerationMaterialPoint::Serialize(DumpStream& ar)
 {
+	FEMaterialPoint::Serialize(ar);
 	if (ar.IsShallow())
 	{
-		if (ar.IsSaving())
-		{
-			ar << m_tgen << m_ngen;
-		}
-		else
-		{
-			ar >> m_tgen >> m_ngen;
-		}
+		ar & m_tgen & m_ngen;
 		for (int i=0; i < (int)m_mp.size(); i++) m_mp[i]->Serialize(ar);
-    
 		// TODO: shallow copy m_pmat
 	}
 	else
@@ -100,7 +127,6 @@ void FEMultigenerationMaterialPoint::Serialize(DumpStream& ar)
 			}
 		}
 	}
-	FEMaterialPoint::Serialize(ar);
 }
 
 //-----------------------------------------------------------------------------
@@ -142,10 +168,13 @@ void FEMultigenerationMaterialPoint::Update(const FETimeInfo& timeInfo)
 
 //=============================================================================
 
+BEGIN_FECORE_CLASS(FEElasticMultigeneration, FEElasticMaterial)
+	ADD_PROPERTY(m_MG, "generation");
+END_FECORE_CLASS();
+
 //-----------------------------------------------------------------------------
 FEElasticMultigeneration::FEElasticMultigeneration(FEModel* pfem) : FEElasticMaterial(pfem)
 {
-	AddProperty(&m_MG, "generation");
 }
 
 //-----------------------------------------------------------------------------
@@ -158,23 +187,6 @@ FEMaterialPoint* FEElasticMultigeneration::CreateMaterialPointData()
     int NMAT = Materials();
     for (int i=0; i<NMAT; ++i) pt->AddMaterialPoint(m_MG[i]->CreateMaterialPointData());
     return pt;
-}
-
-//-----------------------------------------------------------------------------
-void FEElasticMultigeneration::SetLocalCoordinateSystem(FEElement& el, int n, FEMaterialPoint& mp)
-{
-    FEElasticMaterial::SetLocalCoordinateSystem(el, n, mp);
-    FEElasticMaterialPoint& pt = *(mp.ExtractData<FEElasticMaterialPoint>());
-    
-    // check the local coordinate systems for each component
-    for (int j=0; j<Materials(); ++j)
-    {
-        FEElasticMaterial* pmj = GetMaterial(j)->GetElasticMaterial();
-        FEMaterialPoint& mpj = *mp.GetPointData(j);
-        FEElasticMaterialPoint& pj = *(mpj.ExtractData<FEElasticMaterialPoint>());
-        pj.m_Q = pt.m_Q;    // copy mixture material's coordinate system into component
-        pmj->SetLocalCoordinateSystem(el, n, mpj);
-    }
 }
 
 //--------------------------------------------------------------------------------
@@ -214,7 +226,6 @@ mat3ds FEElasticMultigeneration::Stress(FEMaterialPoint& mp)
         double Ji = epi.m_J;
         
         // copy the elastic material point data to the components
-        // but don't copy m_Q since correct value was set in SetLocalCoordinateSystem
         epi.m_rt = ep.m_rt;
         epi.m_r0 = ep.m_r0;
         
@@ -255,7 +266,6 @@ tens4dss FEElasticMultigeneration::Tangent(FEMaterialPoint& mp)
         double Ji = epi.m_J;
         
         // copy the elastic material point data to the components
-        // but don't copy m_Q since correct value was set in SetLocalCoordinateSystem
         epi.m_rt = ep.m_rt;
         epi.m_r0 = ep.m_r0;
         
@@ -296,7 +306,6 @@ double FEElasticMultigeneration::StrainEnergyDensity(FEMaterialPoint& mp)
         double Ji = epi.m_J;
         
         // copy the elastic material point data to the components
-        // but don't copy m_Q since correct value was set in SetLocalCoordinateSystem
         epi.m_rt = ep.m_rt;
         epi.m_r0 = ep.m_r0;
         

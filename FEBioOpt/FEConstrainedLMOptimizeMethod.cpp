@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEConstrainedLMOptimizeMethod.h"
 #include "FEOptimizeData.h"
@@ -9,12 +37,12 @@
 #include "levmar.h"
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEConstrainedLMOptimizeMethod, FEOptimizeMethod)
-	ADD_PARAMETER(m_objtol, FE_PARAM_DOUBLE, "obj_tol"     );
-	ADD_PARAMETER(m_tau   , FE_PARAM_DOUBLE, "tau"         );
-	ADD_PARAMETER(m_fdiff , FE_PARAM_DOUBLE, "f_diff_scale");
-	ADD_PARAMETER(m_nmax  , FE_PARAM_INT   , "max_iter"    );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEConstrainedLMOptimizeMethod, FEOptimizeMethod)
+	ADD_PARAMETER(m_objtol, "obj_tol"     );
+	ADD_PARAMETER(m_tau   , "tau"         );
+	ADD_PARAMETER(m_fdiff , "f_diff_scale");
+	ADD_PARAMETER(m_nmax  , "max_iter"    );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEConstrainedLMOptimizeMethod* FEConstrainedLMOptimizeMethod::m_pThis = 0;
@@ -49,7 +77,7 @@ FEConstrainedLMOptimizeMethod::FEConstrainedLMOptimizeMethod()
 	m_objtol = 0.001;
 	m_fdiff  = 0.001;
 	m_nmax   = 100;
-    m_loglevel = Logfile::LOG_NEVER;
+    m_loglevel = LogLevel::LOG_NEVER;
 }
 
 //-----------------------------------------------------------------------------
@@ -88,8 +116,6 @@ bool FEConstrainedLMOptimizeMethod::Solve(FEOptimizeData *pOpt, vector<double>& 
 
 	// return value
 	double fret = 0.0;
-
-	felog.SetMode(Logfile::LOG_FILE_AND_SCREEN);
 
 	int niter = 1;
 
@@ -145,7 +171,8 @@ bool FEConstrainedLMOptimizeMethod::Solve(FEOptimizeData *pOpt, vector<double>& 
 	}
 	catch (FEErrorTermination)
 	{
-		felog.printbox("F A T A L   E R R O R", "FEBio error terminated. Parameter optimization cannot continue.");
+		FEModel* fem = pOpt->GetFEModel();
+		feLogErrorEx(fem, "FEBio error terminated. Parameter optimization cannot continue.");
 		return false;
 	}
 

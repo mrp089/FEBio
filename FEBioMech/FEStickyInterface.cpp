@@ -1,22 +1,63 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEStickyInterface.h"
-#include "FECore/FEModel.h"
-#include "FECore/FEClosestPointProjection.h"
-#include "FECore/FEGlobalMatrix.h"
-#include "FECore/log.h"
+#include <FECore/FEClosestPointProjection.h>
+#include <FECore/FELinearSystem.h>
+#include <FECore/log.h>
+
+FEStickySurface::Data::Data() 
+{ 
+	gap = vec3d(0.0, 0.0, 0.0); 
+	pme = nullptr; 
+}
+
+void FEStickySurface::Data::Serialize(DumpStream& ar)
+{
+	ar & gap;
+	ar & rs;
+	ar & Lm;
+	ar & tn;
+}
+
 
 //-----------------------------------------------------------------------------
 // Define sliding interface parameters
-BEGIN_PARAMETER_LIST(FEStickyInterface, FEContactInterface)
-	ADD_PARAMETER(m_blaugon, FE_PARAM_BOOL  , "laugon"          ); 
-	ADD_PARAMETER(m_atol   , FE_PARAM_DOUBLE, "tolerance"       );
-	ADD_PARAMETER(m_eps    , FE_PARAM_DOUBLE, "penalty"         );
-	ADD_PARAMETER(m_naugmin, FE_PARAM_INT   , "minaug"          );
-	ADD_PARAMETER(m_naugmax, FE_PARAM_INT   , "maxaug"          );
-	ADD_PARAMETER(m_stol   , FE_PARAM_DOUBLE, "search_tolerance");
-	ADD_PARAMETER(m_tmax   , FE_PARAM_DOUBLE, "max_traction"    );
-	ADD_PARAMETER(m_snap   , FE_PARAM_DOUBLE, "snap_tol"        );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEStickyInterface, FEContactInterface)
+	ADD_PARAMETER(m_atol   , "tolerance"       );
+	ADD_PARAMETER(m_eps    , "penalty"         );
+	ADD_PARAMETER(m_naugmin, "minaug"          );
+	ADD_PARAMETER(m_naugmax, "maxaug"          );
+	ADD_PARAMETER(m_stol   , "search_tolerance");
+	ADD_PARAMETER(m_tmax   , "max_traction"    );
+	ADD_PARAMETER(m_snap   , "snap_tol"        );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! Creates a surface for use with a sliding interface. All surface data
@@ -33,7 +74,7 @@ bool FEStickySurface::Init()
 	int nn = Nodes();
 
 	// allocate other surface data
-	m_Node.resize(nn);
+	m_data.resize(nn);
 
 	return true;
 }
@@ -42,64 +83,7 @@ bool FEStickySurface::Init()
 void FEStickySurface::Serialize(DumpStream &ar)
 {
 	FEContactSurface::Serialize(ar);
-	if (ar.IsShallow())
-	{
-		if (ar.IsSaving())
-		{
-			for (int i=0; i<(int)m_Node.size(); ++i)
-			{
-				NODE& n = m_Node[i];
-				ar << n.gap << n.rs << n.Lm;
-			}
-		}
-		else
-		{
-			for (int i=0; i<(int)m_Node.size(); ++i)
-			{
-				NODE& n = m_Node[i];
-				ar >> n.gap >> n.rs >> n.Lm;
-			}
-		}
-	}
-	else
-	{
-		if (ar.IsSaving())
-		{
-			for (int i=0; i<(int)m_Node.size(); ++i)
-			{
-				NODE& n = m_Node[i];
-				ar << n.gap << n.rs << n.Lm;
-			}
-		}
-		else
-		{
-			for (int i=0; i<(int)m_Node.size(); ++i)
-			{
-				NODE& n = m_Node[i];
-				ar >> n.gap >> n.rs >> n.Lm;
-			}
-		}
-	}
-}
-
-//-----------------------------------------------------------------------------
-void FEStickySurface::GetContactGap(int nface, double& pg)
-{
-    FESurfaceElement& el = Element(nface);
-    int ne = el.Nodes();
-    pg = 0;
-    for (int k=0; k<ne; ++k) pg += m_Node[el.m_lnode[k]].gap.norm();
-    pg /= ne;
-}
-
-//-----------------------------------------------------------------------------
-void FEStickySurface::GetContactPressure(int nface, double& pg)
-{
-    FESurfaceElement& el = Element(nface);
-    int ne = el.Nodes();
-    pg = 0;
-    for (int k=0; k<ne; ++k) pg += m_Node[el.m_lnode[k]].tn.norm();
-    pg /= ne;
+	ar & m_data;
 }
 
 //-----------------------------------------------------------------------------
@@ -108,16 +92,8 @@ void FEStickySurface::GetContactTraction(int nface, vec3d& pt)
     FESurfaceElement& el = Element(nface);
     int ne = el.Nodes();
     pt = vec3d(0,0,0);
-    for (int k=0; k<ne; ++k) pt += m_Node[el.m_lnode[k]].tn;
+    for (int k=0; k<ne; ++k) pt += m_data[el.m_lnode[k]].tn;
     pt /= ne;
-}
-
-//-----------------------------------------------------------------------------
-void FEStickySurface::GetNodalContactGap(int nface, double* gn)
-{
-	FESurfaceElement& f = Element(nface);
-	int ne = f.Nodes();
-	for (int j= 0; j< ne; ++j) gn[j] = m_Node[f.m_lnode[j]].gap.norm();
 }
 
 //-----------------------------------------------------------------------------
@@ -125,7 +101,7 @@ void FEStickySurface::GetNodalContactPressure(int nface, double* pn)
 {
 	FESurfaceElement& f = Element(nface);
 	int ne = f.Nodes();
-	for (int j= 0; j< ne; ++j) pn[j] = m_Node[f.m_lnode[j]].tn.norm();
+	for (int j= 0; j< ne; ++j) pn[j] = m_data[f.m_lnode[j]].tn.norm();
 }
 
 //-----------------------------------------------------------------------------
@@ -133,7 +109,7 @@ void FEStickySurface::GetNodalContactTraction(int nface, vec3d* tn)
 {
 	FESurfaceElement& f = Element(nface);
 	int ne = f.Nodes();
-	for (int j= 0; j< ne; ++j) tn[j] = m_Node[f.m_lnode[j]].tn;
+	for (int j= 0; j< ne; ++j) tn[j] = m_data[f.m_lnode[j]].tn;
 }
 
 //=============================================================================
@@ -154,7 +130,6 @@ FEStickyInterface::FEStickyInterface(FEModel* pfem) : FEContactInterface(pfem), 
 	ms.SetSibling(&ss);
 
 	// initial parameter values
-	m_blaugon = false;
 	m_atol = 0.01;
 	m_eps = 1.0;
 	m_stol = 0.0001;
@@ -166,7 +141,7 @@ FEStickyInterface::FEStickyInterface(FEModel* pfem) : FEContactInterface(pfem), 
 
 //-----------------------------------------------------------------------------
 //! Initialization. This function intializes the surfaces data and projects the
-//! slave surface onto the master surface.
+//! primary surface onto the secondary surface.
 //! 
 bool FEStickyInterface::Init()
 {
@@ -197,7 +172,7 @@ void FEStickyInterface::BuildMatrixProfile(FEGlobalMatrix& K)
 
 	for (int j=0; j<ss.Nodes(); ++j)
 	{
-		FEStickySurface::NODE& snj = ss.m_Node[j];
+		FEStickySurface::Data& snj = ss.m_data[j];
 		FESurfaceElement* pe = snj.pme;
 		if (pe != 0)
 		{
@@ -237,15 +212,15 @@ void FEStickyInterface::Activate()
 	// Don't forget to call base member!
 	FEContactInterface::Activate();
 
-	// project slave surface onto master surface
+	// project primary surface onto secondary surface
 	ProjectSurface(ss, ms, false);
 }
 
 //-----------------------------------------------------------------------------
 //! Update sticky interface data. This function re-evaluates the gaps between
-//! the slave node and their projections onto the master surface.
+//! the primary node and their projections onto the secondary surface.
 //!
-void FEStickyInterface::Update(int niter, const FETimeInfo& tp)
+void FEStickyInterface::Update()
 {
 	// closest point projection method
 	FEClosestPointProjection cpp(ms);
@@ -259,18 +234,18 @@ void FEStickyInterface::Update(int niter, const FETimeInfo& tp)
 	// flag used for contact searching algorithm
 	bool binit = true;
 
-	// loop over all slave nodes
+	// loop over all primary nodes
 	for (int i=0; i<ss.Nodes(); ++i)
 	{
-		FEStickySurface::NODE& sni = ss.m_Node[i];
+		FEStickySurface::Data& sni = ss.m_data[i];
 		FESurfaceElement* pme = sni.pme;
 		if (pme)
 		{
-			// get the current slave nodal position
+			// get the current primary nodal position
 			vec3d rt = ss.Node(i).m_rt;
 
-			// get the natural coordinates of the slave projection
-			// onto the master element
+			// get the natural coordinates of the primary projection
+			// onto the secondary element
 			double r = sni.rs[0];
 			double s = sni.rs[1];
 
@@ -279,7 +254,7 @@ void FEStickyInterface::Update(int niter, const FETimeInfo& tp)
 			vec3d y[FEElement::MAX_NODES];
 			for (int l=0; l<ne; ++l) y[l] = mesh.Node( pme->m_node[l] ).m_rt;
 
-			// calculate the slave node projection
+			// calculate the primary node projection
 			vec3d q = pme->eval(y, r, s);
 
 			// calculate the gap function
@@ -288,10 +263,10 @@ void FEStickyInterface::Update(int niter, const FETimeInfo& tp)
 			// see if the max traction was exceded
 			if (m_tmax > 0.0)
 			{
-				// get slave node contact force
+				// get primary node contact force
 				vec3d tc = sni.Lm + sni.gap*m_eps;
 
-				// calculate the master normal
+				// calculate the secondary normal
 				vec3d nu = ms.SurfaceNormal(*sni.pme, sni.rs[0], sni.rs[1]);
 				double t = nu*tc;
 				if (t > m_tmax)
@@ -306,16 +281,16 @@ void FEStickyInterface::Update(int niter, const FETimeInfo& tp)
 		}
 		else
 		{
-			// get the nodal position of this slave node
+			// get the nodal position of this primary node
 			FENode& node = ss.Node(i);
 			vec3d x = node.m_rt;
 
-			// find the master element
+			// find the secondary element
 			vec3d q; vec2d rs;
 			FESurfaceElement* pme = cpp.Project(x, q, rs);
 			if (pme)
 			{
-				// calculate the master normal
+				// calculate the secondary normal
 				vec3d nu = ms.SurfaceNormal(*pme, rs[0], rs[1]);
 
 				// calculate gap
@@ -327,7 +302,7 @@ void FEStickyInterface::Update(int niter, const FETimeInfo& tp)
 					// calculate signed distance
 					sni.gap = x - q;
 
-					// store the master element
+					// store the secondary element
 					sni.pme = pme;
 					sni.rs[0] = rs[0];
 					sni.rs[1] = rs[1];
@@ -348,25 +323,25 @@ void FEStickyInterface::ProjectSurface(FEStickySurface& ss, FEStickySurface& ms,
 	cpp.SetTolerance(m_stol);
 	cpp.Init();
 
-	// loop over all slave nodes
+	// loop over all primary nodes
 	for (int i=0; i<ss.Nodes(); ++i)
 	{
 		// get the next node
 		FENode& node = ss.Node(i);
-		FEStickySurface::NODE& sni = ss.m_Node[i];
+		FEStickySurface::Data& sni = ss.m_data[i];
 
 		// assume we won't find a projection
 		sni.pme = 0;
 
-		// get the nodal position of this slave node
+		// get the nodal position of this primary node
 		vec3d x = node.m_rt;
 
-		// find the master element
+		// find the secondary element
 		vec3d q; vec2d rs;
 		FESurfaceElement* pme = cpp.Project(x, q, rs);
 		if (pme)
 		{
-			// calculate the master normal
+			// calculate the secondary normal
 			vec3d nu = ms.SurfaceNormal(*pme, rs[0], rs[1]);
 
 			// calculate gap
@@ -378,7 +353,7 @@ void FEStickyInterface::ProjectSurface(FEStickySurface& ss, FEStickySurface& ms,
 				// calculate signed distance
 				sni.gap = x - q;
 
-				// store the master element
+				// store the secondary element
 				sni.pme = pme;
 				sni.rs[0] = rs[0];
 				sni.rs[1] = rs[1];
@@ -398,7 +373,7 @@ void FEStickyInterface::ProjectSurface(FEStickySurface& ss, FEStickySurface& ms,
 //-----------------------------------------------------------------------------
 //! This function calculates the contact forces for a tied interface.
 
-void FEStickyInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEStickyInterface::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	// shape function values
 	double N[FEElement::MAX_NODES];
@@ -415,11 +390,11 @@ void FEStickyInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	vector<int> sLM;
 	vector<int> mLM;
 
-	// loop over all slave facets
+	// loop over all primary facets
 	const int NE = ss.Elements();
 	for (int j=0; j<NE; ++j)
 	{
-		// get the slave element
+		// get the primary element
 		FESurfaceElement& sel = ss.Element(j);
 
 		// get the element's LM vector
@@ -429,15 +404,15 @@ void FEStickyInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 		double* w = sel.GaussWeights();
 
-		// loop over slave element nodes (which are the integration points as well)
+		// loop over primary element nodes (which are the integration points as well)
 		for (int n=0; n<nseln; ++n)
 		{
 			int m = sel.m_lnode[n];
 
-			FEStickySurface::NODE& sm = ss.m_Node[m];
+			FEStickySurface::Data& sm = ss.m_data[m];
 
 			// see if this node's constraint is active
-			// that is, if it has a master element associated with it
+			// that is, if it has a secondary element associated with it
 			// TODO: is this a good way to test for an active constraint
 			// The rigid wall criteria seems to work much better.
 			if (sm.pme != 0)
@@ -445,13 +420,13 @@ void FEStickyInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 				// calculate jacobian
 				double detJ = ss.jac0(sel, n);
 
-				// get slave node contact force
+				// get primary node contact force
 				vec3d tc = sm.Lm + sm.gap*m_eps;
 
 				// cap it
 				if (m_tmax > 0.0)
 				{
-					// calculate the master normal
+					// calculate the secondary normal
 					vec3d nu = ms.SurfaceNormal(*sm.pme, sm.rs[0], sm.rs[1]);
 					double t = nu*tc;
 					if (t > m_tmax) tc = vec3d(0,0,0);
@@ -460,18 +435,18 @@ void FEStickyInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 				// store traction
 				sm.tn = tc;
 
-				// get the master element
+				// get the secondary element
 				FESurfaceElement& mel = *sm.pme;
 				ms.UnpackLM(mel, mLM);
 
 				int nmeln = mel.Nodes();
 
-				// isoparametric coordinates of the projected slave node
-				// onto the master element
+				// isoparametric coordinates of the projected primary node
+				// onto the secondary element
 				double r = sm.rs[0];
 				double s = sm.rs[1];
 
-				// get the master shape function values at this slave node
+				// get the secondary shape function values at this primary node
 				mel.shape_fnc(N, r, s);
 
 				// calculate force vector
@@ -513,16 +488,16 @@ void FEStickyInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 //-----------------------------------------------------------------------------
 //! Calculate the stiffness matrix contribution.
-void FEStickyInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEStickyInterface::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	vector<int> sLM, mLM, lm, en;
 	const int MN = FEElement::MAX_NODES;
-	matrix ke;
+	FEElementMatrix ke;
 
 	// shape functions
 	double H[MN];
 
-	// loop over all slave elements
+	// loop over all primary elements
 	const int NE = ss.Elements();
 	for (int i=0; i<NE; ++i)
 	{
@@ -540,13 +515,13 @@ void FEStickyInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 		{
 			int m = se.m_lnode[n];
 
-			FEStickySurface::NODE& sm = ss.m_Node[m];
+			FEStickySurface::Data& sm = ss.m_data[m];
 
-			// get the master element
+			// get the secondary element
 			FESurfaceElement* pme = sm.pme;
 			if (pme)
 			{
-				// get the master element
+				// get the secondary element
 				FESurfaceElement& me = *pme;
 				int nmeln = me.Nodes();
 				ms.UnpackLM(me, mLM);
@@ -554,11 +529,11 @@ void FEStickyInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 				// calculate jacobian
 				double detJ = ss.jac0(se, n);
 
-				// slave node natural coordinates in master element
+				// primary node natural coordinates in secondary element
 				double r = sm.rs[0];
 				double s = sm.rs[1];
 
-				// get the master shape function values at this slave node
+				// get the secondary shape function values at this primary node
 				me.shape_fnc(H, r, s);
 
 				// number of degrees of freedom
@@ -606,7 +581,9 @@ void FEStickyInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 				for (int k=0; k<nmeln; ++k) en[k+1] = me.m_node[k];
 						
 				// assemble stiffness matrix
-				psolver->AssembleStiffness(en, lm, ke);
+				ke.SetNodes(en);
+				ke.SetIndices(lm);
+				LS.Assemble(ke);
 			}
 		}
 	}
@@ -617,7 +594,7 @@ void FEStickyInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 bool FEStickyInterface::Augment(int naug, const FETimeInfo& tp)
 {
 	// make sure we need to augment
-	if (!m_blaugon) return true;
+	if (m_laugon != 1) return true;
 
 	int i;
 
@@ -625,7 +602,7 @@ bool FEStickyInterface::Augment(int naug, const FETimeInfo& tp)
 	double normL0 = 0;
 	for (i=0; i<ss.Nodes(); ++i)
 	{
-		FEStickySurface::NODE& si = ss.m_Node[i];
+		FEStickySurface::Data& si = ss.m_data[i];
 		vec3d lm = si.Lm;
 		normL0 += lm*lm;
 	}
@@ -637,7 +614,7 @@ bool FEStickyInterface::Augment(int naug, const FETimeInfo& tp)
 	int N = 0;
 	for (i=0; i<ss.Nodes(); ++i)
 	{
-		FEStickySurface::NODE& si = ss.m_Node[i];
+		FEStickySurface::Data& si = ss.m_data[i];
 
 		vec3d lm = si.Lm + si.gap*m_eps;
 
@@ -655,12 +632,12 @@ bool FEStickyInterface::Augment(int naug, const FETimeInfo& tp)
 	normgc = sqrt(normgc / N);
 
 	// check convergence of constraints
-	felog.printf(" tied interface # %d\n", GetID());
-	felog.printf("                        CURRENT        REQUIRED\n");
+	feLog(" tied interface # %d\n", GetID());
+	feLog("                        CURRENT        REQUIRED\n");
 	double pctn = 0;
 	if (fabs(normL1) > 1e-10) pctn = fabs((normL1 - normL0)/normL1);
-	felog.printf("    normal force : %15le %15le\n", pctn, m_atol);
-	felog.printf("    gap function : %15le       ***\n", normgc);
+	feLog("    normal force : %15le %15le\n", pctn, m_atol);
+	feLog("    gap function : %15le       ***\n", normgc);
 		
 	// check convergence
 	bool bconv = true;
@@ -672,7 +649,7 @@ bool FEStickyInterface::Augment(int naug, const FETimeInfo& tp)
 	{
 		for (i=0; i<ss.Nodes(); ++i)
 		{
-			FEStickySurface::NODE& si = ss.m_Node[i];
+			FEStickySurface::Data& si = ss.m_data[i];
 			// update Lagrange multipliers
 			si.Lm = si.Lm + si.gap*m_eps;
 		}	
@@ -691,4 +668,35 @@ void FEStickyInterface::Serialize(DumpStream &ar)
 	// store contact surface data
 	ms.Serialize(ar);
 	ss.Serialize(ar);
+
+	// restore secondary element pointers
+	SerializePointers(ss, ms, ar);
+	SerializePointers(ms, ss, ar);
+}
+
+void FEStickyInterface::SerializePointers(FEStickySurface& ss, FEStickySurface& ms, DumpStream& ar)
+{
+	if (ar.IsSaving())
+	{
+		for (int i = 0; i < ss.m_data.size(); i++)
+		{
+			FESurfaceElement* pe = ss.m_data[i].pme;
+			int eid = (pe ? pe->m_lid : -1);
+			ar << eid;
+		}
+	}
+	else
+	{
+		for (int i = 0; i < ss.m_data.size(); i++)
+		{
+			int eid = -1;
+			ar >> eid;
+			if (eid >= 0)
+			{
+				FESurfaceElement* pe = &ms.Element(eid);
+				ss.m_data[i].pme = pe;
+			}
+			else ss.m_data[i].pme = nullptr;
+		}
+	}
 }

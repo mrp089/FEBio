@@ -1,50 +1,64 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEFluidDomain3D.h"
 #include "FEFluidSolver.h"
 #include "FECore/log.h"
 #include "FECore/DOFS.h"
-#include "NumCore/LUSolver.h"
 #include <FECore/FEModel.h>
 #include <FECore/FEAnalysis.h>
 #include <FECore/sys.h>
+#include "FEBioFluid.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
 //! constructor
 //! Some derived classes will pass 0 to the pmat, since the pmat variable will be
 //! to initialize another material. These derived classes will set the m_pMat variable as well.
-FEFluidDomain3D::FEFluidDomain3D(FEModel* pfem) : FESolidDomain(pfem), FEFluidDomain(pfem)
+FEFluidDomain3D::FEFluidDomain3D(FEModel* pfem) : FESolidDomain(pfem), FEFluidDomain(pfem), m_dofW(pfem), m_dofAW(pfem), m_dof(pfem)
 {
     m_pMat = 0;
     m_btrans = true;
-    
-    m_dofWX = pfem->GetDOFIndex("wx");
-    m_dofWY = pfem->GetDOFIndex("wy");
-    m_dofWZ = pfem->GetDOFIndex("wz");
-    m_dofEF  = pfem->GetDOFIndex("ef");
-    
-    m_dofWXP = pfem->GetDOFIndex("wxp");
-    m_dofWYP = pfem->GetDOFIndex("wyp");
-    m_dofWZP = pfem->GetDOFIndex("wzp");
-    m_dofEFP  = pfem->GetDOFIndex("efp");
-    
-    m_dofAWX = pfem->GetDOFIndex("awx");
-    m_dofAWY = pfem->GetDOFIndex("awy");
-    m_dofAWZ = pfem->GetDOFIndex("awz");
-    m_dofAEF = pfem->GetDOFIndex("aef");
-    
-    m_dofAWXP = pfem->GetDOFIndex("awxp");
-    m_dofAWYP = pfem->GetDOFIndex("awyp");
-    m_dofAWZP = pfem->GetDOFIndex("awzp");
-    m_dofAEFP = pfem->GetDOFIndex("aefp");
 
-	// list the degrees of freedom
-	// (This allows the FEBomain base class to handle several tasks such as UnpackLM)
-	vector<int> dof;
-	dof.push_back(m_dofWX);
-	dof.push_back(m_dofWY);
-	dof.push_back(m_dofWZ);
-	dof.push_back(m_dofEF);
-	SetDOFList(dof);
+	if (pfem)
+	{
+		m_dofW.AddVariable(FEBioFluid::GetVariableName(FEBioFluid::RELATIVE_FLUID_VELOCITY));
+		m_dofAW.AddVariable(FEBioFluid::GetVariableName(FEBioFluid::RELATIVE_FLUID_ACCELERATION));
+
+		m_dofEF = pfem->GetDOFIndex(FEBioFluid::GetVariableName(FEBioFluid::FLUID_DILATATION), 0);
+		m_dofAEF = pfem->GetDOFIndex(FEBioFluid::GetVariableName(FEBioFluid::FLUID_DILATATION_TDERIV), 0);
+
+		FEDofList dofs(pfem);
+		dofs.AddDofs(m_dofW);
+		dofs.AddDof(m_dofEF);
+		m_dof = dofs;
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -57,63 +71,23 @@ FEFluidDomain3D& FEFluidDomain3D::operator = (FEFluidDomain3D& d)
 }
 
 //-----------------------------------------------------------------------------
+// get total dof list
+const FEDofList& FEFluidDomain3D::GetDOFList() const
+{
+	return m_dof;
+}
+
+//-----------------------------------------------------------------------------
 //! Assign material
 void FEFluidDomain3D::SetMaterial(FEMaterial* pmat)
 {
+	FEDomain::SetMaterial(pmat);
     if (pmat)
     {
         m_pMat = dynamic_cast<FEFluid*>(pmat);
         assert(m_pMat);
     }
     else m_pMat = 0;
-}
-
-//-----------------------------------------------------------------------------
-//! \todo The material point initialization needs to move to the base class.
-bool FEFluidDomain3D::Init()
-{
-    // initialize base class
-	FESolidDomain::Init();
-    
-    // get the elements material
-    FEFluid* pme = m_pMat;
-    
-    // assign local coordinate system to each integration point
-    for (size_t i=0; i<m_Elem.size(); ++i)
-    {
-        FESolidElement& el = m_Elem[i];
-        for (int n=0; n<el.GaussPoints(); ++n) pme->SetLocalCoordinateSystem(el, n, *(el.GetMaterialPoint(n)));
-    }
-    
-    // check for initially inverted elements
-    int ninverted = 0;
-    for (int i=0; i<Elements(); ++i)
-    {
-        FESolidElement& el = Element(i);
-        
-        int nint = el.GaussPoints();
-        for (int n=0; n<nint; ++n)
-        {
-            double J0 = detJ0(el, n);
-            if (J0 <= 0)
-            {
-                felog.printf("**************************** E R R O R ****************************\n");
-                felog.printf("Negative jacobian detected at integration point %d of element %d\n", n+1, el.GetID());
-                felog.printf("Jacobian = %lg\n", J0);
-                felog.printf("Did you use the right node numbering?\n");
-                felog.printf("Nodes:");
-                for (int l=0; l<el.Nodes(); ++l)
-                {
-                    felog.printf("%d", el.m_node[l]+1);
-                    if (l+1 != el.Nodes()) felog.printf(","); else felog.printf("\n");
-                }
-                felog.printf("*******************************************************************\n\n");
-                ++ninverted;
-            }
-        }
-    }
-    
-    return (ninverted == 0);
 }
 
 //-----------------------------------------------------------------------------
@@ -140,7 +114,7 @@ void FEFluidDomain3D::PreSolveUpdate(const FETimeInfo& timeInfo)
             pt.m_r0 = el.Evaluate(x0, j);
             
             if (pt.m_Jf <= 0) {
-                felog.printbox("ERROR", "Negative jacobian was detected.");
+                feLogError("Negative jacobian was detected.");
                 throw DoRunningRestart();
             }
             
@@ -174,7 +148,6 @@ void FEFluidDomain3D::InternalForces(FEGlobalVector& R, const FETimeInfo& tp)
         UnpackLM(el, lm);
         
         // assemble element 'fe'-vector into global R vector
-        //#pragma omp critical
         R.Assemble(el.m_node, lm, fe);
     }
 }
@@ -346,7 +319,7 @@ void FEFluidDomain3D::ElementBodyForceStiffness(FEBodyForce& BF, FESolidElement 
         FEFluidMaterialPoint& pt = *mp.ExtractData<FEFluidMaterialPoint>();
 
         // calculate the jacobian
-        detJ = detJ0(el, n)*gw[n];
+        detJ = detJ0(el, n)*gw[n]*tp.alphaf;
         
         H = el.H(n);
         
@@ -384,7 +357,7 @@ void FEFluidDomain3D::ElementStiffness(FESolidElement &el, matrix &ke, const FET
     vector<vec3d> gradN(neln);
 
 	double dt = tp.timeIncrement;
-    double ksi = tp.alpham/(tp.gamma*tp.alphaf);
+    double ksi = tp.alpham/(tp.gamma*tp.alphaf)*m_btrans;
     
     double *H, *Gr, *Gs, *Gt;
     
@@ -398,7 +371,7 @@ void FEFluidDomain3D::ElementStiffness(FESolidElement &el, matrix &ke, const FET
     for (n=0; n<nint; ++n)
     {
         // calculate jacobian
-        detJ = invjac0(el, Ji, n)*gw[n];
+        detJ = invjac0(el, Ji, n)*gw[n]*tp.alphaf;
         
         vec3d g1(Ji[0][0],Ji[0][1],Ji[0][2]);
         vec3d g2(Ji[1][0],Ji[1][1],Ji[1][2]);
@@ -434,7 +407,7 @@ void FEFluidDomain3D::ElementStiffness(FESolidElement &el, matrix &ke, const FET
                 mat3d Kvv = vdotTdotv(gradN[i], cv, gradN[j]);
                 vec3d kJv = (pt.m_gradJf*(H[i]/pt.m_Jf) + gradN[i])*H[j];
                 vec3d kvJ = (svJ*gradN[i])*H[j] + (gradN[j]*dp+pt.m_gradJf*(H[j]*d2p))*H[i];
-                double kJJ = (H[j]*((ksi*m_btrans)/dt - dJoJ) + gradN[j]*pt.m_vft)*H[i]/pt.m_Jf;
+                double kJJ = (H[j]*(ksi/dt - dJoJ) + gradN[j]*pt.m_vft)*H[i]/pt.m_Jf;
                 
                 ke[i4  ][j4  ] += Kvv(0,0)*detJ;
                 ke[i4  ][j4+1] += Kvv(0,1)*detJ;
@@ -461,7 +434,7 @@ void FEFluidDomain3D::ElementStiffness(FESolidElement &el, matrix &ke, const FET
 }
 
 //-----------------------------------------------------------------------------
-void FEFluidDomain3D::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEFluidDomain3D::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
@@ -469,11 +442,10 @@ void FEFluidDomain3D::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 #pragma omp parallel for shared (NE)
     for (int iel=0; iel<NE; ++iel)
     {
+		FESolidElement& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FESolidElement& el = m_Elem[iel];
+        FEElementMatrix ke(el);
         
         // create the element's stiffness matrix
         int ndof = 4*el.Nodes();
@@ -484,27 +456,27 @@ void FEFluidDomain3D::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
         ElementStiffness(el, ke, tp);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
-        
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
+
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
 //-----------------------------------------------------------------------------
-void FEFluidDomain3D::MassMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEFluidDomain3D::MassMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
     
     for (int iel=0; iel<NE; ++iel)
     {
+		FESolidElement& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FESolidElement& el = m_Elem[iel];
+		FEElementMatrix ke(el);
         
         // create the element's stiffness matrix
         int ndof = 4*el.Nodes();
@@ -515,28 +487,27 @@ void FEFluidDomain3D::MassMatrix(FESolver* psolver, const FETimeInfo& tp)
         ElementMassMatrix(el, ke, tp);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
 //-----------------------------------------------------------------------------
-void FEFluidDomain3D::BodyForceStiffness(FESolver* psolver, const FETimeInfo& tp, FEBodyForce& bf)
+void FEFluidDomain3D::BodyForceStiffness(FELinearSystem& LS, const FETimeInfo& tp, FEBodyForce& bf)
 {
-    FEFluid* pme = dynamic_cast<FEFluid*>(GetMaterial()); assert(pme);
-    
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
     
     for (int iel=0; iel<NE; ++iel)
     {
+		FESolidElement& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FESolidElement& el = m_Elem[iel];
+        FEElementMatrix ke(el);
         
         // create the element's stiffness matrix
         int ndof = 4*el.Nodes();
@@ -547,10 +518,12 @@ void FEFluidDomain3D::BodyForceStiffness(FESolver* psolver, const FETimeInfo& tp
         ElementBodyForceStiffness(bf, el, ke, tp);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
@@ -577,13 +550,13 @@ void FEFluidDomain3D::ElementMassMatrix(FESolidElement& el, matrix& ke, const FE
     const double *gw = el.GaussWeights();
 
     double dt = tp.timeIncrement;
-    double ksi = tp.alpham/(tp.gamma*tp.alphaf);
+    double ksi = tp.alpham/(tp.gamma*tp.alphaf)*m_btrans;
     
     // calculate element stiffness matrix
     for (n=0; n<nint; ++n)
     {
         // calculate jacobian
-        detJ = invjac0(el, Ji, n)*gw[n];
+        detJ = invjac0(el, Ji, n)*gw[n]*tp.alphaf;
         
         vec3d g1(Ji[0][0],Ji[0][1],Ji[0][2]);
         vec3d g2(Ji[1][0],Ji[1][1],Ji[1][2]);
@@ -611,7 +584,7 @@ void FEFluidDomain3D::ElementMassMatrix(FESolidElement& el, matrix& ke, const FE
         {
             for (j=0, j4 = 0; j<neln; ++j, j4 += 4)
             {
-                mat3d Mv = ((mat3dd(ksi*m_btrans/dt) + pt.m_Lf)*H[j] + mat3dd(gradN[j]*pt.m_vft))*(H[i]*dens*detJ);
+                mat3d Mv = ((mat3dd(ksi/dt) + pt.m_Lf)*H[j] + mat3dd(gradN[j]*pt.m_vft))*(H[i]*dens*detJ);
                 vec3d mJ = pt.m_aft*(-H[i]*H[j]*dens/pt.m_Jf*detJ);
                 
                 ke[i4  ][j4  ] += Mv(0,0);
@@ -636,16 +609,6 @@ void FEFluidDomain3D::ElementMassMatrix(FESolidElement& el, matrix& ke, const FE
 //-----------------------------------------------------------------------------
 void FEFluidDomain3D::Update(const FETimeInfo& tp)
 {
-    // TODO: This is temporary hack for running micro-materials in parallel.
-    //	     Evaluating the stress for a micro-material will make FEBio solve
-    //       a new FE problem. We don't want to see the output of that problem.
-    //       The logfile is a shared resource between the master FEM and the RVE
-    //       in order not to corrupt the logfile we don't print anything for
-    //       the RVE problem.
-    // TODO: Maybe I need to create a new domain class for micro-material.
-    Logfile::MODE nmode = felog.GetMode();
-	felog.SetMode(Logfile::LOG_NEVER);
-    
     bool berr = false;
     int NE = (int) m_Elem.size();
 #pragma omp parallel for shared(NE, berr)
@@ -660,20 +623,16 @@ void FEFluidDomain3D::Update(const FETimeInfo& tp)
 #pragma omp critical
             {
                 // reset the logfile mode
-                felog.SetMode(nmode);
                 berr = true;
-                if (NegativeJacobian::m_boutput) e.print();
+                if (NegativeJacobian::DoOutput()) feLogError(e.what());
             }
         }
     }
     
-    // reset the logfile mode
-    felog.SetMode(nmode);
-    
     // if we encountered an error, we request a running restart
     if (berr)
     {
-        if (NegativeJacobian::m_boutput == false) felog.printbox("ERROR", "Negative jacobian was detected.");
+        if (NegativeJacobian::DoOutput() == false) feLogError("Negative jacobian was detected.");
         throw DoRunningRestart();
     }
 }
@@ -702,14 +661,14 @@ void FEFluidDomain3D::UpdateElementStress(int iel, const FETimeInfo& tp)
     double aet[NELN], aep[NELN];
     for (int j=0; j<neln; ++j) {
         FENode& node = m_pMesh->Node(el.m_node[j]);
-        vt[j] = node.get_vec3d(m_dofWX, m_dofWY, m_dofWZ);
-        vp[j] = node.get_vec3d(m_dofWXP, m_dofWYP, m_dofWZP);
-        at[j] = node.get_vec3d(m_dofAWX, m_dofAWY, m_dofAWZ);
-        ap[j] = node.get_vec3d(m_dofAWXP, m_dofAWYP, m_dofAWZP);
+        vt[j] = node.get_vec3d(m_dofW[0], m_dofW[1], m_dofW[2]);
+        vp[j] = node.get_vec3d_prev(m_dofW[0], m_dofW[1], m_dofW[2]);
+        at[j] = node.get_vec3d(m_dofAW[0], m_dofAW[1], m_dofAW[2]);
+        ap[j] = node.get_vec3d_prev(m_dofAW[0], m_dofAW[1], m_dofAW[2]);
         et[j] = node.get(m_dofEF);
-        ep[j] = node.get(m_dofEFP);
+        ep[j] = node.get_prev(m_dofEF);
         aet[j] = node.get(m_dofAEF);
-        aep[j] = node.get(m_dofAEFP);
+        aep[j] = node.get_prev(m_dofAEF);
     }
     
     // loop over the integration points and update
@@ -762,7 +721,6 @@ void FEFluidDomain3D::InertialForces(FEGlobalVector& R, const FETimeInfo& tp)
         UnpackLM(el, lm);
         
         // assemble element 'fe'-vector into global R vector
-        //#pragma omp critical
         R.Assemble(el.m_node, lm, fe);
     }
 }

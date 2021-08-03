@@ -1,5 +1,33 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#include "FECore/vec3d.h"
+#include "vec3d.h"
 #include "FESurface.h"
 #include <vector>
 using namespace std;
@@ -40,23 +68,23 @@ public:
 	};
 
 public:
-	Patch(int k, int l) : m_nslave_facet_id(k), m_nmaster_facet_id(l) {}
+	Patch(int k, int l) : m_primary_facet_id(k), m_secondary_facet_id(l) {}
 
 	Patch(const Patch& p) { 
 		m_tri = p.m_tri; 
-		m_nslave_facet_id = p.m_nslave_facet_id; 
-		m_nmaster_facet_id = p.m_nmaster_facet_id; 
+		m_primary_facet_id = p.m_primary_facet_id;
+		m_secondary_facet_id = p.m_secondary_facet_id;
 	}
 
 	Patch& operator = (const Patch& p) { 
 		m_tri = p.m_tri; 
-		m_nslave_facet_id = p.m_nslave_facet_id; 
-		m_nmaster_facet_id = p.m_nmaster_facet_id; 
+		m_primary_facet_id = p.m_primary_facet_id;
+		m_secondary_facet_id = p.m_secondary_facet_id;
 		return *this; 
 	}
 
-	int GetSlaveFacetID() const { return m_nslave_facet_id; }
-	int GetMasterFacetID() const { return m_nmaster_facet_id; }
+	int GetPrimaryFacetID() const { return m_primary_facet_id; }
+	int GetSecondaryFacetID() const { return m_secondary_facet_id; }
 
 public:
 	//! Clear the patch
@@ -75,8 +103,8 @@ public:
 	bool Empty() { return m_tri.empty(); }
 
 private:
-	int		m_nslave_facet_id;		//!< index of slave facet
-	int		m_nmaster_facet_id;		//!< index of master facet
+	int		m_primary_facet_id;		//!< index of primary facet
+	int		m_secondary_facet_id;	//!< index of secondary facet
 
 	vector<FACET>	m_tri;	//!< triangular patches
 };

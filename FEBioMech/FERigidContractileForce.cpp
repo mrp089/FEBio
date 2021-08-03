@@ -1,15 +1,45 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FERigidContractileForce.h"
-#include "FECore/FERigidBody.h"
+#include "FERigidBody.h"
 #include "FECore/log.h"
 #include "FECore/FEModel.h"
 #include "FECore/FEMaterial.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FERigidContractileForce, FERigidConnector);
-	ADD_PARAMETER(m_f0  , FE_PARAM_DOUBLE, "f0"         );
-	ADD_PARAMETER(m_a0  , FE_PARAM_VEC3D , "insertion_a");
-	ADD_PARAMETER(m_b0  , FE_PARAM_VEC3D , "insertion_b");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidContractileForce, FERigidConnector);
+	ADD_PARAMETER(m_f0  , "f0"         );
+	ADD_PARAMETER(m_a0  , "insertion_a");
+	ADD_PARAMETER(m_b0  , "insertion_b");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FERigidContractileForce::FERigidContractileForce(FEModel* pfem) : FERigidConnector(pfem)
@@ -32,6 +62,9 @@ bool FERigidContractileForce::Init()
     // set force insertions relative to rigid body center of mass
     m_qa0 = m_a0 - m_rbA->m_r0;
     m_qb0 = m_b0 - m_rbB->m_r0;
+
+	m_at = m_a0;
+	m_bt = m_b0;
     
     return true;
 }
@@ -40,19 +73,12 @@ bool FERigidContractileForce::Init()
 void FERigidContractileForce::Serialize(DumpStream& ar)
 {
 	FERigidConnector::Serialize(ar);
-    if (ar.IsSaving())
-    {
-        ar << m_qa0 << m_qb0;
-    }
-    else
-    {
-        ar >> m_qa0 >> m_qb0;
-    }
+	ar & m_qa0 & m_qb0;
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidContractileForce::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FERigidContractileForce::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
     vector<double> fa(6);
     vector<double> fb(6);
@@ -60,7 +86,7 @@ void FERigidContractileForce::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-	double alpha = tp.alpha;
+	double alpha = tp.alphaf;
     
     // body A
     vec3d ra = RBa.m_rt*alpha + RBa.m_rp*(1-alpha);
@@ -97,22 +123,20 @@ void FERigidContractileForce::Residual(FEGlobalVector& R, const FETimeInfo& tp)
     for (int i=0; i<6; ++i) if (RBa.m_LM[i] >= 0) R[RBa.m_LM[i]] += fa[i];
     for (int i=0; i<6; ++i) if (RBb.m_LM[i] >= 0) R[RBb.m_LM[i]] += fb[i];
     
-    RBa.m_Fr += vec3d(fa[0],fa[1],fa[2]);
-    RBa.m_Mr += vec3d(fa[3],fa[4],fa[5]);
-    RBb.m_Fr += vec3d(fb[0],fb[1],fb[2]);
-    RBb.m_Mr += vec3d(fb[3],fb[4],fb[5]);
+    RBa.m_Fr -= vec3d(fa[0],fa[1],fa[2]);
+    RBa.m_Mr -= vec3d(fa[3],fa[4],fa[5]);
+    RBb.m_Fr -= vec3d(fb[0],fb[1],fb[2]);
+    RBb.m_Mr -= vec3d(fb[3],fb[4],fb[5]);
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidContractileForce::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FERigidContractileForce::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
- 	double alpha = tp.alpha;
+ 	double alpha = tp.alphaf;
      
-    int j;
-    
     vector<int> LM(12);
-    matrix ke(12,12);
+	FEElementMatrix ke; ke.resize(12, 12);
     ke.zero();
     
 	FERigidBody& RBa = *m_rbA;
@@ -242,13 +266,14 @@ void FERigidContractileForce::StiffnessMatrix(FESolver* psolver, const FETimeInf
     ke[10][9] = K[1][0]; ke[10][10] = K[1][1]; ke[10][11] = K[1][2];
     ke[11][9] = K[2][0]; ke[11][10] = K[2][1]; ke[11][11] = K[2][2];
     
-    for (j=0; j<6; ++j)
+    for (int j=0; j<6; ++j)
     {
         LM[j  ] = RBa.m_LM[j];
         LM[j+6] = RBb.m_LM[j];
     }
     
-    psolver->AssembleStiffness(LM, ke);
+	ke.SetIndices(LM);
+	LS.Assemble(ke);
 }
 
 //-----------------------------------------------------------------------------
@@ -258,7 +283,7 @@ bool FERigidContractileForce::Augment(int naug, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FERigidContractileForce::Update(int niter, const FETimeInfo& tp)
+void FERigidContractileForce::Update()
 {
     vec3d ra, rb, c;
     vec3d za, zb;
@@ -266,7 +291,8 @@ void FERigidContractileForce::Update(int niter, const FETimeInfo& tp)
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-	double alpha = tp.alpha;
+	FETimeInfo& tp = GetFEModel()->GetTime();
+	double alpha = tp.alphaf;
 
     ra = RBa.m_rt*alpha + RBa.m_rp*(1-alpha);
     rb = RBb.m_rt*alpha + RBb.m_rp*(1-alpha);
@@ -279,6 +305,9 @@ void FERigidContractileForce::Update(int niter, const FETimeInfo& tp)
     vec3d zbp = m_qb0; RBb.m_qp.RotateVector(zbp);
     zb = zbt*alpha + zbp*(1-alpha);
     
+	m_at = RBa.m_rt + zat;
+	m_bt = RBb.m_rt + zbt;
+
     vec3d n = rb + zb - ra - za;
     n.unit();
     m_F = n*m_f0;
@@ -294,4 +323,39 @@ void FERigidContractileForce::Reset()
 
     m_qa0 = m_a0 - RBa.m_r0;
     m_qb0 = m_b0 - RBb.m_r0;
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidContractileForce::RelativeTranslation(const bool global)
+{
+    FERigidBody& RBa = *m_rbA;
+    FERigidBody& RBb = *m_rbB;
+    
+    // body A
+    vec3d ra = RBa.m_rt;
+    vec3d za = m_qa0; RBa.GetRotation().RotateVector(za);
+    
+    // body B
+    vec3d rb = RBb.m_rt;
+    vec3d zb = m_qb0; RBb.GetRotation().RotateVector(zb);
+
+    // relative translation in global coordinate system
+    vec3d x = rb + zb - ra - za;
+
+    return x;
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidContractileForce::RelativeRotation(const bool global)
+{
+    FERigidBody& RBa = *m_rbA;
+    FERigidBody& RBb = *m_rbB;
+    
+    // get relative rotation
+    quatd Q = RBb.GetRotation()*RBa.GetRotation().Inverse(); Q.MakeUnit();
+    
+    // relative rotation vector
+    vec3d q = Q.GetRotationVector();
+    
+    return q;
 }

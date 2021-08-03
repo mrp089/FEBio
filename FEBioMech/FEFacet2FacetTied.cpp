@@ -1,25 +1,53 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEFacet2FacetTied.h"
 #include "FECore/FEModel.h"
 #include "FECore/FEClosestPointProjection.h"
 #include "FECore/FEGlobalMatrix.h"
+#include <FECore/FELinearSystem.h>
 #include "FECore/log.h"
 
 //-----------------------------------------------------------------------------
 // Define tied interface parameters
-BEGIN_PARAMETER_LIST(FEFacet2FacetTied, FEContactInterface)
-	ADD_PARAMETER(m_blaugon, FE_PARAM_BOOL  , "laugon"          ); 
-	ADD_PARAMETER(m_atol   , FE_PARAM_DOUBLE, "tolerance"       );
-	ADD_PARAMETER(m_eps    , FE_PARAM_DOUBLE, "penalty"         );
-	ADD_PARAMETER(m_naugmin, FE_PARAM_INT   , "minaug"          );
-	ADD_PARAMETER(m_naugmax, FE_PARAM_INT   , "maxaug"          );
-	ADD_PARAMETER(m_stol   , FE_PARAM_DOUBLE, "search_tolerance");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFacet2FacetTied, FEContactInterface)
+	ADD_PARAMETER(m_atol   , "tolerance"       );
+	ADD_PARAMETER(m_eps    , "penalty"         );
+	ADD_PARAMETER(m_naugmin, "minaug"          );
+	ADD_PARAMETER(m_naugmax, "maxaug"          );
+	ADD_PARAMETER(m_stol   , "search_tolerance");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEFacetTiedSurface::Data::Data()
 {
-	m_gap = vec3d(0,0,0);
+	m_vgap = vec3d(0,0,0);
 	m_Lm = vec3d(0,0,0);
 	m_rs = vec2d(0,0);
 	m_pme = (FESurfaceElement*) 0;
@@ -37,17 +65,14 @@ bool FEFacetTiedSurface::Init()
 	// initialize surface data first
 	if (FEContactSurface::Init() == false) return false;
 
-	// allocate data structures
-	const int NE = Elements();
-	m_Data.resize(NE);
-	for (int i=0; i<NE; ++i)
-	{
-		FESurfaceElement& el = Element(i);
-		int nint = el.GaussPoints();
-		m_Data[i].resize(nint);
-	}
-
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+//! create material point data
+FEMaterialPoint* FEFacetTiedSurface::CreateMaterialPoint()
+{
+	return new FEFacetTiedSurface::Data;
 }
 
 //-----------------------------------------------------------------------------
@@ -58,14 +83,14 @@ void FEFacetTiedSurface::Serialize(DumpStream &ar)
 	{
 		if (ar.IsSaving())
 		{
-			for (int i=0; i<(int) m_Data.size(); ++i)
+			for (int n=0; n<Elements(); ++n)
 			{
-				vector<Data>& di = m_Data[i];
-				int nint = (int) di.size();
+				FESurfaceElement& el = Element(n);
+				int nint = el.GaussPoints();
 				for (int j=0; j<nint; ++j)
 				{
-					Data& d = di[j];
-					ar << d.m_gap;
+					Data& d = static_cast<Data&>(*el.GetMaterialPoint(j));
+					ar << d.m_vgap;
 					ar << d.m_rs;
 					ar << d.m_Lm;
 				}
@@ -73,14 +98,14 @@ void FEFacetTiedSurface::Serialize(DumpStream &ar)
 		}
 		else
 		{
-			for (int i=0; i<(int) m_Data.size(); ++i)
+			for (int n = 0; n<Elements(); ++n)
 			{
-				vector<Data>& di = m_Data[i];
-				int nint = (int) di.size();
-				for (int j=0; j<nint; ++j)
+				FESurfaceElement& el = Element(n);
+				int nint = el.GaussPoints();
+				for (int j = 0; j<nint; ++j)
 				{
-					Data& d = di[j];
-					ar >> d.m_gap;
+					Data& d = static_cast<Data&>(*el.GetMaterialPoint(j));
+					ar >> d.m_vgap;
 					ar >> d.m_rs;
 					ar >> d.m_Lm;
 				}
@@ -91,14 +116,14 @@ void FEFacetTiedSurface::Serialize(DumpStream &ar)
 	{
 		if (ar.IsSaving())
 		{
-			for (int i=0; i<(int) m_Data.size(); ++i)
+			for (int n = 0; n<Elements(); ++n)
 			{
-				vector<Data>& di = m_Data[i];
-				int nint = (int) di.size();
-				for (int j=0; j<nint; ++j)
+				FESurfaceElement& el = Element(n);
+				int nint = el.GaussPoints();
+				for (int j = 0; j<nint; ++j)
 				{
-					Data& d = di[j];
-					ar << d.m_gap;
+					Data& d = static_cast<Data&>(*el.GetMaterialPoint(j));
+					ar << d.m_vgap;
 					ar << d.m_rs;
 					ar << d.m_Lm;
 				}
@@ -106,14 +131,14 @@ void FEFacetTiedSurface::Serialize(DumpStream &ar)
 		}
 		else
 		{
-			for (int i=0; i<(int) m_Data.size(); ++i)
+			for (int n = 0; n<Elements(); ++n)
 			{
-				vector<Data>& di = m_Data[i];
-				int nint = (int) di.size();
-				for (int j=0; j<nint; ++j)
+				FESurfaceElement& el = Element(n);
+				int nint = el.GaussPoints();
+				for (int j = 0; j<nint; ++j)
 				{
-					Data& d = di[j];
-					ar >> d.m_gap;
+					Data& d = static_cast<Data&>(*el.GetMaterialPoint(j));
+					ar >> d.m_vgap;
 					ar >> d.m_rs;
 					ar >> d.m_Lm;
 				}
@@ -134,7 +159,6 @@ FEFacet2FacetTied::FEFacet2FacetTied(FEModel* pfem) : FEContactInterface(pfem), 
 	m_ms.SetSibling(&m_ss);
 
 	// initial parameter values
-	m_blaugon = false;
 	m_atol    = 0.01;
 	m_eps     = 1.0;
 	m_naugmin = 0;
@@ -169,7 +193,8 @@ void FEFacet2FacetTied::BuildMatrixProfile(FEGlobalMatrix& K)
 		int* sn = &se.m_node[0];
 		for (int k=0; k<nint; ++k)
 		{
-			FESurfaceElement* pe = ss.m_Data[j][k].m_pme;
+			FEFacetTiedSurface::Data& d = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(k));
+			FESurfaceElement* pe = d.m_pme;
 			if (pe != 0)
 			{
 				FESurfaceElement& me = *pe;
@@ -220,13 +245,13 @@ bool FEFacet2FacetTied::Init()
 }
 
 //-----------------------------------------------------------------------------
-//! Interface activation. Also projects slave surface onto master surface
+//! Interface activation. Also projects primary surface onto secondary surface
 void FEFacet2FacetTied::Activate()
 {
 	// Don't forget to call base member!
 	FEContactInterface::Activate();
 
-	// project slave surface onto master surface
+	// project primary surface onto secondary surface
 	ProjectSurface(m_ss, m_ms);
 }
 
@@ -242,10 +267,10 @@ void FEFacet2FacetTied::ProjectSurface(FEFacetTiedSurface& ss, FEFacetTiedSurfac
 	cpp.SetTolerance(m_stol);
 	cpp.Init();
 
-	// loop over all slave elements
+	// loop over all primary elements
 	for (int i=0; i<ss.Elements(); ++i)
 	{
-		// get the slave element
+		// get the primary element
 		FESurfaceElement& se = ss.Element(i);
 
 		// get nodal coordinates
@@ -258,23 +283,23 @@ void FEFacet2FacetTied::ProjectSurface(FEFacetTiedSurface& ss, FEFacetTiedSurfac
 		for (int j=0; j<nint; ++j)
 		{
 			// get integration point data
-			FEFacetTiedSurface::Data& pt = ss.m_Data[i][j];
+			FEFacetTiedSurface::Data& pt = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(j));
 
 			// calculate the global coordinates of this integration point
 			vec3d x = se.eval(re, j);
 
-			// find the master element
+			// find the secondary element
 			vec3d q; vec2d rs;
 			FESurfaceElement* pme = cpp.Project(x, q, rs);
 			if (pme)
 			{
-				// store the master element
+				// store the secondary element
 				pt.m_pme = pme;
 				pt.m_rs[0] = rs[0];
 				pt.m_rs[1] = rs[1];
 
 				// calculate gap
-				pt.m_gap = x - q;
+				pt.m_vgap = x - q;
 			}
 			else pt.m_pme = 0;
 		}
@@ -283,14 +308,14 @@ void FEFacet2FacetTied::ProjectSurface(FEFacetTiedSurface& ss, FEFacetTiedSurfac
 
 //-----------------------------------------------------------------------------
 //! Update tied interface data. This function re-evaluates the gaps between
-//! the slave node and their projections onto the master surface.
+//! the primary node and their projections onto the secondary surface.
 //!
-void FEFacet2FacetTied::Update(int niter, const FETimeInfo& tp)
+void FEFacet2FacetTied::Update()
 {
 	// get the mesh
 	FEMesh& mesh = *m_ss.GetMesh();
 
-	// loop over all slave elements
+	// loop over all primary elements
 	const int NE = m_ss.Elements();
 	for (int i=0; i<NE; ++i)
 	{
@@ -307,30 +332,30 @@ void FEFacet2FacetTied::Update(int niter, const FETimeInfo& tp)
 		for (int n=0; n<nint; ++n)
 		{
 			// get integration point data
-			FEFacetTiedSurface::Data& pt = m_ss.m_Data[i][n];
+			FEFacetTiedSurface::Data& pt = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(n));
 
 			FESurfaceElement* pme = pt.m_pme;
 			if (pme)
 			{
 				FESurfaceElement& me = static_cast<FESurfaceElement&>(*pme);
 
-				// get the current slave nodal position
+				// get the current primary nodal position
 				vec3d rn = se.eval(rs, n);
 
-				// get the natural coordinates of the slave projection
+				// get the natural coordinates of the primary projection
 				double r = pt.m_rs[0];
 				double s = pt.m_rs[1];
 
-				// get the master nodal coordinates
+				// get the secondary nodal coordinates
 				int nmeln = me.Nodes();
 				vec3d y[FEElement::MAX_NODES];
 				for (int l=0; l<nmeln; ++l) y[l] = mesh.Node( me.m_node[l] ).m_rt;
 
-				// calculate the slave node projection
+				// calculate the primary node projection
 				vec3d q = me.eval(y, r, s);
 
 				// calculate the gap function
-				pt.m_gap = rn - q;
+				pt.m_vgap = rn - q;
 			}
 		}
 	}
@@ -339,7 +364,7 @@ void FEFacet2FacetTied::Update(int niter, const FETimeInfo& tp)
 
 //-----------------------------------------------------------------------------
 //! This function calculates the contact forces for a tied interface.
-void FEFacet2FacetTied::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEFacet2FacetTied::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	vector<int> sLM, mLM, LM, en;
 	vector<double> fe;
@@ -369,28 +394,28 @@ void FEFacet2FacetTied::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 		for (int n=0; n<nint; ++n)
 		{
 			// get integration point data
-			FEFacetTiedSurface::Data& pt = m_ss.m_Data[i][n];
+			FEFacetTiedSurface::Data& pt = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(n));
 
-			// get the master element
+			// get the secondary element
 			FESurfaceElement* pme = pt.m_pme;
 			if (pme)
 			{
-				// get the master element
+				// get the secondary element
 				FESurfaceElement& me = *pme;
 				m_ms.UnpackLM(me, mLM);
 				int nmeln = me.Nodes();
 
-				// get slave contact force
-				vec3d tc = pt.m_Lm + pt.m_gap*m_eps;
+				// get primary contact force
+				vec3d tc = pt.m_Lm + pt.m_vgap*m_eps;
 
 				// calculate jacobian
 				// note that we are integrating over the reference surface
 				double detJ = m_ss.jac0(se, n);
 
-				// slave shape functions
+				// primary shape functions
 				double* Hs = se.H(n);
 
-				// master shape functions
+				// secondary shape functions
 				double r = pt.m_rs[0];
 				double s = pt.m_rs[1];
 				me.shape_fnc(Hm, r, s);
@@ -443,15 +468,15 @@ void FEFacet2FacetTied::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 //-----------------------------------------------------------------------------
 //! Calculate the stiffness matrix contribution.
-void FEFacet2FacetTied::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEFacet2FacetTied::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	vector<int> sLM, mLM, LM, en;
-	matrix ke;
+	FEElementMatrix ke;
 
 	// shape functions
 	double Hm[FEElement::MAX_NODES];
 
-	// loop over all slave elements
+	// loop over all primary elements
 	const int NE = m_ss.Elements();
 	for (int i=0; i<NE; ++i)
 	{
@@ -470,13 +495,13 @@ void FEFacet2FacetTied::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 		for (int n=0; n<nint; ++n)
 		{
 			// get intgration point data
-			FEFacetTiedSurface::Data& pt = m_ss.m_Data[i][n];
+			FEFacetTiedSurface::Data& pt = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(n));
 
-			// get the master element
+			// get the secondary element
 			FESurfaceElement* pme = pt.m_pme;
 			if (pme)
 			{
-				// get the master element
+				// get the secondary element
 				FESurfaceElement& me = *pme;
 				int nmeln = me.Nodes();
 				m_ms.UnpackLM(me, mLM);
@@ -484,10 +509,10 @@ void FEFacet2FacetTied::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 				// calculate jacobian
 				double detJ = m_ss.jac0(se, n);
 
-				// slave shape functions
+				// primary shape functions
 				double* Hs = se.H(n);
 
-				// master shape functions
+				// secondary shape functions
 				double r = pt.m_rs[0];
 				double s = pt.m_rs[1];
 				me.shape_fnc(Hm, r, s);
@@ -554,7 +579,9 @@ void FEFacet2FacetTied::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 				for (int k=0; k<nmeln; ++k) en[k+nseln] = me.m_node[k];
 
 				// assemble the global residual
-				psolver->AssembleStiffness(en, LM, ke);
+				ke.SetNodes(en);
+				ke.SetIndices(LM);
+				LS.Assemble(ke);
 			}
 		}
 	}
@@ -565,18 +592,16 @@ void FEFacet2FacetTied::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 bool FEFacet2FacetTied::Augment(int naug, const FETimeInfo& tp)
 {
 	// make sure we need to augment
-	if (!m_blaugon) return true;
-
-	const int NS = (const int) m_ss.m_Data.size();
+	if (m_laugon != 1) return true;
 
 	// calculate initial norms
 	double normL0 = 0;
-	for (int i=0; i<NS; ++i)
+	for (int i=0; i<m_ss.Elements(); ++i)
 	{
-		const int nint = (const int) m_ss.m_Data[i].size();
-		for (int j=0; j<nint; ++j)
+		FESurfaceElement& se = m_ss.Element(i);
+		for (int j=0; j<se.GaussPoints(); ++j)
 		{
-			FEFacetTiedSurface::Data& pt = m_ss.m_Data[i][j];
+			FEFacetTiedSurface::Data& pt = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(j));
 			vec3d& lm = pt.m_Lm;
 			normL0 += lm*lm;
 		}
@@ -587,19 +612,19 @@ bool FEFacet2FacetTied::Augment(int naug, const FETimeInfo& tp)
 	double normL1 = 0;
 	double normgc = 0;
 	int N = 0;
-	for (int i=0; i<NS; ++i)
+	for (int i=0; i<m_ss.Elements(); ++i)
 	{
-		const int nint = (const int) m_ss.m_Data[i].size();
-		for (int j=0; j<nint; ++j)
+		FESurfaceElement& se = m_ss.Element(i);
+		for (int j=0; j<se.GaussPoints(); ++j)
 		{
-			FEFacetTiedSurface::Data& pt = m_ss.m_Data[i][j];
+			FEFacetTiedSurface::Data& pt = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(j));
 
-			vec3d lm = pt.m_Lm + pt.m_gap*m_eps;
+			vec3d lm = pt.m_Lm + pt.m_vgap*m_eps;
 
 			normL1 += lm*lm;
 			if (pt.m_pme != 0)
 			{
-				double g = pt.m_gap.norm();
+				double g = pt.m_vgap.norm();
 				normgc += g*g;
 				++N;
 			}
@@ -610,12 +635,12 @@ bool FEFacet2FacetTied::Augment(int naug, const FETimeInfo& tp)
 	normgc = sqrt(normgc / N);
 
 	// check convergence of constraints
-	felog.printf(" tied interface # %d\n", GetID());
-	felog.printf("                        CURRENT        REQUIRED\n");
+	feLog(" tied interface # %d\n", GetID());
+	feLog("                        CURRENT        REQUIRED\n");
 	double pctn = 0;
 	if (fabs(normL1) > 1e-10) pctn = fabs((normL1 - normL0)/normL1);
-	felog.printf("    normal force : %15le %15le\n", pctn, m_atol);
-	felog.printf("    gap function : %15le       ***\n", normgc);
+	feLog("    normal force : %15le %15le\n", pctn, m_atol);
+	feLog("    gap function : %15le       ***\n", normgc);
 		
 	// check convergence
 	bool bconv = true;
@@ -625,15 +650,15 @@ bool FEFacet2FacetTied::Augment(int naug, const FETimeInfo& tp)
 
 	if (bconv == false) 
 	{
-		for (int i=0; i<NS; ++i)
+		for (int i=0; i<m_ss.Elements(); ++i)
 		{
-			const int nint = (const int) m_ss.m_Data[i].size();
-			for (int j=0; j<nint; ++j)
+			FESurfaceElement& se = m_ss.Element(i);
+			for (int j=0; j<se.GaussPoints(); ++j)
 			{
-				FEFacetTiedSurface::Data& pt = m_ss.m_Data[i][j];
+				FEFacetTiedSurface::Data& pt = static_cast<FEFacetTiedSurface::Data&>(*se.GetMaterialPoint(j));
 
 				// update Lagrange multipliers
-				pt.m_Lm = pt.m_Lm + pt.m_gap*m_eps;
+				pt.m_Lm = pt.m_Lm + pt.m_vgap*m_eps;
 			}
 		}	
 	}

@@ -1,26 +1,59 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
 #include "stdafx.h"
 #include "FERigidSlidingContact.h"
 #include <FECore/FEModel.h>
 #include <FECore/FEGlobalMatrix.h>
 #include <FECore/log.h>
-#include <FECore/FERigidSystem.h>
+#include "FEMechModel.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
 // Define sliding interface parameters
-BEGIN_PARAMETER_LIST(FERigidSlidingContact, FEContactInterface)
-	ADD_PARAMETER(m_blaugon  , FE_PARAM_BOOL  , "laugon"   ); 
-	ADD_PARAMETER(m_atol     , FE_PARAM_DOUBLE, "tolerance");
-	ADD_PARAMETER(m_eps      , FE_PARAM_DOUBLE, "penalty"  );
-	ADD_PARAMETER(m_gtol     , FE_PARAM_DOUBLE, "gaptol"   );
-	ADD_PARAMETER(m_naugmin  , FE_PARAM_INT   , "minaug"   );
-	ADD_PARAMETER(m_naugmax  , FE_PARAM_INT   , "maxaug"   );
-	ADD_PARAMETER(m_bautopen , FE_PARAM_BOOL  , "auto_penalty");
-	ADD_PARAMETER(m_rigidName, FE_PARAM_STRING, "rigid");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidSlidingContact, FEContactInterface)
+	ADD_PARAMETER(m_atol     , "tolerance");
+	ADD_PARAMETER(m_eps      , "penalty"  );
+	ADD_PARAMETER(m_gtol     , "gaptol"   );
+	ADD_PARAMETER(m_naugmin  , "minaug"   );
+	ADD_PARAMETER(m_naugmax  , "maxaug"   );
+	ADD_PARAMETER(m_bautopen , "auto_penalty");
+	ADD_PARAMETER(m_rigidName, "rigid");
+END_FECORE_CLASS();
 
 ///////////////////////////////////////////////////////////////////////////////
 // FERigidSphereSurface
 ///////////////////////////////////////////////////////////////////////////////
+
+void FERigidSlidingSurface::DATA::Serialize(DumpStream& ar)
+{
+	ar & gap;
+	ar & nu;
+	ar & Lm;
+	ar & eps;
+}
 
 
 FERigidSlidingSurface::FERigidSlidingSurface(FEModel* pfem) : FEContactSurface(pfem)
@@ -90,28 +123,7 @@ vec3d FERigidSlidingSurface::GetContactForce()
 void FERigidSlidingSurface::Serialize(DumpStream &ar)
 {
 	FESurface::Serialize(ar);
-	if (ar.IsSaving())
-	{
-		int nsize = (int)m_data.size();
-		for (int i=0; i<nsize; ++i)
-		{
-			DATA& d = m_data[i];
-			ar << d.gap;
-			ar << d.nu;
-			ar << d.Lm;
-		}
-	}
-	else
-	{
-		int nsize = (int)m_data.size();
-		for (int i = 0; i<nsize; ++i)
-		{
-			DATA& d = m_data[i];
-			ar >> d.gap;
-			ar >> d.nu;
-			ar >> d.Lm;
-		}
-	}
+	ar & m_data & m_Fc;
 }
 
 //-----------------------------------------------------------------------------
@@ -166,10 +178,8 @@ bool FERigidSlidingContact::Init()
 	// make sure a rigid surface was defined
 	if (m_rigid == 0)
 	{
-		FERigidSystem* rs = GetFEModel()->GetRigidSystem();
-		if (rs == 0) return false;
-
-		m_rigid = rs->FindRigidSurface(m_rigidName);
+		FEMechModel& fem = static_cast<FEMechModel&>(*GetFEModel());
+		m_rigid = fem.FindRigidSurface(m_rigidName);
 		if (m_rigid == 0) return false;
 	}
 
@@ -253,21 +263,18 @@ void FERigidSlidingContact::Activate()
 	// calculate penalty factors
 	if (m_bautopen) CalcAutoPenalty(m_ss);
 
-	// project slave surface onto master surface
+	// project primary surface onto secondary surface
 	ProjectSurface(m_ss);
 }
 
 //-----------------------------------------------------------------------------
-//!  Projects the slave surface onto the master plane
+//!  Projects the primary surface onto the plane
 
 void FERigidSlidingContact::ProjectSurface(FERigidSlidingSurface& ss)
 {
 	vec3d rt[FEElement::MAX_NODES];
 
-	// surface normal
-	vec3d np;
-
-	// loop over all slave elements
+	// loop over all primary surface elements
 	int c = 0;
 	for (int i=0; i<m_ss.Elements(); ++i)
 	{
@@ -293,7 +300,7 @@ void FERigidSlidingContact::ProjectSurface(FERigidSlidingSurface& ss)
 			// get the local surface normal
 			vec3d np = m_rigid->Normal(q);
 
-			// the slave normal is set to the master element normal
+			// the normal is set to the secondary surface element normal
 			d.nu = np;
 	
 			// calculate initial gap
@@ -305,15 +312,15 @@ void FERigidSlidingContact::ProjectSurface(FERigidSlidingSurface& ss)
 //-----------------------------------------------------------------------------
 //!  Updates rigid wall data
 
-void FERigidSlidingContact::Update(int niter, const FETimeInfo& tp)
+void FERigidSlidingContact::Update()
 {
-	// project slave surface onto master surface
+	// project primary surface onto secondary surface
 	ProjectSurface(m_ss);
 }
 
 //-----------------------------------------------------------------------------
 
-void FERigidSlidingContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FERigidSlidingContact::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	vector<int> lm;
 	const int MELN = FEElement::MAX_NODES;
@@ -324,7 +331,7 @@ void FERigidSlidingContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	// zero total force
 	m_ss.m_Fc = vec3d(0,0,0);
 
-	// loop over all slave elements
+	// loop over all primary surface elements
 	int c = 0;
 	for (int i = 0; i<m_ss.Elements(); ++i)
 	{
@@ -418,7 +425,7 @@ void FERigidSlidingContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FERigidSlidingContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FERigidSlidingContact::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	vector<int> lm;
 	const int MELN = FEElement::MAX_NODES;
@@ -426,9 +433,9 @@ void FERigidSlidingContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo&
 	vec3d r0[MELN];
 	double detJ[MINT], w[MINT];
 	double N[3*MELN];
-	matrix ke;
+	FEElementMatrix ke;
 
-	// loop over all slave elements
+	// loop over all primary surface elements
 	int c = 0;
 	for (int i = 0; i<m_ss.Elements(); ++i)
 	{
@@ -518,7 +525,9 @@ void FERigidSlidingContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo&
 				for (int l = 0; l<ndof; ++l) ke[k][l] = dtn*N[k] * N[l] * detJ[j] * w[j];
 
 			// assemble the global residual
-			psolver->AssembleStiffness(se.m_node, lm, ke);
+			ke.SetNodes(se.m_node);
+			ke.SetIndices(lm);
+			LS.Assemble(ke);
 		}
 	}
 }
@@ -527,7 +536,7 @@ void FERigidSlidingContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo&
 bool FERigidSlidingContact::Augment(int naug, const FETimeInfo& tp)
 {
 	// make sure we need to augment
-	if (!m_blaugon) return true;
+	if (m_laugon != 1) return true;
 
 	// calculate initial norms
 	double normL0 = 0;
@@ -577,12 +586,12 @@ bool FERigidSlidingContact::Augment(int naug, const FETimeInfo& tp)
 	if (normL1 != 0) lnorm = fabs(normL1 - normL0) / normL1; else lnorm = fabs(normL1 - normL0);
 
 	// check convergence of constraints
-	felog.printf(" rigid sliding contact # %d\n", GetID());
-	felog.printf("                        CURRENT        REQUIRED\n");
-	felog.printf("    normal force : %15le", lnorm);
-	if (m_atol > 0) felog.printf("%15le\n", m_atol); else felog.printf("       ***\n");
-	felog.printf("    gap function : %15le", normgc);
-	if (m_gtol > 0) felog.printf("%15le\n", m_gtol); else felog.printf("       ***\n");
+	feLog(" rigid sliding contact # %d\n", GetID());
+	feLog("                        CURRENT        REQUIRED\n");
+	feLog("    normal force : %15le", lnorm);
+	if (m_atol > 0) feLog("%15le\n", m_atol); else feLog("       ***\n");
+	feLog("    gap function : %15le", normgc);
+	if (m_gtol > 0) feLog("%15le\n", m_gtol); else feLog("       ***\n");
 
 	// check convergence
 	bool bconv = true;

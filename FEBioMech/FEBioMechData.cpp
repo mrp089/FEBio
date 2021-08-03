@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBioMechData.h"
 #include "FEElasticMaterial.h"
@@ -8,16 +36,17 @@
 #include "FERigidMaterial.h"
 #include "FESolidSolver.h"
 #include "FESolidSolver2.h"
-#include "FECore/FERigidBody.h"
+#include "FERigidBody.h"
 #include "FECore/FEModel.h"
 #include "FECore/FEAnalysis.h"
 #include "FERigidConnector.h"
 #include "FEVolumeConstraint.h"
+#include "FEContactSurface.h"
 
 //-----------------------------------------------------------------------------
 double FENodeXPos::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.m_rt.x; 
 }
@@ -25,7 +54,7 @@ double FENodeXPos::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeYPos::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.m_rt.y; 
 }
@@ -33,7 +62,7 @@ double FENodeYPos::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeZPos::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.m_rt.z; 
 }
@@ -41,8 +70,8 @@ double FENodeZPos::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeXDisp::value(int nnode) 
 {
-	const int dof_X = m_pfem->GetDOFIndex("x");
-	FEMesh& mesh = m_pfem->GetMesh();
+	const int dof_X = GetFEModel()->GetDOFIndex("x");
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.get(dof_X); 
 }
@@ -50,8 +79,8 @@ double FENodeXDisp::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeYDisp::value(int nnode) 
 {
-	const int dof_Y = m_pfem->GetDOFIndex("y");
-	FEMesh& mesh = m_pfem->GetMesh();
+	const int dof_Y = GetFEModel()->GetDOFIndex("y");
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.get(dof_Y); 
 }
@@ -59,8 +88,8 @@ double FENodeYDisp::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeZDisp::value(int nnode) 
 {
-	const int dof_Z = m_pfem->GetDOFIndex("z");
-	FEMesh& mesh = m_pfem->GetMesh();
+	const int dof_Z = GetFEModel()->GetDOFIndex("z");
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.get(dof_Z); 
 }
@@ -68,8 +97,8 @@ double FENodeZDisp::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeXVel::value(int nnode) 
 {
-	const int dof_VX = m_pfem->GetDOFIndex("vx");
-	FEMesh& mesh = m_pfem->GetMesh();
+	const int dof_VX = GetFEModel()->GetDOFIndex("vx");
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.get(dof_VX);
 }
@@ -77,8 +106,8 @@ double FENodeXVel::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeYVel::value(int nnode) 
 {
-	const int dof_VY = m_pfem->GetDOFIndex("vy");
-	FEMesh& mesh = m_pfem->GetMesh();
+	const int dof_VY = GetFEModel()->GetDOFIndex("vy");
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.get(dof_VY); 
 }
@@ -86,8 +115,8 @@ double FENodeYVel::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeZVel::value(int nnode) 
 {
-	const int dof_VZ = m_pfem->GetDOFIndex("vz");
-	FEMesh& mesh = m_pfem->GetMesh();
+	const int dof_VZ = GetFEModel()->GetDOFIndex("vz");
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.get(dof_VZ);
 }
@@ -95,7 +124,7 @@ double FENodeZVel::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeXAcc::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.m_at.x; 
 }
@@ -103,7 +132,7 @@ double FENodeXAcc::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeYAcc::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.m_at.y; 
 }
@@ -111,7 +140,7 @@ double FENodeYAcc::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeZAcc::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
+	FEMesh& mesh = GetFEModel()->GetMesh();
 	FENode& node = mesh.Node(nnode);
 	return node.m_at.z; 
 }
@@ -119,13 +148,18 @@ double FENodeZAcc::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeForceX::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
-	FESolidSolver2* psolid_solver = dynamic_cast<FESolidSolver2*>(m_pfem->GetCurrentStep()->GetFESolver());
+	FEMesh& mesh = GetFEModel()->GetMesh();
+	FESolidSolver2* psolid_solver = dynamic_cast<FESolidSolver2*>(GetFEModel()->GetCurrentStep()->GetFESolver());
 	if (psolid_solver)
 	{
 		vector<double>& Fr = psolid_solver->m_Fr;
+		vector<double>& Fn = psolid_solver->m_Fn;
 		vector<int>& id = mesh.Node(nnode).m_ID;
-		return (-id[0] - 2 >= 0 ? Fr[-id[0]-2] : 0);
+
+		double Fx = 0.0;
+		if (id[0] >= 0) Fx = Fn[id[0]];
+		else if (-id[0] - 2 >= 0) Fx = Fr[-id[0] - 2];
+		return Fx;
 	}
 	return 0;
 }
@@ -133,8 +167,8 @@ double FENodeForceX::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeForceY::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
-	FESolidSolver2* psolid_solver = dynamic_cast<FESolidSolver2*>(m_pfem->GetCurrentStep()->GetFESolver());
+	FEMesh& mesh = GetFEModel()->GetMesh();
+	FESolidSolver2* psolid_solver = dynamic_cast<FESolidSolver2*>(GetFEModel()->GetCurrentStep()->GetFESolver());
 	if (psolid_solver)
 	{
 		vector<double>& Fr = psolid_solver->m_Fr;
@@ -147,8 +181,8 @@ double FENodeForceY::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeForceZ::value(int nnode) 
 {
-	FEMesh& mesh = m_pfem->GetMesh();
-	FESolidSolver2* psolid_solver = dynamic_cast<FESolidSolver2*>(m_pfem->GetCurrentStep()->GetFESolver());
+	FEMesh& mesh = GetFEModel()->GetMesh();
+	FESolidSolver2* psolid_solver = dynamic_cast<FESolidSolver2*>(GetFEModel()->GetCurrentStep()->GetFESolver());
 	if (psolid_solver)
 	{
 		vector<double>& Fr = psolid_solver->m_Fr;
@@ -158,6 +192,41 @@ double FENodeForceZ::value(int nnode)
 	return 0;
 }
 
+//-----------------------------------------------------------------------------
+double FELogContactGap::value(FESurfaceElement& el)
+{
+	double g = 0.0;
+	for (int i = 0; i < el.GaussPoints(); ++i)
+	{
+		FEMaterialPoint& mp = *el.GetMaterialPoint(i);
+		FEContactMaterialPoint* cp = mp.ExtractData<FEContactMaterialPoint>();
+		if (cp)
+		{
+			g += cp->m_gap;
+		}
+	}
+	g /= (double)el.GaussPoints();
+
+	return g;
+}
+
+//-----------------------------------------------------------------------------
+double FELogContactPressure::value(FESurfaceElement& el)
+{
+	double Lm = 0.0;
+	for (int i = 0; i < el.GaussPoints(); ++i)
+	{
+		FEMaterialPoint& mp = *el.GetMaterialPoint(i);
+		FEContactMaterialPoint* cp = mp.ExtractData<FEContactMaterialPoint>();
+		if (cp)
+		{
+			Lm += cp->m_Ln;
+		}
+	}
+	Lm /= (double)el.GaussPoints();
+
+	return Lm;
+}
 
 //-----------------------------------------------------------------------------
 double FELogElemPosX::value(FEElement& el)
@@ -309,6 +378,28 @@ double FELogElemStrain1::value(FEElement& el)
 		val += l[0];
 	}
 	return val / (double) nint;
+}
+
+//-----------------------------------------------------------------------------
+double FELogElemStrainEffective::value(FEElement& el)
+{
+	int nint = el.GaussPoints();
+	mat3ds Eavg; Eavg.zero();
+	for (int n = 0; n < nint; ++n)
+	{
+		FEMaterialPoint& mp = *el.GetMaterialPoint(n);
+		FEElasticMaterialPoint& ep = *mp.ExtractData<FEElasticMaterialPoint>();
+
+		mat3ds C = ep.LeftCauchyGreen();
+		mat3dd I(1.0);
+		mat3ds E = (C - I)*0.5;
+
+		Eavg += E;
+	}
+	Eavg /= (double)nint;
+	double val = Eavg.effective_norm();
+
+	return val;
 }
 
 //-----------------------------------------------------------------------------
@@ -506,6 +597,25 @@ double FELogElemStressXZ::value(FEElement& el)
 }
 
 //-----------------------------------------------------------------------------
+double FELogElemStressEffective::value(FEElement& el)
+{
+	int nint = el.GaussPoints();
+	mat3ds savg; savg.zero();
+	for (int n = 0; n < nint; ++n)
+	{
+		FEMaterialPoint& mp = *el.GetMaterialPoint(n);
+		FEElasticMaterialPoint& ep = *mp.ExtractData<FEElasticMaterialPoint>();
+
+		savg += ep.m_s;
+	}
+	savg /= (double)nint;
+	double val = savg.effective_norm();
+
+	return val;
+}
+
+
+//-----------------------------------------------------------------------------
 double FELogElemStress1::value(FEElement& el)
 {
 	double l[3];
@@ -548,6 +658,39 @@ double FELogElemStress3::value(FEElement& el)
 		val += l[2];
 	}
 	return val / (double) nint;
+}
+
+//-----------------------------------------------------------------------------
+double FELogElemStressEigenVector::value(FEElement& el)
+{
+	assert(m_eigenVector >= 0);
+	assert(m_component >= 0);
+
+	// calculate average stress
+	mat3ds s(0.0);
+	int nint = el.GaussPoints();
+	for (int i = 0; i < nint; ++i)
+	{
+		FEElasticMaterialPoint& pt = *el.GetMaterialPoint(i)->ExtractData<FEElasticMaterialPoint>();
+		s += pt.m_s;
+	}
+	s /= (double)nint;
+
+	// get the eigen vectors
+	vec3d e[3];
+	double l[3];
+	s.eigen(l, e);
+
+	// extract component
+	double v = 0.0;
+	switch (m_component)
+	{
+	case 0: v = e[m_eigenVector].x; break;
+	case 1: v = e[m_eigenVector].y; break;
+	case 2: v = e[m_eigenVector].z; break;
+	}
+
+	return v;
 }
 
 //-----------------------------------------------------------------------------
@@ -670,7 +813,7 @@ double FELogElemDeformationGradientZZ::value(FEElement& el)
 //-----------------------------------------------------------------------------
 double FELogElemElasticity_::value(FEElement& el, int n)
 {
-    FEElasticMaterial* pme = m_pfem->GetMaterial(el.GetMatID())->GetElasticMaterial();
+    FEElasticMaterial* pme = GetFEModel()->GetMaterial(el.GetMatID())->ExtractProperty<FEElasticMaterial>();
     if ((pme == 0) || pme->IsRigid()) return 0;
 
     tens4dss c;
@@ -688,8 +831,8 @@ double FELogElemElasticity_::value(FEElement& el, int n)
 //-----------------------------------------------------------------------------
 double FELogElemStrainEnergyDensity::value(FEElement& el)
 {
-    FEElasticMaterial* pme = m_pfem->GetMaterial(el.GetMatID())->GetElasticMaterial();
-    if ((pme == 0) || pme->IsRigid()) return 0;
+	FEElasticMaterial* pme = GetFEModel()->GetMaterial(el.GetMatID())->ExtractProperty<FEElasticMaterial>();
+	if ((pme == 0) || pme->IsRigid()) return 0;
     
     double sed;
 	double val = 0.0;
@@ -706,8 +849,8 @@ double FELogElemStrainEnergyDensity::value(FEElement& el)
 //-----------------------------------------------------------------------------
 double FELogElemDevStrainEnergyDensity::value(FEElement& el)
 {
-    FEElasticMaterial* pme = m_pfem->GetMaterial(el.GetMatID())->GetElasticMaterial();
-    FEUncoupledMaterial* pmu = dynamic_cast<FEUncoupledMaterial*>(pme);
+	FEElasticMaterial* pme = GetFEModel()->GetMaterial(el.GetMatID())->ExtractProperty<FEElasticMaterial>();
+	FEUncoupledMaterial* pmu = dynamic_cast<FEUncoupledMaterial*>(pme);
     if ((pme == 0) || pme->IsRigid() || (pmu == 0)) return 0;
     
     double sed;
@@ -725,12 +868,17 @@ double FELogElemDevStrainEnergyDensity::value(FEElement& el)
 //-----------------------------------------------------------------------------
 double FELogElemFiberStretch::value(FEElement& el)
 {
+	int matID = el.GetMatID();
+	FEMaterial* mat = GetFEModel()->GetMaterial(matID);
+
 	int n = el.GaussPoints();
 	double l = 0.0;
 	for (int j=0; j<n; ++j)
 	{
-		FEElasticMaterialPoint& pt = *el.GetMaterialPoint(j)->ExtractData<FEElasticMaterialPoint>();
-		vec3d ri = pt.m_Q.col(0);
+		FEMaterialPoint& mp = *el.GetMaterialPoint(j);
+		FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
+		mat3d Q = mat->GetLocalCS(mp);
+		vec3d ri = Q.col(0);
 		vec3d r = pt.m_F*ri;
 
 		l += r.norm();
@@ -742,12 +890,18 @@ double FELogElemFiberStretch::value(FEElement& el)
 //-----------------------------------------------------------------------------
 double FELogElemFiberVectorX::value(FEElement& el)
 {
+	int matID = el.GetMatID();
+	FEMaterial* mat = GetFEModel()->GetMaterial(matID);
+
 	int n = el.GaussPoints();
 	double l = 0.0;
 	for (int j = 0; j<n; ++j)
 	{
-		FEElasticMaterialPoint& pt = *el.GetMaterialPoint(j)->ExtractData<FEElasticMaterialPoint>();
-		vec3d ri = pt.m_Q.col(0);
+		FEMaterialPoint& mp = *el.GetMaterialPoint(j);
+		FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
+		mat3d Q = mat->GetLocalCS(mp);
+
+		vec3d ri = Q.col(0);
 		vec3d r = pt.m_F*ri;
 
 		l += r.x;
@@ -759,12 +913,18 @@ double FELogElemFiberVectorX::value(FEElement& el)
 //-----------------------------------------------------------------------------
 double FELogElemFiberVectorY::value(FEElement& el)
 {
+	int matID = el.GetMatID();
+	FEMaterial* mat = GetFEModel()->GetMaterial(matID);
+
 	int n = el.GaussPoints();
 	double l = 0.0;
 	for (int j = 0; j<n; ++j)
 	{
-		FEElasticMaterialPoint& pt = *el.GetMaterialPoint(j)->ExtractData<FEElasticMaterialPoint>();
-		vec3d ri = pt.m_Q.col(0);
+		FEMaterialPoint& mp = *el.GetMaterialPoint(j);
+		FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
+		mat3d Q = mat->GetLocalCS(mp);
+
+		vec3d ri = Q.col(0);
 		vec3d r = pt.m_F*ri;
 
 		l += r.y;
@@ -776,12 +936,18 @@ double FELogElemFiberVectorY::value(FEElement& el)
 //-----------------------------------------------------------------------------
 double FELogElemFiberVectorZ::value(FEElement& el)
 {
+	int matID = el.GetMatID();
+	FEMaterial* mat = GetFEModel()->GetMaterial(matID);
+
 	int n = el.GaussPoints();
 	double l = 0.0;
 	for (int j = 0; j<n; ++j)
 	{
-		FEElasticMaterialPoint& pt = *el.GetMaterialPoint(j)->ExtractData<FEElasticMaterialPoint>();
-		vec3d ri = pt.m_Q.col(0);
+		FEMaterialPoint& mp = *el.GetMaterialPoint(j);
+		FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
+		mat3d Q = mat->GetLocalCS(mp);
+
+		vec3d ri = Q.col(0);
 		vec3d r = pt.m_F*ri;
 
 		l += r.z;
@@ -831,64 +997,64 @@ double FELogDamage::value(FEElement& el)
 }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyR11::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(0,0)); }
-double FELogRigidBodyR12::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(0, 1)); }
-double FELogRigidBodyR13::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(0, 2)); }
-double FELogRigidBodyR21::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(1, 0)); }
-double FELogRigidBodyR22::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(1, 1)); }
-double FELogRigidBodyR23::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(1, 2)); }
-double FELogRigidBodyR31::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(2, 0)); }
-double FELogRigidBodyR32::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(2, 1)); }
-double FELogRigidBodyR33::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return (o.GetRotation().RotationMatrix()(2, 2)); }
+double FELogRigidBodyR11::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(0,0)); }
+double FELogRigidBodyR12::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(0, 1)); }
+double FELogRigidBodyR13::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(0, 2)); }
+double FELogRigidBodyR21::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(1, 0)); }
+double FELogRigidBodyR22::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(1, 1)); }
+double FELogRigidBodyR23::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(1, 2)); }
+double FELogRigidBodyR31::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(2, 0)); }
+double FELogRigidBodyR32::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(2, 1)); }
+double FELogRigidBodyR33::value(FERigidBody& rb) { return (rb.GetRotation().RotationMatrix()(2, 2)); }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyPosX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_rt.x; }
-double FELogRigidBodyPosY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_rt.y; }
-double FELogRigidBodyPosZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_rt.z; }
+double FELogRigidBodyPosX::value(FERigidBody& rb) { return rb.m_rt.x; }
+double FELogRigidBodyPosY::value(FERigidBody& rb) { return rb.m_rt.y; }
+double FELogRigidBodyPosZ::value(FERigidBody& rb) { return rb.m_rt.z; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyVelX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_vt.x; }
-double FELogRigidBodyVelY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_vt.y; }
-double FELogRigidBodyVelZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_vt.z; }
+double FELogRigidBodyVelX::value(FERigidBody& rb) { return rb.m_vt.x; }
+double FELogRigidBodyVelY::value(FERigidBody& rb) { return rb.m_vt.y; }
+double FELogRigidBodyVelZ::value(FERigidBody& rb) { return rb.m_vt.z; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyAccX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_at.x; }
-double FELogRigidBodyAccY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_at.y; }
-double FELogRigidBodyAccZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_at.z; }
+double FELogRigidBodyAccX::value(FERigidBody& rb) { return rb.m_at.x; }
+double FELogRigidBodyAccY::value(FERigidBody& rb) { return rb.m_at.y; }
+double FELogRigidBodyAccZ::value(FERigidBody& rb) { return rb.m_at.z; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyAngPosX::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return ((o.GetRotation().GetVector()).x*o.GetRotation().GetAngle()); }
-double FELogRigidBodyAngPosY::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return ((o.GetRotation().GetVector()).y*o.GetRotation().GetAngle()); }
-double FELogRigidBodyAngPosZ::value(FEObject& rb) { FERigidBody& o = static_cast<FERigidBody&>(rb); return ((o.GetRotation().GetVector()).z*o.GetRotation().GetAngle()); }
+double FELogRigidBodyAngPosX::value(FERigidBody& rb) { return ((rb.GetRotation().GetVector()).x*rb.GetRotation().GetAngle()); }
+double FELogRigidBodyAngPosY::value(FERigidBody& rb) { return ((rb.GetRotation().GetVector()).y*rb.GetRotation().GetAngle()); }
+double FELogRigidBodyAngPosZ::value(FERigidBody& rb) { return ((rb.GetRotation().GetVector()).z*rb.GetRotation().GetAngle()); }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyAngVelX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_wt.x; }
-double FELogRigidBodyAngVelY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_wt.y; }
-double FELogRigidBodyAngVelZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_wt.z; }
+double FELogRigidBodyAngVelX::value(FERigidBody& rb) { return rb.m_wt.x; }
+double FELogRigidBodyAngVelY::value(FERigidBody& rb) { return rb.m_wt.y; }
+double FELogRigidBodyAngVelZ::value(FERigidBody& rb) { return rb.m_wt.z; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyAngAccX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_alt.x; }
-double FELogRigidBodyAngAccY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_alt.y; }
-double FELogRigidBodyAngAccZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_alt.z; }
+double FELogRigidBodyAngAccX::value(FERigidBody& rb) { return rb.m_alt.x; }
+double FELogRigidBodyAngAccY::value(FERigidBody& rb) { return rb.m_alt.y; }
+double FELogRigidBodyAngAccZ::value(FERigidBody& rb) { return rb.m_alt.z; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyQuatX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).GetRotation().x; }
-double FELogRigidBodyQuatY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).GetRotation().y; }
-double FELogRigidBodyQuatZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).GetRotation().z; }
-double FELogRigidBodyQuatW::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).GetRotation().w; }
+double FELogRigidBodyQuatX::value(FERigidBody& rb) { return rb.GetRotation().x; }
+double FELogRigidBodyQuatY::value(FERigidBody& rb) { return rb.GetRotation().y; }
+double FELogRigidBodyQuatZ::value(FERigidBody& rb) { return rb.GetRotation().z; }
+double FELogRigidBodyQuatW::value(FERigidBody& rb) { return rb.GetRotation().w; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyForceX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_Fr.x; }
-double FELogRigidBodyForceY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_Fr.y; }
-double FELogRigidBodyForceZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_Fr.z; }
+double FELogRigidBodyForceX::value(FERigidBody& rb) { return rb.m_Fr.x; }
+double FELogRigidBodyForceY::value(FERigidBody& rb) { return rb.m_Fr.y; }
+double FELogRigidBodyForceZ::value(FERigidBody& rb) { return rb.m_Fr.z; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyTorqueX::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_Mr.x; }
-double FELogRigidBodyTorqueY::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_Mr.y; }
-double FELogRigidBodyTorqueZ::value(FEObject& rb) { return static_cast<FERigidBody&>(rb).m_Mr.z; }
+double FELogRigidBodyTorqueX::value(FERigidBody& rb) { return rb.m_Mr.x; }
+double FELogRigidBodyTorqueY::value(FERigidBody& rb) { return rb.m_Mr.y; }
+double FELogRigidBodyTorqueZ::value(FERigidBody& rb) { return rb.m_Mr.z; }
 
 //-----------------------------------------------------------------------------
-double FELogRigidBodyKineticEnergy::value(FEObject& rb) {
+double FELogRigidBodyKineticEnergy::value(FERigidBody& rb) {
     FERigidBody&rbl = static_cast<FERigidBody&>(rb);
     return (rbl.m_mass*(rbl.m_vt*rbl.m_vt) + rbl.m_wt*(rbl.m_moi*rbl.m_wt))/2;
 }
@@ -929,6 +1095,44 @@ double FELogRigidConnectorMomentZ::value(FENLConstraint& rc)
 {
 	FERigidConnector* prc = dynamic_cast<FERigidConnector*>(&rc);
 	return (prc ? prc->m_M.z : 0);
+}
+
+//-----------------------------------------------------------------------------
+double FELogRigidConnectorTranslationX::value(FENLConstraint& rc)
+{
+    FERigidConnector* prc = dynamic_cast<FERigidConnector*>(&rc);
+    return (prc ? prc->RelativeTranslation().x : 0);
+}
+
+double FELogRigidConnectorTranslationY::value(FENLConstraint& rc)
+{
+    FERigidConnector* prc = dynamic_cast<FERigidConnector*>(&rc);
+    return (prc ? prc->RelativeTranslation().y : 0);
+}
+
+double FELogRigidConnectorTranslationZ::value(FENLConstraint& rc)
+{
+    FERigidConnector* prc = dynamic_cast<FERigidConnector*>(&rc);
+    return (prc ? prc->RelativeTranslation().z : 0);
+}
+
+//-----------------------------------------------------------------------------
+double FELogRigidConnectorRotationX::value(FENLConstraint& rc)
+{
+    FERigidConnector* prc = dynamic_cast<FERigidConnector*>(&rc);
+    return (prc ? prc->RelativeRotation().x : 0);
+}
+
+double FELogRigidConnectorRotationY::value(FENLConstraint& rc)
+{
+    FERigidConnector* prc = dynamic_cast<FERigidConnector*>(&rc);
+    return (prc ? prc->RelativeRotation().y : 0);
+}
+
+double FELogRigidConnectorRotationZ::value(FENLConstraint& rc)
+{
+    FERigidConnector* prc = dynamic_cast<FERigidConnector*>(&rc);
+    return (prc ? prc->RelativeRotation().z : 0);
 }
 
 //-----------------------------------------------------------------------------

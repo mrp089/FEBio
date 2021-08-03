@@ -1,14 +1,44 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FERigidAngularDamper.h"
-#include "FECore/FERigidBody.h"
+#include "FERigidBody.h"
 #include "FECore/log.h"
 #include "FECore/FEModel.h"
 #include "FECore/FEAnalysis.h"
 #include "FECore/FEMaterial.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FERigidAngularDamper, FERigidConnector);
-	ADD_PARAMETER(m_c, FE_PARAM_DOUBLE, "c");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidAngularDamper, FERigidConnector);
+	ADD_PARAMETER(m_c, "c");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FERigidAngularDamper::FERigidAngularDamper(FEModel* pfem) : FERigidConnector(pfem)
@@ -34,19 +64,12 @@ bool FERigidAngularDamper::Init()
 void FERigidAngularDamper::Serialize(DumpStream& ar)
 {
 	FERigidConnector::Serialize(ar);
-    if (ar.IsSaving())
-    {
-        ar << m_c;
-    }
-    else
-    {
-        ar >> m_c;
-    }
+	ar & m_c;
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidAngularDamper::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FERigidAngularDamper::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
     vector<double> fa(6);
     vector<double> fb(6);
@@ -54,7 +77,7 @@ void FERigidAngularDamper::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-    double alpha = tp.alpha;
+    double alpha = tp.alphaf;
     
     // body A
     vec3d wa = RBa.m_wt*alpha + RBa.m_wp*(1-alpha);
@@ -83,17 +106,17 @@ void FERigidAngularDamper::Residual(FEGlobalVector& R, const FETimeInfo& tp)
     for (int i=0; i<6; ++i) if (RBa.m_LM[i] >= 0) R[RBa.m_LM[i]] += fa[i];
     for (int i=0; i<6; ++i) if (RBb.m_LM[i] >= 0) R[RBb.m_LM[i]] += fb[i];
     
-    RBa.m_Fr += vec3d(fa[0],fa[1],fa[2]);
-    RBa.m_Mr += vec3d(fa[3],fa[4],fa[5]);
-    RBb.m_Fr += vec3d(fb[0],fb[1],fb[2]);
-    RBb.m_Mr += vec3d(fb[3],fb[4],fb[5]);
+    RBa.m_Fr -= vec3d(fa[0],fa[1],fa[2]);
+    RBa.m_Mr -= vec3d(fa[3],fa[4],fa[5]);
+    RBb.m_Fr -= vec3d(fb[0],fb[1],fb[2]);
+    RBb.m_Mr -= vec3d(fb[3],fb[4],fb[5]);
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidAngularDamper::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FERigidAngularDamper::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
-    double alpha = tp.alpha;
+    double alpha = tp.alphaf;
     double beta  = tp.beta;
     double gamma = tp.gamma;
     
@@ -103,7 +126,8 @@ void FERigidAngularDamper::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
     int j;
     
     vector<int> LM(12);
-    matrix ke(12,12);
+	FEElementMatrix ke;
+	ke.resize(12, 12);
     ke.zero();
     
 	FERigidBody& RBa = *m_rbA;
@@ -162,7 +186,8 @@ void FERigidAngularDamper::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
         LM[j+6] = RBb.m_LM[j];
     }
     
-    psolver->AssembleStiffness(LM, ke);
+	ke.SetIndices(LM);
+	LS.Assemble(ke);
 }
 
 //-----------------------------------------------------------------------------
@@ -172,12 +197,13 @@ bool FERigidAngularDamper::Augment(int naug, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FERigidAngularDamper::Update(int niter, const FETimeInfo& tp)
+void FERigidAngularDamper::Update()
 {
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-    double alpha = tp.alpha;
+	FETimeInfo& tp = GetFEModel()->GetTime();
+	double alpha = tp.alphaf;
     
     // body A
     vec3d wa = RBa.m_wt*alpha + RBa.m_wp*(1-alpha);
@@ -193,4 +219,25 @@ void FERigidAngularDamper::Reset()
 {
     m_F = vec3d(0,0,0);
     m_M = vec3d(0,0,0);
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidAngularDamper::RelativeTranslation(const bool global)
+{
+    return vec3d(0,0,0);
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidAngularDamper::RelativeRotation(const bool global)
+{
+    FERigidBody& RBa = *m_rbA;
+    FERigidBody& RBb = *m_rbB;
+    
+    // get relative rotation
+    quatd Q = RBb.GetRotation()*RBa.GetRotation().Inverse(); Q.MakeUnit();
+    
+    // relative rotation vector
+    vec3d q = Q.GetRotationVector();
+    
+    return q;
 }

@@ -1,37 +1,64 @@
-// FETangentDiagnostic.cpp: implementation of the FETangentDiagnostic class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FETangentDiagnostic.h"
 #include "FEBioMech/FESolidSolver2.h"
 #include "FEBioMech/FEElasticSolidDomain.h"
-#include <FECore/BC.h>
-#include <FECore/FEDataLoadCurve.h>
+#include <FECore/FEPrescribedDOF.h>
+#include <FECore/FEFixedBC.h>
+#include <FECore/FELoadCurve.h>
 #include "FECore/log.h"
 #include <FECore/FECoreKernel.h>
+#include <FECore/log.h>
 
 //-----------------------------------------------------------------------------
 // Helper function to print a matrix
-void print_matrix(matrix& m)
+void print_matrix(FILE* fp, matrix& m)
 {
 	int i, j;
 	int N = m.rows();
 	int M = m.columns();
 
-	felog.printf("\n    ");
-	for (i=0; i<N; ++i) felog.printf("%15d ", i);
-	felog.printf("\n----");
-	for (i=0; i<N; ++i) felog.printf("----------------", i);
+	fprintf(fp, "\n    ");
+	for (i=0; i<N; ++i) fprintf(fp, "%15d ", i);
+	fprintf(fp, "\n----");
+	for (i=0; i<N; ++i) fprintf(fp, "----------------");
 
 	for (i=0; i<N; ++i)
 	{
-		felog.printf("\n%2d: ", i);
+		fprintf(fp, "\n%2d: ", i);
 		for (j=0; j<M; ++j)
 		{
-			felog.printf("%15lg ", m[i][j]);
+			fprintf(fp, "%15lg ", m[i][j]);
 		}
 	}
-	felog.printf("\n");
+	fprintf(fp, "\n");
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -39,14 +66,14 @@ void print_matrix(matrix& m)
 //////////////////////////////////////////////////////////////////////
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FETangentUniaxial, FEDiagnosticScenario)
-	ADD_PARAMETER(m_strain, FE_PARAM_DOUBLE, "strain");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETangentUniaxial, FEDiagnosticScenario)
+	ADD_PARAMETER(m_strain, "strain");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 bool FETangentUniaxial::Init()
 {
-	FEModel& fem = GetDiagnostic()->GetFEModel();
+	FEModel& fem = *GetDiagnostic()->GetFEModel();
 
 	int i;
 	vec3d r[8] = {
@@ -70,6 +97,12 @@ bool FETangentUniaxial::Init()
 	FEMesh& m = fem.GetMesh();
 	m.CreateNodes(8);
 	m.SetDOFS(MAX_DOFS);
+
+	FENodeSet* nset[3];
+	nset[0] = new FENodeSet(&fem);
+	nset[1] = new FENodeSet(&fem);
+	nset[2] = new FENodeSet(&fem);
+
 	for (i=0; i<8; ++i)
 	{
 		FENode& n = m.Node(i);
@@ -77,10 +110,14 @@ bool FETangentUniaxial::Init()
 		n.m_rid = -1;
 
 		// set displacement BC's
-		if (BC[i][0] == -1) fem.AddFixedBC(i, dof_X);
-		if (BC[i][1] == -1) fem.AddFixedBC(i, dof_Y);
-		if (BC[i][2] == -1) fem.AddFixedBC(i, dof_Z);
+		if (BC[i][0] == -1) nset[0]->Add(i);
+		if (BC[i][1] == -1) nset[1]->Add(i);
+		if (BC[i][2] == -1) nset[2]->Add(i);
 	}
+
+	FEFixedBC* bc_x = new FEFixedBC(&fem, dof_X, nset[0]); fem.AddBoundaryCondition(bc_x);
+	FEFixedBC* bc_y = new FEFixedBC(&fem, dof_Y, nset[1]); fem.AddBoundaryCondition(bc_y);
+	FEFixedBC* bc_z = new FEFixedBC(&fem, dof_Z, nset[2]); fem.AddBoundaryCondition(bc_z);
 
 	// get the material
 	FEMaterial* pmat = fem.GetMaterial(0);
@@ -93,8 +130,7 @@ bool FETangentUniaxial::Init()
 	// create a solid domain
 	FECoreKernel& fecore = FECoreKernel::GetInstance();
 	FEElasticSolidDomain* pd = dynamic_cast<FEElasticSolidDomain*>(fecore.CreateDomain(es, &m, pmat));
-	pd->SetMaterial(pmat);
-	pd->Create(1, es.etype);
+	pd->Create(1, es);
 	pd->SetMatID(0);
 	m.AddDomain(pd);
 	FESolidElement& el = pd->Element(0);
@@ -107,28 +143,32 @@ bool FETangentUniaxial::Init()
 	double d = sqrt(2*m_strain+1) - 1;
 
 	// Add a loadcurve
-	FELoadCurve* plc = new FELinearRamp(1.0, 0.0);
-	fem.AddLoadCurve(plc);
+	FELoadCurve* plc = new FELoadCurve(&fem);
+	plc->Add(0.0, 0.0);
+	plc->Add(1.0, 1.0);
+	fem.AddLoadController(plc);
 
 	// Add a prescribed BC
 	int nd[4] = {1, 2, 5, 6};
-	FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem);
-	fem.AddPrescribedBC(pdc);
-	pdc->SetDOF(dof_X).SetScale(d, 0);
-	for (i = 0; i<4; ++i) pdc->AddNode(nd[i]);
+	FENodeSet* dc = new FENodeSet(&fem);
+	for (i = 0; i<4; ++i) dc->Add(nd[i]);
+
+	FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem, dof_X, dc);
+	pdc->SetScale(d, 0);
+	fem.AddBoundaryCondition(pdc);
 
 	return true;
 }
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FETangentSimpleShear, FEDiagnosticScenario)
-	ADD_PARAMETER(m_strain, FE_PARAM_DOUBLE, "strain");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETangentSimpleShear, FEDiagnosticScenario)
+	ADD_PARAMETER(m_strain, "strain");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 bool FETangentSimpleShear::Init()
 {
-	FEModel& fem = GetDiagnostic()->GetFEModel();
+	FEModel& fem = *GetDiagnostic()->GetFEModel();
 
 	int i;
 	vec3d r[8] = {
@@ -152,17 +192,26 @@ bool FETangentSimpleShear::Init()
 	FEMesh& m = fem.GetMesh();
 	m.CreateNodes(8);
 	m.SetDOFS(MAX_DOFS);
-	for (i=0; i<8; ++i)
+	FENodeSet* nset[3];
+	nset[0] = new FENodeSet(&fem);
+	nset[1] = new FENodeSet(&fem);
+	nset[2] = new FENodeSet(&fem);
+
+	for (i = 0; i<8; ++i)
 	{
 		FENode& n = m.Node(i);
 		n.m_rt = n.m_r0 = r[i];
 		n.m_rid = -1;
 
 		// set displacement BC's
-		if (BC[i][0] == -1) fem.AddFixedBC(i, dof_X);
-		if (BC[i][1] == -1) fem.AddFixedBC(i, dof_Y);
-		if (BC[i][2] == -1) fem.AddFixedBC(i, dof_Z);
+		if (BC[i][0] == -1) nset[0]->Add(i);
+		if (BC[i][1] == -1) nset[1]->Add(i);
+		if (BC[i][2] == -1) nset[2]->Add(i);
 	}
+
+	FEFixedBC* bc_x = new FEFixedBC(&fem, dof_X, nset[0]); fem.AddBoundaryCondition(bc_x);
+	FEFixedBC* bc_y = new FEFixedBC(&fem, dof_Y, nset[1]); fem.AddBoundaryCondition(bc_y);
+	FEFixedBC* bc_z = new FEFixedBC(&fem, dof_Z, nset[2]); fem.AddBoundaryCondition(bc_z);
 
 	// get the material
 	FEMaterial* pmat = fem.GetMaterial(0);
@@ -170,7 +219,7 @@ bool FETangentSimpleShear::Init()
 	// create a solid domain
 	FEElasticSolidDomain* pd = new FEElasticSolidDomain(&fem);
 	pd->SetMaterial(pmat);
-	pd->Create(1, FE_HEX8G8);
+	pd->Create(1, FEElementLibrary::GetElementSpecFromType(FE_HEX8G8));
 	pd->SetMatID(0);
 	m.AddDomain(pd);
 	FESolidElement& el = pd->Element(0);
@@ -183,15 +232,19 @@ bool FETangentSimpleShear::Init()
 	double d = 2*m_strain;
 
 	// Add a loadcurve
-	FELoadCurve* plc = new FELinearRamp(1.0, 0.0);
-	fem.AddLoadCurve(plc);
+	FELoadCurve* plc = new FELoadCurve(&fem);
+	plc->Add(0.0, 0.0);
+	plc->Add(1.0, 1.0);
+	fem.AddLoadController(plc);
 
 	// Add a prescribed BC
-	FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem);
-	fem.AddPrescribedBC(pdc);
-	pdc->SetDOF(dof_X).SetScale(d, 0);
 	int nd[4] = { 4, 5, 6, 7 };
-	for (i=0; i<4; ++i) pdc->AddNode(nd[i]);
+	FENodeSet* dc = new FENodeSet(&fem);
+	for (i = 0; i<4; ++i) dc->Add(nd[i]);
+
+	FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem, dof_X, dc);
+	pdc->SetScale(d, 0);
+	fem.AddBoundaryCondition(pdc);
 
 	return true;
 }
@@ -206,7 +259,7 @@ FETangentDiagnostic::FETangentDiagnostic(FEModel& fem) : FEDiagnostic(fem)
 	FEAnalysis* pstep = new FEAnalysis(&fem);
 
 	// create a new solver
-	FESolver* pnew_solver = fecore_new<FESolver>(FESOLVER_ID, "solid", &fem);
+	FESolver* pnew_solver = fecore_new<FESolver>("solid", &fem);
 	assert(pnew_solver);
 	pstep->SetFESolver(pnew_solver);
 
@@ -243,14 +296,16 @@ bool FETangentDiagnostic::Init()
 // of the element residual.
 bool FETangentDiagnostic::Run()
 {
-	Logfile::MODE oldmode = felog.SetMode(Logfile::LOG_FILE);
-
 	// solve the problem
-	FEModel& fem = GetFEModel();
-	felog.SetMode(Logfile::LOG_NEVER);
+	FEModel& fem = *GetFEModel();
+	fem.BlockLog();
 	bool bret = fem.Solve();
-	felog.SetMode(Logfile::LOG_FILE);
-	if (bret == false) return false;
+	fem.UnBlockLog();
+	if (bret == false)
+	{
+		feLogError("FEBio error terminated. Aborting diagnostic.\n");
+		return false;
+	}
 
 	FEMesh& mesh = fem.GetMesh();
 	FEElasticSolidDomain& bd = static_cast<FEElasticSolidDomain&>(mesh.Domain(0));
@@ -263,20 +318,33 @@ bool FETangentDiagnostic::Run()
 	k0.zero();
 	bd.ElementStiffness(fem.GetTime(), 0, k0);
 
+	// create a file name for the tangent log file
+	std::string febFile = GetFileName();
+	string fileName = febFile;
+	size_t n = fileName.rfind('.');
+	if (n != string::npos) fileName.erase(n);
+	fileName.append("_out.log");
+
+	FILE* fp = fopen(fileName.c_str(), "wt");
+
+	fprintf(fp, "FEBio Tangent Diagnostics Results:\n");
+	fprintf(fp, "==================================\n");
+	fprintf(fp, "Diagnostics file: %s\n\n", febFile.c_str());
+
 	// print the element stiffness matrix
-	felog.printf("\nActual stiffness matrix:\n");
-	print_matrix(k0);
+	fprintf(fp, "\nActual stiffness matrix:\n");
+	print_matrix(fp, k0);
 
 	// now calculate the derivative of the residual
 	matrix k1;
 	deriv_residual(k1);
 
 	// print the approximate element stiffness matrix
-	felog.printf("\nApproximate stiffness matrix:\n");
-	print_matrix(k1);
+	fprintf(fp, "\nApproximate stiffness matrix:\n");
+	print_matrix(fp, k1);
 
 	// finally calculate the difference matrix
-	felog.printf("\n");
+	fprintf(fp, "\n");
 	matrix kd(24, 24);
 	double kmax = 0, kij;
 	int i0 = -1, j0 = -1, i, j;
@@ -294,12 +362,13 @@ bool FETangentDiagnostic::Run()
 		}
 
 	// print the difference
-	felog.printf("\ndifference matrix:\n");
-	print_matrix(kd);
+	fprintf(fp, "\ndifference matrix:\n");
+	print_matrix(fp, kd);
 
-	felog.SetMode(oldmode);
+	fprintf(fp, "\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+	fprintf(stderr, "\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
 
-	felog.printf("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+	fclose(fp);
 
 	return (kmax < 1e-4);
 }
@@ -310,7 +379,7 @@ bool FETangentDiagnostic::Run()
 void FETangentDiagnostic::deriv_residual(matrix& ke)
 {
 	// get the solver
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
 	FEAnalysis* pstep = fem.GetCurrentStep();
 	FESolidSolver2& solver = static_cast<FESolidSolver2&>(*pstep->GetFESolver());
 
@@ -346,25 +415,25 @@ void FETangentDiagnostic::deriv_residual(matrix& ke)
 
 		switch (nj)
 		{
-		case 0: node.inc(dof_X, dx); node.m_rt.x += dx; break;
-		case 1: node.inc(dof_Y, dx); node.m_rt.y += dx; break;
-		case 2: node.inc(dof_Z, dx); node.m_rt.z += dx; break;
+		case 0: node.add(dof_X, dx); node.m_rt.x += dx; break;
+		case 1: node.add(dof_Y, dx); node.m_rt.y += dx; break;
+		case 2: node.add(dof_Z, dx); node.m_rt.z += dx; break;
 		}
 
 
-		solver.UpdateModel();
+		fem.Update();
 
 		zero(f1);
 		bd.ElementInternalForce(el, f1);
 
 		switch (nj)
 		{
-		case 0: node.dec(dof_X, dx); node.m_rt.x -= dx; break;
-		case 1: node.dec(dof_Y, dx); node.m_rt.y -= dx; break;
-		case 2: node.dec(dof_Z, dx); node.m_rt.z -= dx; break;
+		case 0: node.sub(dof_X, dx); node.m_rt.x -= dx; break;
+		case 1: node.sub(dof_Y, dx); node.m_rt.y -= dx; break;
+		case 2: node.sub(dof_Z, dx); node.m_rt.z -= dx; break;
 		}
 
-		solver.UpdateModel();
+		fem.Update();
 
 		for (i=0; i<3*N; ++i) ke[i][j] = -(f1[i] - f0[i])/dx;
 	}

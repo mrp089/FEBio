@@ -1,25 +1,109 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBioModel.h"
 #include "FEBioPlot/FEBioPlotFile.h"
-#include "FEBioPlot/FEBioPlotFile2.h"
 #include "FEBioXML/FEBioImport.h"
 #include "FEBioXML/FERestartImport.h"
-#include "FECore/NodeDataRecord.h"
-#include "FECore/ElementDataRecord.h"
-#include "FECore/ObjectDataRecord.h"
-#include "FECore/NLConstraintDataRecord.h"
+#include <FECore/NodeDataRecord.h>
+#include <FECore/FaceDataRecord.h>
+#include <FECore/ElementDataRecord.h>
+#include <FEBioMech/ObjectDataRecord.h>
+#include <FECore/NLConstraintDataRecord.h>
+#include <FEBioMech/FERigidConnector.h>
+#include <FEBioMech/FEGenericRigidJoint.h>
+#include <FEBioMech/FERigidSphericalJoint.h>
+#include <FEBioMech/FERigidPrismaticJoint.h>
+#include <FEBioMech/FERigidRevoluteJoint.h>
+#include <FEBioMech/FERigidCylindricalJoint.h>
+#include <FEBioMech/FERigidPlanarJoint.h>
+#include <FEBioMech/FERigidDamper.h>
+#include <FEBioMech/FERigidSpring.h>
+#include <FEBioMech/FERigidAngularDamper.h>
+#include <FEBioMech/FERigidContractileForce.h>
 #include "FECore/log.h"
 #include "FECore/FECoreKernel.h"
 #include "FECore/DumpFile.h"
 #include "FECore/DOFS.h"
+#include <FECore/FEAnalysis.h>
+#include <NumCore/MatrixTools.h>
+#include <FECore/LinearSolver.h>
+#include <FECore/FEDomain.h>
+#include <FECore/FEMaterial.h>
 #include "febio.h"
 #include "version.h"
+#include <iostream>
+#include <sstream>
+#include <fstream>
+
+#ifdef WIN32
+size_t FEBIOLIB_API GetPeakMemory();	// in memory.cpp
+#endif
+
+FEBioModel::FEPlotVariable::FEPlotVariable()
+{
+
+}
+
+FEBioModel::FEPlotVariable::FEPlotVariable(const std::string& varName, const std::vector<int>& itemList, const std::string& domainName)
+{
+	m_var = varName;
+	m_item = itemList;
+	m_domName = domainName;
+}
+
+FEBioModel::FEPlotVariable::FEPlotVariable(const FEBioModel::FEPlotVariable& v)
+{
+	m_var = v.m_var;
+	m_item = v.m_item;
+	m_domName = v.m_domName;
+}
+
+void FEBioModel::FEPlotVariable::operator = (const FEBioModel::FEPlotVariable& v)
+{
+	m_var = v.m_var;
+	m_item = v.m_item;
+	m_domName = v.m_domName;
+}
+
+void FEBioModel::FEPlotVariable::Serialize(DumpStream& ar)
+{
+	ar & m_var;
+	ar & m_item;
+	ar & m_domName;
+}
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEBioModel, FEModel)
-	ADD_PARAMETER(m_sztitle, FE_PARAM_STRING, "title");
-	ADD_PARAMETER(m_logLevel, FE_PARAM_INT, "log_level");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEBioModel, FEMechModel)
+	ADD_PARAMETER(m_title   , "title"    );
+	ADD_PARAMETER(m_logLevel, "log_level");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 // echo the input data to the log file
@@ -44,21 +128,28 @@ bool output_cb(FEModel* pfem, unsigned int nwhen, void* pd)
 // Constructor of FEBioModel class.
 FEBioModel::FEBioModel()
 {
-	m_sztitle[0] = 0;
-
 	m_logLevel = 1;
 
+	m_dumpLevel = FE_DUMP_NEVER;
+
 	// --- I/O-Data ---
-	m_szfile_title = 0;
-	m_szfile[0] = 0;
-	m_szplot[0] = 0;
-	m_szlog[0] = 0;
-	m_szdump[0] = 0;
-	m_debug = false;
+	m_ndebug = 0;
 	m_becho = true;
-	m_plot = 0;
+	m_plot = nullptr;
+	m_writeMesh = false;
+
+	m_ntimeSteps = 0;
+	m_ntotalIters = 0;
+	m_ntotalRHS = 0;
+	m_ntotalReforms = 0;
+
+	m_pltCompression = 0;
+	m_pltAppendOnRestart = true;
+
+	m_lastUpdate = -1;
 
 	// Add the output callback
+	// We call this function always since we want to flush the logfile for each event.
 	AddCallback(output_cb, CB_ALWAYS, this);
 }
 
@@ -67,6 +158,7 @@ FEBioModel::~FEBioModel()
 {
 	// close the plot file
 	if (m_plot) { delete m_plot; m_plot = 0; }
+	m_log.close();
 }
 
 //-----------------------------------------------------------------------------
@@ -77,24 +169,46 @@ Timer& FEBioModel::GetSolveTimer()
 
 //-----------------------------------------------------------------------------
 //! return number of seconds of time spent in linear solver
-int FEBioModel::GetLinearSolverTime() const
+int FEBioModel::GetLinearSolverTime()
 {
-	Timer* t = FECoreKernel::GetInstance().FindTimer("solve");
-	return t->peek();
+	Timer* t = GetTimer(TimerID::Timer_Solve);
+	return (int)t->peek();
 }
+
+//-----------------------------------------------------------------------------
+//! set the debug level
+void FEBioModel::SetDebugLevel(int debugLvl) { m_ndebug = debugLvl; }
+
+//! get the debug level
+int FEBioModel::GetDebugLevel() { return m_ndebug; }
+
+//! set the dump level (for cold restarts)
+void FEBioModel::SetDumpLevel(int dumpLevel) { m_dumpLevel = dumpLevel; }
+
+//! get the dump level
+int FEBioModel::GetDumpLevel() const { return m_dumpLevel; }
+
+//! Set the log level
+void FEBioModel::SetLogLevel(int logLevel) { m_logLevel = logLevel; }
 
 //-----------------------------------------------------------------------------
 //! Set the title of the model
 void FEBioModel::SetTitle(const char* sz)
 {
-	strcpy(m_sztitle, sz);
+	m_title = sz;
 }
 
 //-----------------------------------------------------------------------------
 //! Return the title of the model
-const char* FEBioModel::GetTitle()
+const std::string& FEBioModel::GetTitle() const
 {
-	return m_sztitle;
+	return m_title;
+}
+
+//-----------------------------------------------------------------------------
+double FEBioModel::GetEndTime() const
+{
+	return GetCurrentStep()->m_tend;
 }
 
 //=============================================================================
@@ -104,17 +218,11 @@ const char* FEBioModel::GetTitle()
 //=============================================================================
 
 //-----------------------------------------------------------------------------
-//! Return the data store
-DataStore& FEBioModel::GetDataStore()
-{
-	return m_Data;
-}
-
-//-----------------------------------------------------------------------------
 //! Add a data record to the data store
 void FEBioModel::AddDataRecord(DataRecord* pd)
 {
-	m_Data.AddRecord(pd); 
+	DataStore& dataStore = GetDataStore();
+	dataStore.AddRecord(pd); 
 }
 
 //-----------------------------------------------------------------------------
@@ -126,73 +234,86 @@ PlotFile* FEBioModel::GetPlotFile()
 
 //-----------------------------------------------------------------------------
 //! Sets the name of the FEBio input file
-void FEBioModel::SetInputFilename(const char* szfile)
+void FEBioModel::SetInputFilename(const std::string& sfile)
 { 
-	strcpy(m_szfile, szfile); 
-	m_szfile_title = strrchr(m_szfile, '/');
-	if (m_szfile_title == 0) 
+	m_sfile = sfile;
+	size_t npos = sfile.rfind('/');
+	if (npos != string::npos) m_sfile_title = sfile.substr(npos+1, std::string::npos);
+	if (m_sfile_title.empty()) 
 	{
-		m_szfile_title = strrchr(m_szfile, '\\'); 
-		if (m_szfile_title == 0) m_szfile_title = m_szfile; else ++m_szfile_title;
+		npos = sfile.rfind('\\');
+		if (npos != string::npos) m_sfile_title = sfile.substr(npos, string::npos);
+		if (m_sfile_title.empty()) m_sfile_title = m_sfile;
 	}
-	else ++m_szfile_title;
 }
 
 //-----------------------------------------------------------------------------
 //! Set the name of the log file
-void FEBioModel::SetLogFilename(const char* szfile) 
+void FEBioModel::SetLogFilename(const std::string& sfile)
 { 
-	strcpy(m_szlog , szfile); 
+	m_slog = sfile; 
 }
 
 //-----------------------------------------------------------------------------
 //! Set the name of the plot file
-void FEBioModel::SetPlotFilename(const char* szfile) 
+void FEBioModel::SetPlotFilename(const std::string& sfile)
 { 
-	strcpy(m_szplot, szfile); 
+	m_splot = sfile;
 }
 
 //-----------------------------------------------------------------------------
 //! Set the name of the restart archive (i.e. the dump file)
-void FEBioModel::SetDumpFilename (const char* szfile) 
+void FEBioModel::SetDumpFilename(const std::string& sfile)
 { 
-	strcpy(m_szdump, szfile); 
+	m_sdump = sfile;
 }
 
 //-----------------------------------------------------------------------------
 //! Return the name of the input file
-const char* FEBioModel::GetInputFileName()
+const std::string& FEBioModel::GetInputFileName()
 { 
-	return m_szfile; 
+	return m_sfile; 
 }
 
 //-----------------------------------------------------------------------------
 //! Return the name of the log file
-const char* FEBioModel::GetLogfileName()
+const std::string& FEBioModel::GetLogfileName()
 { 
-	return m_szlog;  
+	return m_slog;  
 }
 
 //-----------------------------------------------------------------------------
 //! Return the name of the plot file
-const char* FEBioModel::GetPlotFileName()
+const std::string& FEBioModel::GetPlotFileName()
 { 
-	return m_szplot; 
+	return m_splot; 
 }
 
 //-----------------------------------------------------------------------------
 //! Return the dump file name.
-const char* FEBioModel::GetDumpFileName()
+const std::string& FEBioModel::GetDumpFileName()
 {
-	return	m_szdump;
+	return	m_sdump;
 }
 
 //-----------------------------------------------------------------------------
 //! get the file title (i.e. name of input file without the path)
-//! \todo Do I actually need to store this?
-const char* FEBioModel::GetFileTitle()
+const std::string& FEBioModel::GetFileTitle()
 { 
-	return m_szfile_title; 
+	return m_sfile_title; 
+}
+
+//-----------------------------------------------------------------------------
+// set append-on-restart flag
+void FEBioModel::SetAppendOnRestart(bool b)
+{
+	m_pltAppendOnRestart = b;
+}
+
+//-----------------------------------------------------------------------------
+bool FEBioModel::AppendOnRestart() const
+{
+	return m_pltAppendOnRestart;
 }
 
 //=============================================================================
@@ -206,24 +327,24 @@ const char* FEBioModel::GetFileTitle()
 bool FEBioModel::Input(const char* szfile)
 {
 	// start the timer
-	TimerTracker t(m_InputTime);
+	TimerTracker t(&m_InputTime);
 
 	// create file reader
 	FEBioImport fim;
 
-	felog.printf("Reading file %s ...", szfile);
+	feLog("Reading file %s ...", szfile);
 
 	// Load the file
 	if (fim.Load(*this, szfile) == false)
 	{
-		felog.printf("FAILED!\n");
+		feLog("FAILED!\n");
 		char szerr[256];
 		fim.GetErrorMessage(szerr);
-		felog.printf(szerr);
+		feLogError(szerr);
 
 		return false;
 	}
-	else felog.printf("SUCCESS!\n");
+	else feLog("SUCCESS!\n");
 
 	// set the input file name
 	SetInputFilename(szfile);
@@ -236,14 +357,13 @@ bool FEBioModel::Input(const char* szfile)
 	// set the plot file
 	if (strcmp(fim.m_szplot_type, "febio") == 0)
 	{
-		FEBioPlotFile* pplt = new FEBioPlotFile(*this);
-		m_plot = pplt;
+		m_pltData.clear();
 
 		// set compression
-		pplt->SetCompression(fim.m_nplot_compression);
+		m_pltCompression = fim.m_nplot_compression;
 
 		// define the plot file variables
-		FEMesh& mesh = GetMesh();
+		FEModel& fem = *GetFEModel();
 		int NP = (int) fim.m_plot.size();
 		for (int i=0; i<NP; ++i)
 		{
@@ -257,49 +377,11 @@ bool FEBioModel::Input(const char* szfile)
 				vector<int> lmat = var.m_item;
 
 				// convert the material list to a domain list
-				mesh.DomainListFromMaterial(lmat, item);
+				DomainListFromMaterial(lmat, item);
 			}
 
-			// add the plot output variable
-			if (pplt->AddVariable(var.m_szvar, item, var.m_szdom) == false)
-			{
-				felog.printf("FATAL ERROR: Output variable \"%s\" is not defined\n", var.m_szvar);
-				return false;
-			}
-		}
-	}
-	else if (strcmp(fim.m_szplot_type, "febio2") == 0)
-	{
-		FEBioPlotFile2* pplt = new FEBioPlotFile2(*this);
-		m_plot = pplt;
-
-		// set compression
-		pplt->SetCompression(fim.m_nplot_compression);
-
-		// define the plot file variables
-		FEMesh& mesh = GetMesh();
-		int NP = (int)fim.m_plot.size();
-		for (int i = 0; i<NP; ++i)
-		{
-			FEBioImport::PlotVariable& var = fim.m_plot[i];
-
-			vector<int> item = var.m_item;
-			if (item.empty() == false)
-			{
-				// TODO: currently, this is only supported for domain variables, where
-				//       the list is a list of materials
-				vector<int> lmat = var.m_item;
-
-				// convert the material list to a domain list
-				mesh.DomainListFromMaterial(lmat, item);
-			}
-
-			// add the plot output variable
-			if (pplt->AddVariable(var.m_szvar, item, var.m_szdom) == false)
-			{
-				felog.printf("FATAL ERROR: Output variable \"%s\" is not defined\n", var.m_szvar);
-				return false;
-			}
+			FEPlotVariable pltvar(var.m_szvar, item, var.m_szdom);
+			m_pltData.push_back(pltvar);
 		}
 	}
 
@@ -311,6 +393,33 @@ bool FEBioModel::Input(const char* szfile)
 	return true;
 }
 
+//-----------------------------------------------------------------------------
+//! This function finds all the domains that have a certain material
+void FEBioModel::DomainListFromMaterial(vector<int>& lmat, vector<int>& ldom)
+{
+	FEMesh& mesh = GetMesh();
+
+	// make sure the list is empty
+	if (ldom.empty() == false) ldom.clear();
+
+	// loop over all domains
+	int ND = mesh.Domains();
+	int NM = (int)lmat.size();
+	for (int i = 0; i<ND; ++i)
+	{
+		FEDomain& di = mesh.Domain(i);
+		int dmat = di.GetMaterial()->GetID();
+		for (int j = 0; j<NM; ++j)
+		{
+			if (dmat == lmat[j])
+			{
+				ldom.push_back(i);
+				break;
+			}
+		}
+	}
+}
+
 //=============================================================================
 //    O U T P U T
 //=============================================================================
@@ -319,62 +428,67 @@ bool FEBioModel::Input(const char* szfile)
 void FEBioModel::WriteLog(unsigned int nwhen)
 {
 	FEAnalysis* step = GetCurrentStep();
-	int printLevel = step->GetPrintLevel();
-
-	if (nwhen == CB_STEP_ACTIVE)
-	{
-		// print initial progress bar
-		if (printLevel == FE_PRINT_PROGRESS)
-		{
-			printf("\nProgress:\n");
-			for (int i = 0; i<50; ++i) printf("\xB0"); printf("\r");
-			felog.SetMode(Logfile::LOG_FILE);
-		}
-	}
-
-	if (nwhen == CB_UPDATE_TIME)
-	{
-		// print a progress bar
-		if (printLevel == FE_PRINT_PROGRESS)
-		{
-			int l = (int)(50 * GetCurrentTime() / step->m_tend);
-			for (int i = 0; i<l; ++i) printf("\xB2"); printf("\r");
-			fflush(stdout);
-		}
-	}
+	if (step == nullptr) return;
 
 	if (nwhen == CB_STEP_SOLVED)
 	{
-		if (printLevel != FE_PRINT_NEVER)
+		// output report
+		feLog("\n\n N O N L I N E A R   I T E R A T I O N   I N F O R M A T I O N\n\n");
+		feLog("\tNumber of time steps completed .................... : %d\n\n", step->m_ntimesteps);
+		feLog("\tTotal number of equilibrium iterations ............ : %d\n\n", step->m_ntotiter);
+		feLog("\tAverage number of equilibrium iterations .......... : %lg\n\n", (step->m_ntimesteps != 0 ? (double)step->m_ntotiter / (double)step->m_ntimesteps : 0));
+		feLog("\tTotal number of right hand evaluations ............ : %d\n\n", step->m_ntotrhs);
+		feLog("\tTotal number of stiffness reformations ............ : %d\n\n", step->m_ntotref);
+
+		// print linear solver stats
+		LinearSolver* ls = step->GetFESolver()->GetLinearSolver();
+		if (ls)
 		{
-			// output report
-			felog.printf("\n\nN O N L I N E A R   I T E R A T I O N   I N F O R M A T I O N\n\n");
-			felog.printf("\tNumber of time steps completed .................... : %d\n\n", step->m_ntimesteps);
-			felog.printf("\tTotal number of equilibrium iterations ............ : %d\n\n", step->m_ntotiter);
-			felog.printf("\tAverage number of equilibrium iterations .......... : %lg\n\n", (double)step->m_ntotiter / (double)step->m_ntimesteps);
-			felog.printf("\tTotal number of right hand evaluations ............ : %d\n\n", step->m_ntotrhs);
-			felog.printf("\tTotal number of stiffness reformations ............ : %d\n\n", step->m_ntotref);
-
-			// get and print elapsed time
-			char sztime[64];
-
-			Timer* solveTimer = FECoreKernel::GetInstance().FindTimer("solve");
-			solveTimer->time_str(sztime);
-			felog.printf("\tTime in linear solver: %s\n\n", sztime);
+			LinearSolverStats stats = ls->GetStats();
+			int nsolves = stats.backsolves;
+			int niters = stats.iterations;
+			double avgiters = (nsolves != 0 ? (double)niters / (double)nsolves : (double)niters);
+			feLog("\n L I N E A R   S O L V E R   S T A T S\n\n");
+			feLog("\tTotal calls to linear solver ........ : %d\n\n", nsolves);
+			feLog("\tAvg iterations per solve ............ : %lg\n\n", avgiters);
 		}
 
-		if (printLevel == FE_PRINT_PROGRESS)
-		{
-			felog.SetMode(Logfile::LOG_FILE_AND_SCREEN);
-		}
+		// add to stats
+		m_ntimeSteps += step->m_ntimesteps;
+		m_ntotalIters += step->m_ntotiter;
+		m_ntotalRHS += step->m_ntotrhs;
+		m_ntotalReforms += step->m_ntotref;
 	}
+
+	if (nwhen == CB_SOLVED)
+	{
+		// for multistep analysis we'll print a grand total
+		if (Steps() > 1)
+		{
+			feLog("\n\n N O N L I N E A R   I T E R A T I O N   S U M M A R Y\n\n");
+			feLog("\tNumber of time steps completed .................... : %d\n\n", m_ntimeSteps);
+			feLog("\tTotal number of equilibrium iterations ............ : %d\n\n", m_ntotalIters);
+			feLog("\tTotal number of right hand evaluations ............ : %d\n\n", m_ntotalRHS);
+			feLog("\tTotal number of stiffness reformations ............ : %d\n\n", m_ntotalReforms);
+		}
+
+		// get and print elapsed time
+		char sztime[64];
+
+		Timer* solveTimer = GetTimer(TimerID::Timer_Solve);
+		solveTimer->time_str(sztime);
+		feLog("\tTime in linear solver: %s\n\n", sztime);
+	}
+
+	// always flush the log
+	m_log.flush();
 }
 
 //-----------------------------------------------------------------------------
 //! Export state to plot file.
 void FEBioModel::Write(unsigned int nwhen)
 {
-	TimerTracker t(m_IOTimer);
+	TimerTracker t(&m_IOTimer);
 
 	// get the current step
 	FEAnalysis* pstep = GetCurrentStep();
@@ -388,13 +502,16 @@ void FEBioModel::Write(unsigned int nwhen)
 		if (nplt != FE_PLOT_NEVER)
 		{
 			// try to open the plot file
-			if (nwhen == CB_STEP_ACTIVE)
+			if ((nwhen == CB_INIT) || (nwhen == CB_STEP_ACTIVE))
 			{
 				if (m_plot->IsValid() == false)
 				{
-					if (m_plot->Open(*this, m_szplot) == false)
+					// Add the plot objects
+					UpdatePlotObjects();
+
+					if (m_plot->Open(*this, m_splot.c_str()) == false)
 					{
-						felog.printf("ERROR : Failed creating PLOT database\n");
+						feLog("ERROR : Failed creating PLOT database\n");
 						delete m_plot;
 						m_plot = 0;
 					}
@@ -410,7 +527,7 @@ void FEBioModel::Write(unsigned int nwhen)
 						bool bout = true;
 
 						// if we're using the fixed time stepper, we check the plot range and zero state flag
-						if (pstep->m_bautostep == false) bout = (pstep->m_nplotRange[0] == 0) || (pstep->m_bplotZero);
+						if (pstep->m_timeController == nullptr) bout = (pstep->m_nplotRange[0] == 0) || (pstep->m_bplotZero);
 
 						// store initial time step (i.e. time step zero)
 						double time = GetTime().currentTime;
@@ -424,11 +541,28 @@ void FEBioModel::Write(unsigned int nwhen)
 				bool bout = false;
 
 				// see if we need to output something
-				bool bdebug = GetDebugFlag();
+				int ndebug = GetDebugLevel();
 
-				// when debugging we always output
-				// (this could mean we may end up writing the same state multiple times)
-				if (bdebug) bout = true;
+				// write a new mesh section if needed
+				if (nwhen == CB_REMESH)
+				{
+					m_writeMesh = true;
+					m_lastUpdate = -1;
+				}
+
+				if (ndebug == 1)
+				{
+					if ((nwhen == CB_INIT) || (nwhen == CB_MODEL_UPDATE) || (nwhen == CB_MINOR_ITERS) || (nwhen == CB_SOLVED) || (nwhen == CB_REMESH))
+					{
+						bout = true;
+					}
+
+					if (nwhen == CB_MAJOR_ITERS)
+					{
+						bout = true;
+						m_lastUpdate = -1;
+					}
+				}
 				else
 				{
 					int currentStep = pstep->m_ntimesteps;
@@ -438,7 +572,7 @@ void FEBioModel::Write(unsigned int nwhen)
 
 					bool inRange = true;
 					bool isStride = true;
-					if (pstep->m_bautostep == false)
+					if (pstep->m_timeController == nullptr)
 					{
 						inRange = false;
 						if ((currentStep >= nmin) && (currentStep <= nmax)) inRange = true;
@@ -448,10 +582,19 @@ void FEBioModel::Write(unsigned int nwhen)
 
 					switch (nwhen)
 					{
-					case CB_MINOR_ITERS: if (nplt == FE_PLOT_MINOR_ITRS   ) bout = true; break;
+					case CB_MINOR_ITERS: 
+					{
+						if (nplt == FE_PLOT_MINOR_ITRS) bout = true;
+						if ((ndebug == 2) && (NegativeJacobian::IsThrown()))
+						{
+							bout = true;
+							NegativeJacobian::clearFlag();
+						}
+					}
+					break;
 					case CB_MAJOR_ITERS  : 
-						if ((nplt == FE_PLOT_MAJOR_ITRS ) && inRange && isStride) bout = true; 
-						if ((nplt == FE_PLOT_MUST_POINTS) && (pstep->m_timeController.m_nmust >= 0)) bout = true;
+						if ((nplt == FE_PLOT_MAJOR_ITRS ) && inRange && isStride) bout = true;
+						if ((nplt == FE_PLOT_MUST_POINTS) && (pstep->m_timeController) && (pstep->m_timeController->m_nmust >= 0)) bout = true;
 						if (nplt == FE_PLOT_AUGMENTATIONS) bout = true;
 						break;
 					case CB_AUGMENT: 
@@ -479,21 +622,44 @@ void FEBioModel::Write(unsigned int nwhen)
 				}
 
 				// output the state if requested
-				if (bout) 
+				if (bout && (m_lastUpdate != UpdateCounter()) )
 				{
+					m_lastUpdate = UpdateCounter();
+
+					// update the plot objects
+					UpdatePlotObjects();
+
+					// see if we need to write a new mesh section
+					if (m_writeMesh) {
+						FEBioPlotFile* plt = dynamic_cast<FEBioPlotFile*>(m_plot);
+						plt->WriteMeshSection(*this);
+					}
+
+					// set the status flag
+					int statusFlag = 0;
+					if (m_writeMesh) statusFlag = 1;
+					else if (nwhen != CB_MAJOR_ITERS)
+					{
+						statusFlag = 2;
+					}
+
+					// write the state section
 					double time = GetTime().currentTime;
-					if (m_plot) m_plot->Write(*this, (float)time);
+					if (m_plot) m_plot->Write(*this, (float)time, statusFlag);
+
+					// make sure to reset write mesh flag
+					m_writeMesh = false;
 				}
 			}
 		}
 	}
 
 	// Dump converged state to the archive
-	int ndump = pstep->GetDumpLevel();
+	int ndump = GetDumpLevel();
 	if (ndump != FE_DUMP_NEVER)
 	{
 		bool bdump = false;
-		if ((nwhen == CB_SOLVED     ) && (ndump == FE_DUMP_STEP      )) bdump = true;
+		if ((nwhen == CB_STEP_SOLVED) && (ndump == FE_DUMP_STEP      )) bdump = true;
 		if ((nwhen == CB_MAJOR_ITERS) && (ndump == FE_DUMP_MAJOR_ITRS)) bdump = true;
 		if (bdump) DumpData();
 	}
@@ -508,7 +674,7 @@ void FEBioModel::Write(unsigned int nwhen)
 		case CB_MINOR_ITERS: if (nout == FE_OUTPUT_MINOR_ITRS) bout = true; break;
 		case CB_MAJOR_ITERS:
 			if (nout == FE_OUTPUT_MAJOR_ITRS) bout = true;
-			if ((nout == FE_OUTPUT_MUST_POINTS) && (pstep->m_timeController.m_nmust >= 0)) bout = true;
+			if ((nout == FE_OUTPUT_MUST_POINTS) && (pstep->m_timeController) && (pstep->m_timeController->m_nmust >= 0)) bout = true;
 			break;
 		case CB_SOLVED:
 			if (nout == FE_OUTPUT_FINAL) bout = true;
@@ -523,7 +689,8 @@ void FEBioModel::Write(unsigned int nwhen)
 //! Write user data to the logfile
 void FEBioModel::WriteData()
 {
-	m_Data.Write();
+	DataStore& dataStore = GetDataStore();
+	dataStore.Write();
 }
 
 //-----------------------------------------------------------------------------
@@ -531,20 +698,504 @@ void FEBioModel::WriteData()
 void FEBioModel::DumpData()
 {
 	DumpFile ar(*this);
-	if (ar.Create(m_szdump) == false)
+	if (ar.Create(m_sdump.c_str()) == false)
 	{
-		felog.printf("WARNING: Failed creating restart file (%s).\n", m_szdump);
+		feLogWarning("Failed creating restart file (%s).\n", m_sdump.c_str());
 	}
 	else 
 	{
 		Serialize(ar);
-		felog.printf("\nRestart point created. Archive name is %s\n", m_szdump);
+		feLogInfo("\nRestart point created. Archive name is %s.", m_sdump.c_str());
+	}
+}
+
+//-----------------------------------------------------------------------------
+void FEBioModel::Log(int ntag, const char* szmsg)
+{
+	if      (ntag == 0) m_log.printf(szmsg);
+	else if (ntag == 1) m_log.printbox("WARNING", szmsg);
+	else if (ntag == 2) m_log.printbox("ERROR", szmsg);
+	else if (ntag == 3) m_log.printbox(nullptr, szmsg);
+
+	// Flushing the logfile each time we get here might be a bit overkill.
+	// For now, I'm flushing the log file in the output_cb method.
+//	m_log.flush();
+}
+
+//-----------------------------------------------------------------------------
+class FEPlotRigidBodyForce : public FEPlotObjectData
+{
+public:
+	FEPlotRigidBodyForce(FEModel* fem, FERigidBody* prb) : FEPlotObjectData(fem), m_rb(prb) {}
+
+	bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+	{
+		assert(m_rb);
+		ar << m_rb->m_Fr;
+		return true;
+	}
+
+private:
+	FERigidBody* m_rb;
+};
+
+class FEPlotRigidBodyMoment : public FEPlotObjectData
+{
+public:
+	FEPlotRigidBodyMoment(FEModel* fem, FERigidBody* prb) : FEPlotObjectData(fem), m_rb(prb) {}
+
+	bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+	{
+		assert(m_rb);
+		ar << m_rb->m_Mr;
+		return true;
+	}
+
+private:
+	FERigidBody* m_rb;
+};
+
+
+//-----------------------------------------------------------------------------
+class FEPlotRigidConnectorTranslationLCS : public FEPlotObjectData
+{
+public:
+    FEPlotRigidConnectorTranslationLCS(FEModel* fem, FERigidConnector* prb) : FEPlotObjectData(fem), m_rc(prb) {}
+
+    bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+    {
+        assert(m_rc);
+        ar << m_rc->RelativeTranslation(false);
+        return true;
+    }
+
+private:
+    FERigidConnector* m_rc;
+};
+
+class FEPlotRigidConnectorRotationLCS : public FEPlotObjectData
+{
+public:
+    FEPlotRigidConnectorRotationLCS(FEModel* fem, FERigidConnector* prb) : FEPlotObjectData(fem), m_rc(prb) {}
+
+    bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+    {
+        assert(m_rc);
+        ar << m_rc->RelativeRotation(false);
+        return true;
+    }
+
+private:
+    FERigidConnector* m_rc;
+};
+
+class FEPlotRigidConnectorTranslationGCS : public FEPlotObjectData
+{
+public:
+    FEPlotRigidConnectorTranslationGCS(FEModel* fem, FERigidConnector* prb) : FEPlotObjectData(fem), m_rc(prb) {}
+
+    bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+    {
+        assert(m_rc);
+        ar << m_rc->RelativeTranslation(true);
+        return true;
+    }
+
+private:
+    FERigidConnector* m_rc;
+};
+
+class FEPlotRigidConnectorRotationGCS : public FEPlotObjectData
+{
+public:
+    FEPlotRigidConnectorRotationGCS(FEModel* fem, FERigidConnector* prb) : FEPlotObjectData(fem), m_rc(prb) {}
+
+    bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+    {
+        assert(m_rc);
+        ar << m_rc->RelativeRotation(true);
+        return true;
+    }
+
+private:
+    FERigidConnector* m_rc;
+};
+
+class FEPlotRigidConnectorForce : public FEPlotObjectData
+{
+public:
+    FEPlotRigidConnectorForce(FEModel* fem, FERigidConnector* prb) : FEPlotObjectData(fem), m_rc(prb) {}
+
+    bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+    {
+        assert(m_rc);
+        ar << m_rc->m_F;
+        return true;
+    }
+
+private:
+    FERigidConnector* m_rc;
+};
+
+class FEPlotRigidConnectorMoment : public FEPlotObjectData
+{
+public:
+    FEPlotRigidConnectorMoment(FEModel* fem, FERigidConnector* prb) : FEPlotObjectData(fem), m_rc(prb) {}
+
+    bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar)
+    {
+        assert(m_rc);
+        ar << m_rc->m_M;
+        return true;
+    }
+
+private:
+    FERigidConnector* m_rc;
+};
+
+//-----------------------------------------------------------------------------
+void FEBioModel::UpdatePlotObjects()
+{
+	FEBioPlotFile* plt = dynamic_cast<FEBioPlotFile*>(m_plot);
+	if (plt == nullptr) return;
+
+	int nrb = RigidBodies();
+	if (nrb == 0) return;
+
+	FEModel& fem = *GetFEModel();
+
+	if (plt->PointObjects() == 0)
+	{
+		int nid = 1;
+		for (int i = 0; i < nrb; ++i)
+		{
+			FERigidBody* rb = GetRigidBody(i);
+			string name = rb->GetName();
+			if (name.empty())
+			{
+				stringstream ss;
+				ss << "Object" << nid;
+				name = ss.str();
+			}
+
+			FEBioPlotFile::PointObject* po = plt->AddPointObject(name);
+			po->m_tag = 1;
+			po->m_pos = rb->m_r0;
+			po->m_rot = quatd(0, vec3d(1,0,0));
+
+			po->AddData("Force" , PLT_VEC3F, new FEPlotRigidBodyForce(this, rb));
+			po->AddData("Moment", PLT_VEC3F, new FEPlotRigidBodyMoment(this, rb));
+
+			nid++;
+		}
+
+		// check rigid connectors
+		for (int i = 0; i < fem.NonlinearConstraints(); ++i)
+		{
+			FENLConstraint* pc = fem.NonlinearConstraint(i);
+
+			string name = pc->GetName();
+			if (name.empty())
+			{
+				stringstream ss;
+				ss << "Object" << nid;
+				name = ss.str();
+			}
+
+			FEGenericRigidJoint* rj = dynamic_cast<FEGenericRigidJoint*>(pc);
+			if (rj)
+			{
+				FEBioPlotFile::PointObject* po = plt->AddPointObject(name);
+				po->m_tag = 2;
+				po->m_pos = rj->InitialPosition();
+				po->m_rot = quatd(0, vec3d(1, 0, 0));
+                po->AddData("Relative translation (LCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationLCS(this, rj));
+                po->AddData("Relative rotation (LCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationLCS(this, rj));
+                po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rj));
+                po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rj));
+                po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rj));
+                po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rj));
+			}
+
+            FERigidSphericalJoint* rsj = dynamic_cast<FERigidSphericalJoint*>(pc);
+            if (rsj)
+            {
+                FEBioPlotFile::PointObject* po = plt->AddPointObject(name);
+                po->m_tag = 3;
+                po->m_pos = rsj->InitialPosition();
+                po->m_rot = quatd(0, vec3d(1, 0, 0));
+                po->AddData("Relative translation (LCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationLCS(this, rsj));
+                po->AddData("Relative rotation (LCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationLCS(this, rsj));
+                po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rsj));
+                po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rsj));
+                po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rsj));
+                po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rsj));
+            }
+
+			FERigidPrismaticJoint* rpj = dynamic_cast<FERigidPrismaticJoint*>(pc);
+			if (rpj)
+			{
+				FEBioPlotFile::PointObject* po = plt->AddPointObject(name);
+				po->m_tag = 4;
+				po->m_pos = rpj->InitialPosition();
+				po->m_rot = rpj->Orientation();
+                po->AddData("Relative translation (LCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationLCS(this, rpj));
+                po->AddData("Relative rotation (LCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationLCS(this, rpj));
+                po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rpj));
+                po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rpj));
+                po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rpj));
+                po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rpj));
+			}
+
+			FERigidRevoluteJoint* rrj = dynamic_cast<FERigidRevoluteJoint*>(pc);
+			if (rrj)
+			{
+				FEBioPlotFile::PointObject* po = plt->AddPointObject(name);
+				po->m_tag = 5;
+				po->m_pos = rrj->InitialPosition();
+				po->m_rot = rrj->Orientation();
+                po->AddData("Relative translation (LCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationLCS(this, rrj));
+                po->AddData("Relative rotation (LCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationLCS(this, rrj));
+                po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rrj));
+                po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rrj));
+                po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rrj));
+                po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rrj));
+			}
+
+			FERigidCylindricalJoint* rcj = dynamic_cast<FERigidCylindricalJoint*>(pc);
+			if (rcj)
+			{
+				FEBioPlotFile::PointObject* po = plt->AddPointObject(name);
+				po->m_tag = 6;
+				po->m_pos = rcj->InitialPosition();
+				po->m_rot = rcj->Orientation();
+                po->AddData("Relative translation (LCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationLCS(this, rcj));
+                po->AddData("Relative rotation (LCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationLCS(this, rcj));
+                po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rcj));
+                po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rcj));
+                po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rcj));
+                po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rcj));
+			}
+            
+            FERigidPlanarJoint* rlj = dynamic_cast<FERigidPlanarJoint*>(pc);
+            if (rlj)
+            {
+                FEBioPlotFile::PointObject* po = plt->AddPointObject(name);
+                po->m_tag = 7;
+                po->m_pos = rlj->InitialPosition();
+                po->m_rot = rlj->Orientation();
+                po->AddData("Relative translation (LCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationLCS(this, rlj));
+                po->AddData("Relative rotation (LCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationLCS(this, rlj));
+                po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rlj));
+                po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rlj));
+                po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rlj));
+                po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rlj));
+            }
+			nid++;
+		}
+	}
+	else
+	{
+		for (int i = 0; i < nrb; ++i)
+		{
+			FERigidBody* rb = GetRigidBody(i);
+			FEBioPlotFile::PointObject* po = plt->GetPointObject(i);
+			po->m_pos = rb->m_rt;
+			po->m_rot = rb->GetRotation();
+		}
+
+		// check rigid connectors
+		int n = nrb;
+		for (int i = 0; i < fem.NonlinearConstraints(); ++i)
+		{
+			FENLConstraint* pc = fem.NonlinearConstraint(i);
+
+			FEGenericRigidJoint* rj = dynamic_cast<FEGenericRigidJoint*>(pc);
+			if (rj)
+			{
+				FEBioPlotFile::PointObject* po = plt->GetPointObject(n++);
+				po->m_pos = rj->Position();
+				po->m_rot = quatd(0, vec3d(1, 0, 0));
+			}
+
+            FERigidSphericalJoint* rsj = dynamic_cast<FERigidSphericalJoint*>(pc);
+            if (rsj)
+            {
+                FEBioPlotFile::PointObject* po = plt->GetPointObject(n++);
+                po->m_pos = rsj->Position();
+                po->m_rot = quatd(0, vec3d(1, 0, 0));
+            }
+
+			FERigidPrismaticJoint* rpj = dynamic_cast<FERigidPrismaticJoint*>(pc);
+			if (rpj)
+			{
+				FEBioPlotFile::PointObject* po = plt->GetPointObject(n++);
+				po->m_pos = rpj->Position();
+				po->m_rot = rpj->Orientation();
+			}
+
+			FERigidRevoluteJoint* rrj = dynamic_cast<FERigidRevoluteJoint*>(pc);
+			if (rrj)
+			{
+				FEBioPlotFile::PointObject* po = plt->GetPointObject(n++);
+				po->m_pos = rrj->Position();
+				po->m_rot = rrj->Orientation();
+			}
+
+			FERigidCylindricalJoint* rcj = dynamic_cast<FERigidCylindricalJoint*>(pc);
+			if (rcj)
+			{
+				FEBioPlotFile::PointObject* po = plt->GetPointObject(n++);
+				po->m_pos = rcj->Position();
+				po->m_rot = rcj->Orientation();
+			}
+            
+            FERigidPlanarJoint* rlj = dynamic_cast<FERigidPlanarJoint*>(pc);
+            if (rlj)
+            {
+                FEBioPlotFile::PointObject* po = plt->GetPointObject(n++);
+                po->m_pos = rlj->Position();
+                po->m_rot = rlj->Orientation();
+            }
+		}
+	}
+
+	if (plt->LineObjects() == 0)
+	{
+		int nid = 1;
+
+		// check rigid connectors
+		for (int i = 0; i < fem.NonlinearConstraints(); ++i)
+		{
+			FERigidConnector* prc = dynamic_cast<FERigidConnector*>(fem.NonlinearConstraint(i));
+			if (prc)
+			{
+				string name = prc->GetName();
+				if (name.empty())
+				{
+					stringstream ss;
+					ss << "Object" << nid;
+					name = ss.str();
+				}
+
+				vec3d ra = GetRigidBody(prc->m_nRBa)->m_r0;
+				vec3d rb = GetRigidBody(prc->m_nRBb)->m_r0;
+
+				FERigidSpring* rs = dynamic_cast<FERigidSpring*>(prc);
+				if (rs)
+				{
+					FEBioPlotFile::LineObject* po = plt->AddLineObject(name);
+					po->m_tag = 1;
+					po->m_rot = quatd(0, vec3d(1, 0, 0));
+					po->m_r1 = rs->m_at;
+					po->m_r2 = rs->m_bt;
+                    po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rs));
+                    po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rs));
+                    po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rs));
+                    po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rs));
+				}
+
+				FERigidDamper* rd = dynamic_cast<FERigidDamper*>(prc);
+				if (rd)
+				{
+					FEBioPlotFile::LineObject* po = plt->AddLineObject(name);
+					po->m_tag = 2;
+                    po->m_rot = quatd(0, vec3d(1, 0, 0));
+					po->m_r1 = rd->m_at;
+					po->m_r2 = rd->m_bt;
+                    po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rd));
+                    po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rd));
+                    po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rd));
+                    po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rd));
+				}
+                
+                FERigidAngularDamper* rad = dynamic_cast<FERigidAngularDamper*>(prc);
+                if (rad)
+                {
+                    FEBioPlotFile::LineObject* po = plt->AddLineObject(name);
+                    po->m_tag = 3;
+                    po->m_r1 = ra;
+                    po->m_r2 = rb;
+                    po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rad));
+                    po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rad));
+                    po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rad));
+                    po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rad));
+                }
+                
+                FERigidContractileForce* rcf = dynamic_cast<FERigidContractileForce*>(prc);
+                if (rcf)
+                {
+                    FEBioPlotFile::LineObject* po = plt->AddLineObject(name);
+                    po->m_tag = 4;
+                    po->m_rot = quatd(0, vec3d(1, 0, 0));
+                    po->m_r1 = rcf->m_at;
+                    po->m_r2 = rcf->m_bt;
+                    po->AddData("Relative translation (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorTranslationGCS(this, rcf));
+                    po->AddData("Relative rotation (GCS)", PLT_VEC3F, new FEPlotRigidConnectorRotationGCS(this, rcf));
+                    po->AddData("Reaction force (GCS)" , PLT_VEC3F, new FEPlotRigidConnectorForce(this, rcf));
+                    po->AddData("Reaction moment (GCS)", PLT_VEC3F, new FEPlotRigidConnectorMoment(this, rcf));
+                }
+			}
+		}
+	}
+	else
+	{
+		// check rigid connectors
+		int n = 0;
+		for (int i = 0; i < fem.NonlinearConstraints(); ++i)
+		{
+			FERigidConnector* prc = dynamic_cast<FERigidConnector*>(fem.NonlinearConstraint(i));
+			if (prc)
+			{
+				vec3d ra = GetRigidBody(prc->m_nRBa)->m_rt;
+				vec3d rb = GetRigidBody(prc->m_nRBb)->m_rt;
+
+				FERigidSpring* rs = dynamic_cast<FERigidSpring*>(prc);
+				if (rs)
+				{
+					FEBioPlotFile::LineObject* po = plt->GetLineObject(n++);
+					po->m_r1 = rs->m_at;
+					po->m_r2 = rs->m_bt;
+				}
+
+				FERigidDamper* rd = dynamic_cast<FERigidDamper*>(prc);
+				if (rd)
+				{
+					FEBioPlotFile::LineObject* po = plt->GetLineObject(n++);
+					po->m_r1 = ra;
+					po->m_r2 = rb;
+				}
+                
+                FERigidAngularDamper* rad = dynamic_cast<FERigidAngularDamper*>(prc);
+                if (rad)
+                {
+                    FEBioPlotFile::LineObject* po = plt->GetLineObject(n++);
+                    po->m_r1 = ra;
+                    po->m_r2 = rb;
+                }
+                
+                FERigidContractileForce* rcf = dynamic_cast<FERigidContractileForce*>(prc);
+                if (rcf)
+                {
+                    FEBioPlotFile::LineObject* po = plt->GetLineObject(n++);
+                    po->m_r1 = rcf->m_at;
+                    po->m_r2 = rcf->m_bt;
+                }
+			}
+		}
 	}
 }
 
 //=============================================================================
 //    R E S T A R T
 //=============================================================================
+
+class restart_exception : public std::runtime_error
+{
+public:
+	restart_exception() : std::runtime_error("restart error") {}
+	restart_exception(const char* msg) : std::runtime_error(msg) {}
+};
 
 //-----------------------------------------------------------------------------
 //!  Reads or writes the current state to/from a binary file
@@ -560,7 +1211,7 @@ void FEBioModel::Serialize(DumpStream& ar)
 	if (ar.IsShallow())
 	{
 		// serialize model data
-		FEModel::Serialize(ar);
+		FEMechModel::Serialize(ar);
 	}
 	else
 	{
@@ -576,11 +1227,11 @@ void FEBioModel::Serialize(DumpStream& ar)
 			ar >> nversion;
 
 			// make sure it is the right version
-			if (nversion != RSTRTVERSION) return;
+			if (nversion != RSTRTVERSION) throw restart_exception("incorrect version number");
 		}
 
 		// serialize model data
-		FEModel::Serialize(ar);
+		FEMechModel::Serialize(ar);
 
 		// serialize data store
 		SerializeDataStore(ar);
@@ -597,11 +1248,14 @@ void FEBioModel::SerializeIOData(DumpStream &ar)
 	if (ar.IsSaving())
 	{
 		// file names
-		ar << m_szfile << m_szplot << m_szlog << m_szdump;
+		ar << m_sfile << m_splot << m_slog << m_sdump;
 
 		// plot file
 		int npltfmt = 2;
 		ar << npltfmt;
+
+		ar << m_pltCompression;
+		ar << m_pltData;
 
 		// data records
 		SerializeDataStore(ar);
@@ -609,26 +1263,67 @@ void FEBioModel::SerializeIOData(DumpStream &ar)
 	else
 	{
 		// file names
-		ar >> m_szfile >> m_szplot >> m_szlog >> m_szdump;
+		string splot, slog, sdmp;
+		ar >> m_sfile >> splot >> slog >> sdmp;
 
 		// don't forget to call store the input file name so
 		// that m_szfile_title gets initialized
-		SetInputFilename(m_szfile);
+		SetInputFilename(m_sfile);
+
+		// If we append, use the original names
+		// otherwise we use the names as was initialized by the command line parser
+		if (m_pltAppendOnRestart)
+		{
+			m_splot = splot;
+			m_slog = slog;
+			m_sdump = sdmp;
+		}
 
 		// get the plot file format (should be 2)
 		int npltfmt = 0;
 		ar >> npltfmt;
 		assert(npltfmt == 2);
 
+		ar >> m_pltCompression;
+		ar >> m_pltData;
+
 		// remove the plot file (if any)
 		if (m_plot) { delete m_plot; m_plot = 0; }
 
-		// create the plot file and open it for appending
-		m_plot = new FEBioPlotFile(*this);
-		if (m_plot->Append(*this, m_szplot) == false)
+		// create the plot file
+		FEBioPlotFile* pplt = new FEBioPlotFile(*this);
+		m_plot = pplt;
+
+		if (m_pltAppendOnRestart)
 		{
-			printf("FATAL ERROR: Failed reopening plot database %s\n", m_szplot);
-			throw "FATAL ERROR";
+			// Open for appending
+			if (m_plot->Append(*this, m_splot.c_str()) == false)
+			{
+				printf("FATAL ERROR: Failed reopening plot database %s\n", m_splot.c_str());
+				throw "FATAL ERROR";
+			}
+		}
+		else
+		{
+			// create a new plot file
+			pplt->SetCompression(m_pltCompression);
+
+			// set the software string
+			const char* szver = febio::getVersionString();
+			char szbuf[256] = { 0 };
+			sprintf(szbuf, "FEBio %s", szver);
+			pplt->SetSoftwareString(szbuf);
+
+			// add plot variables
+			for (FEPlotVariable& vi : m_pltData)
+			{
+				// add the plot output variable
+				if (pplt->AddVariable(vi.m_var.c_str(), vi.m_item, vi.m_domName.c_str()) == false)
+				{
+					feLog("FATAL ERROR: Output variable \"%s\" is not defined\n", vi.m_var.c_str());
+					throw "FATAL ERROR";
+				}
+			}
 		}
 
 		// data records
@@ -639,13 +1334,14 @@ void FEBioModel::SerializeIOData(DumpStream &ar)
 //-----------------------------------------------------------------------------
 void FEBioModel::SerializeDataStore(DumpStream& ar)
 {
+	DataStore& dataStore = GetDataStore();
 	if (ar.IsSaving())
 	{
-		int N = m_Data.Size();
+		int N = dataStore.Size();
 		ar << N;
 		for (int i=0; i<N; ++i)
 		{
-			DataRecord* pd = m_Data.GetDataRecord(i);
+			DataRecord* pd = dataStore.GetDataRecord(i);
 
 			int ntype = pd->m_type;
 			ar << ntype;
@@ -655,7 +1351,7 @@ void FEBioModel::SerializeDataStore(DumpStream& ar)
 	else
 	{
 		int N;
-		m_Data.Clear();
+		dataStore.Clear();
 		ar >> N;
 		for (int i=0; i<N; ++i)
 		{
@@ -666,13 +1362,14 @@ void FEBioModel::SerializeDataStore(DumpStream& ar)
 			switch(ntype)
 			{
 			case FE_DATA_NODE: pd = new NodeDataRecord        (this, 0); break;
+			case FE_DATA_FACE: pd = new FaceDataRecord        (this, 0); break;
 			case FE_DATA_ELEM: pd = new ElementDataRecord     (this, 0); break;
 			case FE_DATA_RB  : pd = new ObjectDataRecord      (this, 0); break;
 			case FE_DATA_NLC : pd = new NLConstraintDataRecord(this, 0); break;
 			}
 			assert(pd);
 			pd->Serialize(ar);
-			m_Data.AddRecord(pd);
+			dataStore.AddRecord(pd);
 		}
 	}
 }
@@ -688,7 +1385,7 @@ void FEBioModel::SerializeDataStore(DumpStream& ar)
 
 bool FEBioModel::Init()
 {
-	TimerTracker t(m_InitTime);
+	TimerTracker t(&m_InitTime);
 
 	// Open the logfile
 	if (m_logLevel != 0)
@@ -696,22 +1393,46 @@ bool FEBioModel::Init()
 		if (InitLogFile() == false) return false;
 	}
 
+	FEBioPlotFile* pplt = nullptr;
+	m_lastUpdate = -1;
+
 	// open plot database file
 	FEAnalysis* step = GetCurrentStep();
 	if (step->GetPlotLevel() != FE_PLOT_NEVER)
 	{
 		if (m_plot == 0) 
 		{
-			m_plot = new FEBioPlotFile(*this);
+			pplt = new FEBioPlotFile(*this);
+			m_plot = pplt;
+
+			// set compression
+			pplt->SetCompression(m_pltCompression);
+
+			// set the software string
+			const char* szver = febio::getVersionString();
+			char szbuf[256] = { 0 };
+			sprintf(szbuf, "FEBio %s", szver);
+			pplt->SetSoftwareString(szbuf);
+
+			// add plot variables
+			for (FEPlotVariable& vi : m_pltData)
+			{
+				// add the plot output variable
+				if (pplt->AddVariable(vi.m_var.c_str(), vi.m_item, vi.m_domName.c_str()) == false)
+				{
+					feLog("FATAL ERROR: Output variable \"%s\" is not defined\n", vi.m_var.c_str());
+					return false;
+				}
+			}
 		}
 
 		// see if a valid plot file name is defined.
-		const char* szplt = GetPlotFileName();
-		if (szplt[0] == 0)
+		const std::string& splt = GetPlotFileName();
+		if (splt.empty())
 		{
 			// if not, we take the input file name and set the extension to .xplt
 			char sz[1024] = {0};
-			strcpy(sz, GetInputFileName());
+			strcpy(sz, GetInputFileName().c_str());
 			char *ch = strrchr(sz, '.');
 			if (ch) *ch = 0;
 			strcat(sz, ".xplt");
@@ -720,21 +1441,19 @@ bool FEBioModel::Init()
 	}
 
 	// initialize model data
-	if (FEModel::Init() == false) 
+	if (FEMechModel::Init() == false) 
 	{
-		felog.printf("\nFATAL ERROR: Model initialization failed\n");
-		const char* szerr = fecore_get_error_string();
-		if (szerr) felog.printf("REASON: %s\n\n", szerr);
+		feLogError("Model initialization failed");
 		return false;
 	}
 
 	// see if a valid dump file name is defined.
-	const char* szdmp = this->GetDumpFileName();
-	if (szdmp[0] == 0)
+	const std::string& sdmp = GetDumpFileName();
+	if (sdmp.empty() == 0)
 	{
 		// if not, we take the input file name and set the extension to .dmp
 		char sz[1024] = {0};
-		strcpy(sz, GetInputFileName());
+		strcpy(sz, GetInputFileName().c_str());
 		char *ch = strrchr(sz, '.');
 		if (ch) *ch = 0;
 		strcat(sz, ".dmp");
@@ -742,9 +1461,10 @@ bool FEBioModel::Init()
 	}
 
 	// initialize data records
-	for (int i=0; i<m_Data.Size(); ++i)
+	DataStore& dataStore = GetDataStore();
+	for (int i=0; i<dataStore.Size(); ++i)
 	{
-		if (m_Data.GetDataRecord(i)->Initialize() == false) return false;
+		if (dataStore.GetDataRecord(i)->Initialize() == false) return false;
 	}
 
 	// echo fem data to the logfile
@@ -753,19 +1473,19 @@ bool FEBioModel::Init()
 	// for instance, in the parameter optimization module
 	if (m_becho) 
 	{
-		Logfile::MODE old_mode = felog.GetMode();
+		Logfile::MODE old_mode = m_log.GetMode();
 
 		// don't output when no output is requested
 		if (old_mode != Logfile::LOG_NEVER)
 		{
-			// we only output this data to the felog file and not the screen
-			felog.SetMode(Logfile::LOG_FILE);
+			// we only output this data to the log file and not the screen
+			m_log.SetMode(Logfile::LOG_FILE);
 
 			// write output
-			echo_input(*this);
+			echo_input();
 
-			// reset felog mode
-			felog.SetMode(old_mode);
+			// reset log mode
+			m_log.SetMode(old_mode);
 		}
 	}
 
@@ -778,24 +1498,27 @@ bool FEBioModel::Init()
 bool FEBioModel::InitLogFile()
 {
 	// Only do this if the log file is not valid
-	if (!felog.is_valid()) 
+	if (!m_log.is_valid())
 	{
 		// see if a valid log file name is defined.
-		const char* szlog = GetLogfileName();
-		if (szlog[0] == 0)
+		const std::string& slog = GetLogfileName();
+		if (slog.empty())
 		{
 			// if not, we take the input file name and set the extension to .log
 			char sz[1024] = {0};
-			strcpy(sz, GetInputFileName());
+			strcpy(sz, GetInputFileName().c_str());
 			char *ch = strrchr(sz, '.');
 			if (ch) *ch = 0;
 			strcat(sz, ".log");
 			SetLogFilename(sz);
 		}
-		
-		if (felog.open(m_szlog) == false)
+
+		// create a log stream
+		LogFileStream* fp = new LogFileStream;
+		m_log.SetFileStream(fp);
+		if (fp->open(m_slog.c_str()) == false)
 		{
-			felog.printbox("FATAL ERROR", "Failed creating log file");
+			feLogError("Failed creating log file");
 			return false;
 		}
 
@@ -803,17 +1526,14 @@ bool FEBioModel::InitLogFile()
 		FEAnalysis* step = GetCurrentStep();
 		if (step == 0)
 		{
-			felog.printf("FATAL ERROR: No step defined\n\n");
+			feLogError("No step defined.");
 			return false;
 		}
 
-		// if we don't want to output anything we only output to the logfile
-		if (step->GetPrintLevel() == FE_PRINT_NEVER) felog.SetMode(Logfile::LOG_FILE);
-
 		// print welcome message to file
-		Logfile::MODE m = felog.SetMode(Logfile::LOG_FILE);
-		febio::Hello();
-		felog.SetMode(m);
+		Logfile::MODE m = m_log.SetMode(Logfile::LOG_FILE);
+		febio::Hello(*fp);
+		m_log.SetMode(m);
 	}
 
 	return true;
@@ -826,7 +1546,7 @@ bool FEBioModel::InitLogFile()
 bool FEBioModel::Reset()
 {
 	// Reset model data
-	FEModel::Reset();
+	FEMechModel::Reset();
 
 	// re-initialize the log file
 	if (m_logLevel != 0)
@@ -838,17 +1558,27 @@ bool FEBioModel::Reset()
 	FEAnalysis* step =  GetCurrentStep();
 	if (step->GetPlotLevel() != FE_PLOT_NEVER)
 	{
+		int hint = step->GetPlotHint();
 		if (m_plot == 0) 
 		{
 			m_plot = new FEBioPlotFile(*this);
+			hint = 0;
 		}
 
-		if (m_plot->Open(*this, m_szplot) == false)
+		if (hint != FE_PLOT_APPEND)
 		{
-			felog.printf("ERROR : Failed creating PLOT database\n");
-			return false;
+			if (m_plot->Open(*this, m_splot.c_str()) == false)
+			{
+				feLogError("Failed creating PLOT database.");
+				return false;
+			}
 		}
 	}
+
+	m_ntimeSteps = 0;
+	m_ntotalIters = 0;
+	m_ntotalRHS = 0;
+	m_ntotalReforms = 0;
 
 	// do the callback
 	DoCallback(CB_INIT);
@@ -872,21 +1602,31 @@ bool FEBioModel::Solve()
 	m_SolveTime.start();
 
 	// solve the FE model
-	bool bconv = FEModel::Solve();
+	bool bconv = FEMechModel::Solve();
 
 	// stop total time tracker
 	m_SolveTime.stop();
 
+	// get peak memory usage
+#ifdef WIN32
+	size_t memsize = GetPeakMemory();
+	if (memsize != 0)
+	{
+		double mb = (double)memsize / 1048576.0;
+		feLog(" Peak memory  : %.1lf MB\n", mb);
+	}
+#endif
+
 	// print the elapsed time
 	char sztime[64];
 	m_SolveTime.time_str(sztime);
-	felog.printf("\n Elapsed time : %s\n\n", sztime);
+	feLog("\n Elapsed time : %s\n\n", sztime);
 
 	// print additional stats to the log file only
-	if (felog.GetMode() & Logfile::LOG_FILE)
+	if (m_log.GetMode() & Logfile::LOG_FILE)
 	{
 		// print more detailed timing info to the log file
-		Logfile::MODE old_mode = felog.SetMode(Logfile::LOG_FILE);
+		Logfile::MODE old_mode = m_log.SetMode(Logfile::LOG_FILE);
 
 		// sum up all the times spend in the linear solvers
 		double total_time = 0.0;
@@ -907,47 +1647,48 @@ bool FEBioModel::Solve()
 			FESolver* psolve = pstep->GetFESolver();
 			if (psolve) 
 			{
-				total_linsol += FECoreKernel::GetInstance().FindTimer("solve")->GetTime();
-				total_reform += FECoreKernel::GetInstance().FindTimer("reform")->GetTime();
-				total_stiff  += FECoreKernel::GetInstance().FindTimer("stiffness")->GetTime();
-				total_rhs    += FECoreKernel::GetInstance().FindTimer("residual")->GetTime();
-				total_update += FECoreKernel::GetInstance().FindTimer("update")->GetTime();
-				total_qn     += FECoreKernel::GetInstance().FindTimer("qn_update")->GetTime();
+				total_linsol += GetTimer(TimerID::Timer_Solve    )->GetTime();
+				total_reform += GetTimer(TimerID::Timer_Reform   )->GetTime();
+				total_stiff  += GetTimer(TimerID::Timer_Stiffness)->GetTime();
+				total_rhs    += GetTimer(TimerID::Timer_Residual )->GetTime();
+				total_update += GetTimer(TimerID::Timer_Update   )->GetTime();
+				total_qn     += GetTimer(TimerID::Timer_QNUpdate )->GetTime();
 			}
 		}
 
+		feLog(" T I M I N G   I N F O R M A T I O N\n\n");
+		Timer::time_str(input_time  , sztime); feLog("\tInput time ...................... : %s (%lg sec)\n\n", sztime, input_time  );
+		Timer::time_str(init_time   , sztime); feLog("\tInitialization time ............. : %s (%lg sec)\n\n", sztime, init_time   );
+		Timer::time_str(solve_time  , sztime); feLog("\tSolve time ...................... : %s (%lg sec)\n\n", sztime, solve_time  );
+		Timer::time_str(io_time     , sztime); feLog("\t   IO-time (plot, dmp, data) .... : %s (%lg sec)\n\n", sztime, io_time     );
+		Timer::time_str(total_reform, sztime); feLog("\t   reforming stiffness .......... : %s (%lg sec)\n\n", sztime, total_reform);
+		Timer::time_str(total_stiff , sztime); feLog("\t   evaluating stiffness ......... : %s (%lg sec)\n\n", sztime, total_stiff );
+		Timer::time_str(total_rhs   , sztime); feLog("\t   evaluating residual .......... : %s (%lg sec)\n\n", sztime, total_rhs   );
+		Timer::time_str(total_update, sztime); feLog("\t   model update ................. : %s (%lg sec)\n\n", sztime, total_update);
+		Timer::time_str(total_qn    , sztime); feLog("\t   QN updates ................... : %s (%lg sec)\n\n", sztime, total_qn);
+		Timer::time_str(total_linsol, sztime); feLog("\t   time in linear solver ........ : %s (%lg sec)\n\n", sztime, total_linsol);
+		Timer::time_str(total_time  , sztime); feLog("\tTotal elapsed time .............. : %s (%lg sec)\n\n", sztime, total_time  );
 
-		felog.printf(" T I M I N G   I N F O R M A T I O N\n\n");
-		Timer::time_str(input_time  , sztime); felog.printf("\tInput time ...................... : %s (%lg sec)\n\n", sztime, input_time  );
-		Timer::time_str(init_time   , sztime); felog.printf("\tInitialization time ............. : %s (%lg sec)\n\n", sztime, init_time   );
-		Timer::time_str(solve_time  , sztime); felog.printf("\tSolve time ...................... : %s (%lg sec)\n\n", sztime, solve_time  );
-		Timer::time_str(io_time     , sztime); felog.printf("\t   IO-time (plot, dmp, data) .... : %s (%lg sec)\n\n", sztime, io_time     );
-		Timer::time_str(total_reform, sztime); felog.printf("\t   reforming stiffness .......... : %s (%lg sec)\n\n", sztime, total_reform);
-		Timer::time_str(total_stiff , sztime); felog.printf("\t   evaluating stiffness ......... : %s (%lg sec)\n\n", sztime, total_stiff );
-		Timer::time_str(total_rhs   , sztime); felog.printf("\t   evaluating residual .......... : %s (%lg sec)\n\n", sztime, total_rhs   );
-		Timer::time_str(total_update, sztime); felog.printf("\t   model update ................. : %s (%lg sec)\n\n", sztime, total_update);
-		Timer::time_str(total_qn    , sztime); felog.printf("\t   QN updates ................... : %s (%lg sec)\n\n", sztime, total_qn);
-		Timer::time_str(total_linsol, sztime); felog.printf("\t   time in linear solver ........ : %s (%lg sec)\n\n", sztime, total_linsol);
-		Timer::time_str(total_time  , sztime); felog.printf("\tTotal elapsed time .............. : %s (%lg sec)\n\n", sztime, total_time  );
 
-
-		felog.SetMode(old_mode);
+		m_log.SetMode(old_mode);
 
 		if (bconv)
 		{
-			felog.printf("\n N O R M A L   T E R M I N A T I O N\n\n");
+			feLog("\n N O R M A L   T E R M I N A T I O N\n\n");
 		}
 		else
 		{
-			felog.printf("\n E R R O R   T E R M I N A T I O N\n\n");
+			feLog("\n E R R O R   T E R M I N A T I O N\n\n");
 		}
 
 		// flush the log file
-		felog.flush();
+		m_log.flush();
 	}
 
 	// close the plot file
-	if (m_plot) m_plot->Close();
+	int hint = GetStep(Steps() - 1)->GetPlotHint();
+	if (hint != FE_PLOT_APPEND)
+		if (m_plot) m_plot->Close();
 
 	// We're done !
 	return bconv;

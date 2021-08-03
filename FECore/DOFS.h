@@ -1,5 +1,34 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include <vector>
+#include <string>
 #include "fecore_api.h"
 
 class DumpStream;
@@ -7,13 +36,8 @@ class DumpStream;
 //-----------------------------------------------------------------------------
 // Degree of freedom types
 #define DOF_OPEN		 0		// the dof is open and will be given an equation number
-#define DOF_FIXED		-1		// the dof is fixed and will not be given an equation number
+#define DOF_FIXED		 1		// the dof is fixed and will not be given an equation number
 #define DOF_PRESCRIBED	 2		// the dof is prescribed. It will be given a negative equation number (equation = - index - 2)
-
-//-----------------------------------------------------------------------------
-// status of a dof
-#define DOF_INACTIVE	-1		// the dof is inactive and should not be assigned an equation (regardless of its type)
-#define DOF_ACTIVE		 0		// the dof is active and an equation can be assigned (depending on its type)
 
 //-----------------------------------------------------------------------------
 // Types of variables
@@ -41,24 +65,34 @@ class FECORE_API DOFS
 
 		void SetName(const char* szdof);
 
+		void Serialize(DumpStream& ar);
+
 	public:
 		char	sz[MAX_DOF_NAME];	//!< symbol of variable
 		int		ndof;				//!< index of degree of freedom
+		int		nvar;				//!< variable associated with this dof
 	};
 
+public:
 	// A Variable is a logical grouping of degrees of freedoms.
 	// (e.g. a displacement variable in 3D has 3 dofs.)
+	// The order variable is the interpolation order that should be
+	// assumed for this variable. By default, it is set to -1, which 
+	// should be interpreted as the interpolation order implied by the 
+	// nodes of the element type.
 	class Var
 	{
-		enum { MAX_VAR_NAME = 64 };
 	public:
 		Var();
 		Var(const Var& v);
 		void operator = (const Var& v);
 
+		void Serialize(DumpStream& ar);
+
 	public:
-		int		ntype;					// type of variable
-		char	szname[MAX_VAR_NAME];	// variable name
+		int		m_ntype;				// type of variable
+		int		m_order;				// interpolation order
+		std::string				m_name;	// variable name
 		std::vector<DOF_ITEM>	m_dof;	// list of dofs for this variable
 	};
 
@@ -102,6 +136,9 @@ public:
 	//! return a list of dofs for a variable
 	void GetDOFList(const char* varName, std::vector<int>& dofs);
 
+	//! return a list of dofs for a variable
+	void GetDOFList(int nvar, std::vector<int>& dofs);
+
 	//! return a list of dofs from comma seperated list dof symbols
 	bool ParseDOFString(const char* sz, std::vector<int>& dofs);
 
@@ -128,7 +165,7 @@ public:
 	int GetVariableType(int nvar);
 
 	//! return the total number of degrees of freedom
-	int GetTotalDOFS() const { return m_maxdofs; }
+	int GetTotalDOFS() const;
 
 	//! Set the name of a DOF
 	void SetDOFName(const char* szvar, int n, const char* szname);
@@ -136,9 +173,22 @@ public:
 
 	//! Get a dof name
 	const char* GetDOFName(int nvar, int n);
+	const char* GetDOFName(int ndof);
 
 	//! serialization
 	void Serialize(DumpStream& ar);
+
+	//! set the interpolation order for a variable
+	void SetVariableInterpolationOrder(int nvar, int order);
+
+	// return the interpolation order of a variable
+	int GetVariableInterpolationOrder(int nvar);
+
+	// Find the variable from a dof
+	int FindVariableFromDOF(int ndof);
+
+	// return the interpolation order for a degree of freedom
+	int GetDOFInterpolationOrder(int ndof);
 
 private:
 	void Update();

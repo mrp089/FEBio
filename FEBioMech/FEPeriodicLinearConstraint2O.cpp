@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEPeriodicLinearConstraint2O.h"
 #include <FECore/FEModel.h>
@@ -12,14 +40,14 @@ FEPeriodicLinearConstraint2O::NodeSetSet::NodeSetSet()
 
 FEPeriodicLinearConstraint2O::NodeSetSet::NodeSetSet(const FEPeriodicLinearConstraint2O::NodeSetSet& nss)
 {
-	master = nss.master;
-	slave = nss.slave;
+	secondary = nss.secondary;
+	primary = nss.primary;
 }
 
 void FEPeriodicLinearConstraint2O::NodeSetSet::operator = (const FEPeriodicLinearConstraint2O::NodeSetSet& nss)
 {
-	master = nss.master;
-	slave = nss.slave;
+	secondary = nss.secondary;
+	primary = nss.primary;
 }
 
 
@@ -31,19 +59,19 @@ FEPeriodicLinearConstraint2O::~FEPeriodicLinearConstraint2O()
 {
 }
 
-void FEPeriodicLinearConstraint2O::AddNodeSetPair(const FENodeSet& ms, const FENodeSet& ss, bool push_back)
+void FEPeriodicLinearConstraint2O::AddNodeSetPair(const FENodeList& ms, const FENodeList& ss, bool push_back)
 {
 	NodeSetSet sp;
-	sp.master = ms;
-	sp.slave = ss;
+	sp.secondary = ms;
+	sp.primary = ss;
 	if (push_back) m_set.push_back(sp); else m_set.insert(m_set.begin(), sp);
 }
 
-int FEPeriodicLinearConstraint2O::closestNode(FEMesh& mesh, const FENodeSet& set, const vec3d& r)
+int FEPeriodicLinearConstraint2O::closestNode(FEMesh& mesh, const FENodeList& set, const vec3d& r)
 {
 	int nmin = -1;
 	double Dmin = 0.0;
-	for (int i = 0; i<(int)set.size(); ++i)
+	for (int i = 0; i<(int)set.Size(); ++i)
 	{
 		vec3d& ri = mesh.Node(set[i]).m_r0;
 		double D = (r - ri)*(r - ri);
@@ -56,7 +84,7 @@ int FEPeriodicLinearConstraint2O::closestNode(FEMesh& mesh, const FENodeSet& set
 	return nmin;
 }
 
-void FEPeriodicLinearConstraint2O::addLinearConstraint(FEModel& fem, int master, int slave)
+void FEPeriodicLinearConstraint2O::addLinearConstraint(FEModel& fem, int parent, int child)
 {
 	// get the linear constraint manager
 	FELinearConstraintManager& LCM = fem.GetLinearConstraintManager();
@@ -65,9 +93,9 @@ void FEPeriodicLinearConstraint2O::addLinearConstraint(FEModel& fem, int master,
 	for (int j = 0; j<3; ++j)
 	{
 		FELinearConstraint lc(&fem);
-		lc.SetMasterDOF(j, master);
+		lc.SetParentDof(j, parent);
 
-		lc.AddSlaveDof(j, slave, 1.0);
+		lc.AddChildDof(j, child, 1.0);
 
 		LCM.AddLinearConstraint(lc);
 	}
@@ -90,18 +118,18 @@ bool FEPeriodicLinearConstraint2O::GenerateConstraints(FEModel* fem)
 
 	for (size_t i = 0; i<m_set.size(); ++i)
 	{
-		FENodeSet& ms = m_set[i].master;
-		FENodeSet& ss = m_set[i].slave;
+		FENodeList& ms = m_set[i].secondary;
+		FENodeList& ss = m_set[i].primary;
 
-		for (int j = 0; j<(int)ms.size(); ++j) tag[ms[j]]++;
-		for (int j = 0; j<(int)ss.size(); ++j) tag[ss[j]]++;
+		for (int j = 0; j<(int)ms.Size(); ++j) tag[ms[j]]++;
+		for (int j = 0; j<(int)ss.Size(); ++j) tag[ss[j]]++;
 	}
 
-	// flip signs on slave
+	// flip signs on primary
 	for (size_t i = 0; i<m_set.size(); ++i)
 	{
-		FENodeSet& ss = m_set[i].slave;
-		for (int j = 0; j<(int)ss.size(); ++j)
+		FENodeList& ss = m_set[i].primary;
+		for (int j = 0; j<(int)ss.Size(); ++j)
 		{
 			int ntag = tag[ss[j]];
 			if (ntag > 0) tag[ss[j]] = -ntag;
@@ -109,8 +137,8 @@ bool FEPeriodicLinearConstraint2O::GenerateConstraints(FEModel* fem)
 	}
 
 	// At this point, the following should hold
-	// slave nodes: tag < 0, master nodes: tag > 0, interior nodes: tag = 0
-	// only one master node should have a value of 3. We make this the reference node
+	// primary nodes: tag < 0, secondary nodes: tag > 0, interior nodes: tag = 0
+	// only one secondary node should have a value of 3. We make this the reference node
 	int refNode = -1;
 	for (int i = 0; i<N; ++i)
 	{
@@ -124,62 +152,62 @@ bool FEPeriodicLinearConstraint2O::GenerateConstraints(FEModel* fem)
 	if (refNode == -1) return false;
 
 	// extract all 12 edges
-	vector<FENodeSet*> surf;
+	vector<FENodeList> surf;
 	for (int i = 0; i<(int)m_set.size(); ++i)
 	{
-		surf.push_back(&m_set[i].master);
-		surf.push_back(&m_set[i].slave);
+		surf.push_back(m_set[i].secondary);
+		surf.push_back(m_set[i].primary);
 	}
 
-	vector<FENodeSet> masterEdges;
-	vector<FENodeSet> slaveEdges;
+	vector<FENodeList> secondaryEdges;
+	vector<FENodeList> primaryEdges;
 	for (int i = 0; i<surf.size(); ++i)
 	{
-		FENodeSet& s0 = *surf[i];
+		FENodeList& s0 = surf[i];
 		for (int j = i + 1; j<surf.size(); ++j)
 		{
-			FENodeSet& s1 = *surf[j];
+			FENodeList& s1 = surf[j];
 			vector<int> tmp(N, 0);
-			for (int k = 0; k<s0.size(); ++k) tmp[s0[k]]++;
-			for (int k = 0; k<s1.size(); ++k) tmp[s1[k]]++;
+			for (int k = 0; k<s0.Size(); ++k) tmp[s0[k]]++;
+			for (int k = 0; k<s1.Size(); ++k) tmp[s1[k]]++;
 
-			FENodeSet edge(&mesh);
+			FENodeList edge(&mesh);
 			for (int k = 0; k<N; ++k)
 			{
-				if (tmp[k] == 2) edge.add(k);
+				if (tmp[k] == 2) edge.Add(k);
 			}
 
-			if (edge.size() != 0)
+			if (edge.Size() != 0)
 			{
-				// see if this is a master edge or not
-				// we assume it's a master edge if it connects to the refnode
-				bool bmaster = false;
-				for (int k = 0; k<edge.size(); ++k)
+				// see if this is a secondary edge or not
+				// we assume it's a secondary edge if it connects to the refnode
+				bool bsecondary = false;
+				for (int k = 0; k<edge.Size(); ++k)
 				{
 					if (edge[k] == refNode)
 					{
-						bmaster = true;
+						bsecondary = true;
 						break;
 					}
 				}
 
-				if (bmaster)
-					masterEdges.push_back(edge);
+				if (bsecondary)
+					secondaryEdges.push_back(edge);
 				else
-					slaveEdges.push_back(edge);
+					primaryEdges.push_back(edge);
 			}
 		}
 	}
 
 	// since it is assumed the geometry is a cube, the following must hold
-	assert(masterEdges.size() == 3);
-	assert(slaveEdges.size() == 9);
+	assert(secondaryEdges.size() == 3);
+	assert(primaryEdges.size() == 9);
 
-	// find the master edge vectors
+	// find the secondary edge vectors
 	vec3d Em[3];
 	for (int i = 0; i<3; ++i)
 	{
-		FENodeSet& edge = masterEdges[i];
+		FENodeList& edge = secondaryEdges[i];
 
 		// get the edge vector
 		Em[i] = edge.Node(0)->m_r0 - edge.Node(1)->m_r0; assert(edge[0] != edge[1]);
@@ -189,11 +217,11 @@ bool FEPeriodicLinearConstraint2O::GenerateConstraints(FEModel* fem)
 	// setup the constraints for the surfaces
 	for (int n=0; n<m_set.size(); ++n)
 	{
-		FENodeSet& ms = m_set[n].master;
-		FENodeSet& ss = m_set[n].slave;
+		FENodeList& ms = m_set[n].secondary;
+		FENodeList& ss = m_set[n].primary;
 
-		// loop over all slave nodes
-		for (int i=0; i<ss.size(); ++i)
+		// loop over all primary nodes
+		for (int i=0; i<ss.Size(); ++i)
 		{
 			assert(tag[ss[i]] < 0);
 			if (tag[ss[i]] == -1)
@@ -201,7 +229,7 @@ bool FEPeriodicLinearConstraint2O::GenerateConstraints(FEModel* fem)
 				// get the nodal position
 				vec3d rs = ss.Node(i)->m_r0;
 
-				// find the corresponding node on the master side
+				// find the corresponding node on the secondary side
 				int m = closestNode(mesh, ms, rs);
 				assert(tag[ms[m]] == 1);
 
@@ -212,22 +240,22 @@ bool FEPeriodicLinearConstraint2O::GenerateConstraints(FEModel* fem)
 	}
 
 	// setup the constraint for the edges
-	for (int n = 0; n<(int)slaveEdges.size(); ++n)
+	for (int n = 0; n<(int)primaryEdges.size(); ++n)
 	{
-		FENodeSet& edge = slaveEdges[n];
+		FENodeList& edge = primaryEdges[n];
 
 		// get the edge vector
 		vec3d E = edge.Node(0)->m_r0 - edge.Node(1)->m_r0; assert(edge[0] != edge[1]); E.unit();
 
-		// find the corresponding master edge
+		// find the corresponding secondary edge
 		bool bfound = true;
 		for (int m = 0; m<3; ++m)
 		{
 			if (fabs(E*Em[m]) > 0.9999)
 			{
-				FENodeSet& medge = masterEdges[m];
+				FENodeList& medge = secondaryEdges[m];
 
-				for (int i = 0; i<(int)edge.size(); ++i)
+				for (int i = 0; i<(int)edge.Size(); ++i)
 				{
 					assert(tag[edge[i]] < 0);
 					if (tag[edge[i]] == -2)

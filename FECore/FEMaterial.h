@@ -1,42 +1,42 @@
-// FEMaterial.h: interface for the FEMaterial class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FEMATERIAL_H__07F3E572_45B6_444E_A3ED_33FE9D18E82D__INCLUDED_)
-#define AFX_FEMATERIAL_H__07F3E572_45B6_444E_A3ED_33FE9D18E82D__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
-#include "tens4d.h"
 #include "FECoreBase.h"
 #include "FEMaterialPoint.h"
-#include "FECoordSysMap.h"
-#include "DumpStream.h"
-#include "FECoreKernel.h"
-#include <string.h>
-#include <stddef.h>
-
-#define INRANGE(x, a, b) ((x)>=(a) && (x)<=(b))
-#define IN_RIGHT_OPEN_RANGE(x, a, b) ((x)>=(a) && (x)<(b))
+#include "FEModelParam.h"
+#include "FEDomainList.h"
+#include "FEDomainParameter.h"
 
 //-----------------------------------------------------------------------------
 // forward declaration of some classes
-class FEModel;
-class FEElement;
-
-//-----------------------------------------------------------------------------
-//! helper functions for reporting material errors
-
-bool FECORE_API MaterialError(const char* sz, ...);
-
-//-----------------------------------------------------------------------------
-// Forward declaration of the FEElasticMaterial class. 
-// TODO: The only reason I had to do this is to define the FEMaterial::GetElasticMaterial.
-// However, this is only a temporary construct so make sure to delete this forward declaration
-// when no longer needed.
-class FEElasticMaterial;
+class FEDomain;
+class DumpStream;
 
 //-----------------------------------------------------------------------------
 //! Abstract base class for material types
@@ -45,57 +45,43 @@ class FEElasticMaterial;
 
 class FECORE_API FEMaterial : public FECoreBase
 {
+	FECORE_SUPER_CLASS
+
 public:
-	FEMaterial(FEModel* pfem);
+	FEMaterial(FEModel* fem);
 	virtual ~FEMaterial();
 
 	//! returns a pointer to a new material point object
 	virtual FEMaterialPoint* CreateMaterialPointData() { return 0; };
 
 	//! performs initialization
-	bool Init();
+	bool Init() override;
 
-	//! Serialize material data to archive
-	void Serialize(DumpStream& ar);
+    //! Update specialized material points at each iteration
+    virtual void UpdateSpecializedMaterialPoints(FEMaterialPoint& mp, const FETimeInfo& tp) {}
 
-	//! Return elastic material \todo I need to move this function up the hierarchy once I redesign the material library
-	virtual FEElasticMaterial* GetElasticMaterial() { return 0; }
-
-public:
-	// TODO: Some rigid body stuff is moved to here to avoid RTTI and the definition of rigid materials in FECore, 
-	//       as well as simplify some initialization. I hope someday to refactor this a bit.
-	//! is this a rigid material
-	virtual bool IsRigid() { return false; }
-
-	//! get the ID of the rigid body this material is assigned to (-1 if not)
-	int GetRigidBodyID() { return m_nRB; }
-
-	//! Set the rigid body ID this material is assigned to
-	void SetRigidBodyID(int rid) { m_nRB = rid; }
-
-	//! return the density
-	//! TODO: This was added here because the rigid bodies need it to determine the COM
-	virtual double Density() { return 0.0; }
+	//! get a domain parameter
+	FEDomainParameter* FindDomainParameter(const std::string& paramName);
 
 public:
-	//! Set the local coordinate system map
-	void SetCoordinateSystemMap(FECoordSysMap* pmap);
+	// evaluate local coordinate system at material point
+	mat3d GetLocalCS(const FEMaterialPoint& mp);
 
-	//! Get the local coordinate system
-	FECoordSysMap* GetCoordinateSystemMap();
+public:
+	//! Assign a domain to this material
+	void AddDomain(FEDomain* dom);
 
-	//! Set the local coordinate for a material point
-	virtual void SetLocalCoordinateSystem(FEElement& el, int n, FEMaterialPoint& mp);
+	//! get the domaint list
+	FEDomainList& GetDomainList() { return m_domList; }
 
-	//! return the model this material belongs to
-	FEModel* GetFEModel();
-
-private:
-	int		m_nRB;			//!< rigid body ID (TODO: I hope to remove this sometime)
+protected:
+	void AddDomainParameter(FEDomainParameter* p);
 
 private:
-	FECoordSysMap*	m_pmap;			//!< local material coordinate system
-	FEModel*		m_pfem;			//!< pointer to model this material belongs to
+	FEParamMat3d	m_Q;			//!< local material coordinate system
+	FEDomainList	m_domList;		//!< list of domains that use this material
+
+	std::vector<FEDomainParameter*>	m_param;	//!< list of domain variables
+
+	DECLARE_FECORE_CLASS();
 };
-
-#endif // !defined(AFX_FEMATERIAL_H__07F3E572_45B6_444E_A3ED_33FE9D18E82D__INCLUDED_)

@@ -1,5 +1,34 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FECoreFactory.h"
+#include "ClassDescriptor.h"
 #include <vector>
 #include <string.h>
 #include <stdio.h>
@@ -8,8 +37,7 @@
 //-----------------------------------------------------------------------------
 // Forward declarations
 class FEModel;
-class Logfile;
-class Timer;
+class LinearSolver;
 
 //-----------------------------------------------------------------------------
 //! This is the FECore kernel class that manages the interactions between the 
@@ -18,14 +46,8 @@ class Timer;
 //! with the kernel.
 class FECORE_API FECoreKernel
 {
-	enum { ALL_MODULES = 0xFFFF };
-
-	struct Module
-	{
-		const char*		szname;	// name of module
-		unsigned int	id;		// unqiue ID (this is a bit value)
-		unsigned int	flags;	// ID + IDs of dependent modules
-	};
+	// forward declaration of Module class
+	class Module;
 
 public:
 	// Do not call this function from a plugin as it will not return the correct
@@ -35,15 +57,18 @@ public:
 	// set the instance of the kernel
 	static void SetInstance(FECoreKernel* pkernel);
 
-	// Get the logfile
-	static Logfile& GetLogfile();
-
 public:
 	//! Register a class with the framework
-	void RegisterClass(FECoreFactory* ptf);
+	void RegisterFactory(FECoreFactory* ptf);
+
+	//! Create a specific using a superclass ID and an alias
+	void* Create(int superClassID, const char* szalias, FEModel* pfem);
 
 	//! Create a specific class
-	void* Create(SUPER_CLASS_ID, const char* sztag, FEModel* pfem);
+	void* CreateClass(const char* szclassName, FEModel* fem);
+
+	//! Create a class from a class descriptor
+	void* Create(int superClassID, FEModel* pfem, const ClassDescriptor& cd);
 
 	//! count the number of registered classes with a given super-class id
 	int Count(SUPER_CLASS_ID sid);
@@ -57,10 +82,28 @@ public:
 	//! return a factory class
 	const FECoreFactory* GetFactoryClass(int i);
 
+	//! return a factory class
+	const FECoreFactory* GetFactoryClass(int classID, int i);
+
 	//! find a factory class
 	FECoreFactory* FindFactoryClass(int classID, const char* sztype);
 
+	//! remove a factory class
+	bool UnregisterFactory(FECoreFactory* ptf);
+
+	//! unregister factories from allocator
+	void UnregisterFactories(int alloc_id);
+
+	//! set the current allocator ID
+	void SetAllocatorID(int alloc_id);
+
+	//! generate a allocator ID
+	int GenerateAllocatorID();
+
 public: // Modules
+
+	//! count modules
+	int Modules() const;
 
 	//! Create a module (also makes it the active module)
 	bool CreateModule(const char* szmodule);
@@ -71,6 +114,17 @@ public: // Modules
 	//! set a dependency on a module
 	bool SetModuleDependency(const char* szmodule);
 
+	//! Get a module's name
+	const char* GetModuleName(int i) const;
+	const char* GetModuleNameFromId(int id) const;
+
+	//! Get a module's dependencies
+	vector<int> GetModuleDependencies(int i) const;
+
+	//! set the spec ID. Features with a matching spec ID will be preferred
+	//! set spec ID to -1 to stop caring
+	void SetSpecID(int nspec);
+
 public:
 	//! Register a new domain class
 	void RegisterDomain(FEDomainFactory* pf);
@@ -78,55 +132,33 @@ public:
 	//! Create a domain of a certain type
 	FEDomain* CreateDomain(const FE_Element_Spec& spec, FEMesh* pm, FEMaterial* pmat);
 
-public: // error reporting mechanism
-
-	// Set the error string
-	void SetErrorString(const char* sz);
-
-	// returns error string (can be null if no error reported)
-	const char* GetErrorString();
-
-public:
-	//! Register a linear solver factory
-	void RegisterLinearSolver(FELinearSolverFactory* pf);
-
-	//! create a linear solver factory
-	LinearSolver* CreateLinearSolver(int nsolver);
-
-	//! Find linear solver factory
-	FELinearSolverFactory* FindLinearSolverFactory(int nsolver);
-
 public:
 	//! set the default linear solver
-	static void SetDefaultSolver(int nsolver) { m_ndefault_solver = nsolver; }
-	static int m_ndefault_solver;
+	FECoreFactory* SetDefaultSolverType(const char* sztype);
 
-public:
-	// reset all the timers
-	void ResetAllTimers();
+	void SetDefaultSolver(ClassDescriptor* linsolve);
 
-	// Find a timer by name. Returns an existing timer or otherwise creates a new timer with that name
-	Timer* FindTimer(const std::string& name);
+	//! get the linear solver type
+	const char* GetLinearSolverType() const;
 
-	// return total number of timers
-	int Timers();
-
-	// return a timer by index
-	Timer* GetTimer(int i);
+	//! Get a linear solver
+	LinearSolver* CreateDefaultLinearSolver(FEModel* fem);
 
 private:
 	std::vector<FECoreFactory*>			m_Fac;	// list of registered factory classes
 	std::vector<FEDomainFactory*>		m_Dom;	// list of domain factory classes
-	std::vector<FELinearSolverFactory*> m_LS;	// list of linear solver factories
-	std::vector<Timer*>					m_timers;	// list of timers
+
+	std::string			m_default_solver_type;	// default linear solver
+	ClassDescriptor*	m_default_solver;
 
 	// module list
-	vector<Module>	m_modules;
+	vector<Module*>	m_modules;
 	int				m_activeModule;
 
-	Logfile*	m_plog;	// keep a pointer to the logfile (used by plugins)
+	int				m_nspec;
 
-	char*	m_szerr;	//!< error string
+	int		m_alloc_id;			//!< current allocator ID
+	int		m_next_alloc_id;	//!< next allocator ID
 
 private: // make singleton
 	FECoreKernel();
@@ -138,40 +170,77 @@ private:
 };
 
 //-----------------------------------------------------------------------------
-// helper function for reporting errors
-FECORE_API bool fecore_error(const char* szerr, ...);
-FECORE_API const char* fecore_get_error_string();
-
-//-----------------------------------------------------------------------------
 //! This class helps with the registration of a class with the framework
 template <typename T> class FERegisterClass_T : public FECoreFactory
 {
 public:
-	FERegisterClass_T(SUPER_CLASS_ID sid, const char* sz) : FECoreFactory(sid, sz)
+	FERegisterClass_T(SUPER_CLASS_ID sid, const char* szclass, const char* szalias, int spec = -1) : FECoreFactory(sid, szclass, szalias, spec)
 	{
 		FECoreKernel& fecore = FECoreKernel::GetInstance();
-		fecore.RegisterClass(this);
+		fecore.RegisterFactory(this);
 	}
-	void* Create(FEModel* pfem) { return new T(pfem); }
+	FECoreBase* Create(FEModel* pfem) const { return new T(pfem); }
 };
 
 //-----------------------------------------------------------------------------
-// Register a class using default creation parameters
-#define REGISTER_FECORE_CLASS(theClass, theSID, theName) \
-	static FERegisterClass_T<theClass> _##theClass##_rc(theSID, theName);
+// Register a factory class
+#define REGISTER_FECORE_FACTORY(theFactory) \
+	static theFactory _##theFactory##_rc;
 
 //-----------------------------------------------------------------------------
-// Register a deprecated class using default creation parameters
-#define REGISTER_FECORE_CLASS_OBSOLETE(theClass, theSID, theName) \
-	static FERegisterClass_T<theClass> _##theClass##_old_rc(theSID, theName);
+// Register a class using default creation parameters
+#define REGISTER_FECORE_CLASS(theClass, ...) \
+	static FERegisterClass_T<theClass> _##theClass##_rc(theClass::classID(), #theClass, __VA_ARGS__);
+
+//-----------------------------------------------------------------------------
+// Register a class using default creation parameters
+#define REGISTER_FECORE_CLASS_EXPLICIT(theClass, theID, ...) \
+	static FERegisterClass_T<theClass> _##theClass##_rc(theID, #theClass, __VA_ARGS__);
 
 //-----------------------------------------------------------------------------
 // version for classes that require template arguments
-#define REGISTER_FECORE_CLASS_T(theClass, theSID, theArg, theName) \
-	static FERegisterClass_T<theClass<theArg> > _##theClass##theArg##_rc(theSID, theName);
+#define REGISTER_FECORE_CLASS_T(theClass, theArg, theName) \
+	static FERegisterClass_T<theClass<theArg> > _##theClass##theArg##_rc(theClass<theArg>::classID(), 0, theName);
 
 //-----------------------------------------------------------------------------
-template <typename TBase> inline TBase* fecore_new(SUPER_CLASS_ID sid, const char* sztype, FEModel* pfem)
+// version for classes that require template arguments
+#define REGISTER_FECORE_CLASS_T2(theClass, theArg1, theArg2, theName) \
+	static FERegisterClass_T<theClass<theArg1, theArg2> > _##theClass##theArg1##theArg2##_rc(theClass<theArg1, theArg2>::classID(), 0, theName);
+
+//-----------------------------------------------------------------------------
+// Create an instance of a class.
+// This assumes that TBase is derived from FECoreBase and defines a class ID. 
+template <typename TBase> inline TBase* fecore_new(const char* sztype, FEModel* pfem)
+{
+	FECoreKernel& fecore = FECoreKernel::GetInstance();
+	return static_cast<TBase*>(fecore.Create(TBase::classID(), sztype, pfem));
+}
+
+//-----------------------------------------------------------------------------
+// Create an instance of a class.
+// This assumes that TBase is derived from FECoreBase and defines a class ID. 
+template <typename TBase> inline TBase* fecore_new(int classIndex, FEModel* pfem)
+{
+	FECoreKernel& fecore = FECoreKernel::GetInstance();
+	const FECoreFactory* f = fecore.GetFactoryClass(TBase::classID(), classIndex);
+	if (f) return static_cast<TBase*>(f->Create(pfem));
+	else return nullptr;
+}
+
+//-----------------------------------------------------------------------------
+template <typename TClass> inline TClass* fecore_new_class(const char* szclass, FEModel* fem)
+{
+	FECoreKernel& fecore = FECoreKernel::GetInstance();
+	return static_cast<TClass*>(fecore.CreateClass(szclass, fem));
+}
+
+//-----------------------------------------------------------------------------
+#define fecore_alloc(theClass, fem) fecore_new_class<theClass>(#theClass, fem)
+
+//-----------------------------------------------------------------------------
+// Three-parameter form of the fecore_new function for situations where the base class does not 
+// define the classID value.
+template <typename TBase> inline TBase* fecore_new(int sid, const char* sztype, FEModel* pfem)
 {
 	FECoreKernel& fecore = FECoreKernel::GetInstance();
 	return static_cast<TBase*>(fecore.Create(sid, sztype, pfem));
@@ -185,8 +254,8 @@ template <typename TBase> inline TBase* fecore_new(SUPER_CLASS_ID sid, const cha
 template <typename T, SUPER_CLASS_ID sid> class FEPluginFactory_T : public FECoreFactory
 {
 public:
-	FEPluginFactory_T(const char* sz) : FECoreFactory(sid, sz){}
-	void* Create(FEModel* pfem) { return new T(pfem); }
+	FEPluginFactory_T(const char* sz) : FECoreFactory(sid, nullptr, sz){}
+	FECoreBase* Create(FEModel* pfem) const { return new T(pfem); }
 };
 
 //------------------------------------------------------------------------------

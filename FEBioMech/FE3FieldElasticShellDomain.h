@@ -1,14 +1,32 @@
-//
-//  FE3FieldElasticShellDomain.hpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 2/9/18.
-//  Copyright © 2018 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#ifndef FE3FieldElasticShellDomain_hpp
-#define FE3FieldElasticShellDomain_hpp
+See Copyright-FEBio.txt for details.
 
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#pragma once
 #include "FEElasticShellDomain.h"
 
 //-----------------------------------------------------------------------------
@@ -16,7 +34,7 @@
 //! shell element. Results indicate that using this class produces poorer convergence
 //! with shells than the standard FEElasticShellDomain.  This class is included
 //! only for development purposes.
-class FE3FieldElasticShellDomain : public FEElasticShellDomain
+class FEBIOMECH_API FE3FieldElasticShellDomain : public FEElasticShellDomain
 {
 protected:
     struct ELEM_DATA
@@ -24,14 +42,16 @@ protected:
         double    eJ;        // average element jacobian
         double    ep;        // average pressure
         double    Lk;        // Lagrangian multiplier
+
+		void Serialize(DumpStream& ar);
     };
     
 public:
     //! constructor
-    FE3FieldElasticShellDomain(FEModel* pfem) : FEElasticShellDomain(pfem) {}
+	FE3FieldElasticShellDomain(FEModel* pfem);
     
-    //! \todo Do I really use this?
-    FE3FieldElasticShellDomain& operator = (FE3FieldElasticShellDomain& d) { m_Elem = d.m_Elem; m_pMesh = d.m_pMesh; return (*this); }
+    //! \todo Is this really used?
+	FE3FieldElasticShellDomain& operator = (FE3FieldElasticShellDomain& d);
     
     //! initialize class
 	bool Init() override;
@@ -40,7 +60,7 @@ public:
     void Reset() override;
     
     //! augmentation
-    bool Augment(int naug);
+    bool Augment(int naug) override;
     
     //! serialize data to archive
     void Serialize(DumpStream& ar) override;
@@ -51,7 +71,7 @@ public: // overridden from FEElasticDomain
     void Update(const FETimeInfo& tp) override;
     
     // calculate stiffness matrix
-    void StiffnessMatrix(FESolver* psolver) override;
+    void StiffnessMatrix(FELinearSystem& LS) override;
     
 protected:
     //! Dilatational stiffness component for nearly-incompressible materials
@@ -62,9 +82,17 @@ protected:
     
     //! update the stress of an element
     void UpdateElementStress(int iel);
+
+public:
+	bool DoAugmentations() const;
     
 protected:
     vector<ELEM_DATA>    m_Data;
-};
 
-#endif /* FE3FieldElasticShellDomain_hpp */
+	bool	m_blaugon;		//!< augmented lagrangian flag
+	double	m_augtol;		//!< augmented lagrangian tolerance
+	int		m_naugmin;		//!< minimum number of augmentations
+	int		m_naugmax;		//!< max number of augmentations
+
+	DECLARE_FECORE_CLASS();
+};

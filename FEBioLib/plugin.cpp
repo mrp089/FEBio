@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "plugin.h"
 #include "FECore/FECoreKernel.h"
@@ -30,14 +58,17 @@ extern "C" {
 #ifdef WIN32
 FEBIO_PLUGIN_HANDLE LoadPlugin(const char* szfile) { return LoadLibraryA(szfile); }
 void* FindPluginFunc(FEBIO_PLUGIN_HANDLE ph, const char* szfunc) { return GetProcAddress(ph, szfunc); }
+bool UnloadPlugin(FEBIO_PLUGIN_HANDLE ph) { return (FreeLibrary(ph) == TRUE); }
 #endif
 #ifdef LINUX
 FEBIO_PLUGIN_HANDLE LoadPlugin(const char* szfile) { return dlopen(szfile, RTLD_NOW); }
 void* FindPluginFunc(FEBIO_PLUGIN_HANDLE ph, const char* szfunc) { return dlsym(ph, szfunc); }
+bool UnloadPlugin(FEBIO_PLUGIN_HANDLE) { return true; }
 #endif
 #ifdef __APPLE__
 FEBIO_PLUGIN_HANDLE LoadPlugin(const char* szfile) { return dlopen(szfile, RTLD_NOW); }
 void* FindPluginFunc(FEBIO_PLUGIN_HANDLE ph, const char* szfunc) { return dlsym(ph, szfunc); }
+bool UnloadPlugin(FEBIO_PLUGIN_HANDLE) { return true; }
 #endif
 
 //=============================================================================
@@ -51,6 +82,8 @@ FEBioPlugin::FEBioPlugin()
 	m_version.major = 0;
 	m_version.minor = 0;
 	m_version.patch = 0;
+
+	m_allocater_id = FECoreKernel::GetInstance().GenerateAllocatorID();
 }
 
 //-----------------------------------------------------------------------------
@@ -117,7 +150,8 @@ int FEBioPlugin::Load(const char* szfile)
 	// NOTE: As of 2.6, the PluginGetFactory function is optional. This is because the 
 	// REGISTER_FECORE_CLASS can be used to register a new plugin class in PluginInitialize.
 //	if (pfnc_get == 0) return 3;
-	
+
+
 	// find the plugin's initialization function
 	PLUGIN_INIT_FNC pfnc_init = (PLUGIN_INIT_FNC) FindPluginFunc(ph, "PluginInitialize");
 
@@ -125,9 +159,14 @@ int FEBioPlugin::Load(const char* szfile)
 	PLUGIN_VERSION_FNC pfnc_version = (PLUGIN_VERSION_FNC) FindPluginFunc(ph, "GetPluginVersion");
 	if (pfnc_version) pfnc_version(m_version.major, m_version.minor, m_version.patch);
 
-	// call the (optional) initialization function
+	// get the kernel
 	FECoreKernel& febio = FECoreKernel::GetInstance();
-	if (pfnc_init) 
+
+	// set the current allocater id
+	febio.SetAllocatorID(m_allocater_id);
+
+	// call the (optional) initialization function
+	if (pfnc_init)
 	{
 		pfnc_init(febio);
 		febio.SetActiveModule(0);
@@ -145,7 +184,10 @@ int FEBioPlugin::Load(const char* szfile)
 			for (int i=0; i<NC; ++i)
 			{
 				FECoreFactory* pfac = pfnc_get(i);
-				if (pfac) febio.RegisterClass(pfac);
+				if (pfac) 
+				{	
+					febio.RegisterFactory(pfac);
+				}
 			}
 		}
 		else
@@ -159,7 +201,7 @@ int FEBioPlugin::Load(const char* szfile)
 				pfac = pfnc_get(i);
 				if (pfac)
 				{
-					febio.RegisterClass(pfac);
+					febio.RegisterFactory(pfac);
 					i++;
 				}
 			}
@@ -167,8 +209,11 @@ int FEBioPlugin::Load(const char* szfile)
 		}
 	}
 
+	febio.SetAllocatorID(0);
+
 	// If we get here everything seems okay so let's store the handle
 	m_ph = ph;
+	m_filepath = szfile;
 
 	// a-ok!
 	return 0;
@@ -183,7 +228,13 @@ void FEBioPlugin::UnLoad()
 		PLUGIN_CLEANUP_FNC pfnc = (PLUGIN_CLEANUP_FNC) FindPluginFunc(m_ph, "PluginCleanup");
 		if (pfnc) pfnc();
 
-		// TODO: should I figure out how to actually unload the plugin from memory?
+		// remove all features from the kernel that were added by the plugin
+		FECoreKernel& febio = FECoreKernel::GetInstance();
+		febio.UnregisterFactories(m_allocater_id);
+
+		// unload the plugin from memory
+		bool b = UnloadPlugin(m_ph);
+		if (b == false) fprintf(stderr, "ERROR: Failed unloading plugin %s\n", m_szname);
 		m_ph = 0;
 	}
 }
@@ -203,8 +254,11 @@ FEBioPluginManager* FEBioPluginManager::GetInstance()
 //-----------------------------------------------------------------------------
 FEBioPluginManager::~FEBioPluginManager()
 {
-	for (size_t i = 0; i < m_Plugin.size(); ++i) delete m_Plugin[i];
-	m_Plugin.clear();
+	// NOTE: I (S.M.) commented this out since for very small problems that run
+	//       very quickly, FEBio can crash when it unloads the plugins on Windows. 
+	//       It looks like this is caused by some kind of race condition with Windows
+	//       dll management. 
+//	UnloadAllPlugins();
 }
 
 //-----------------------------------------------------------------------------
@@ -233,6 +287,15 @@ const FEBioPlugin& FEBioPluginManager::GetPlugin(int i)
 //! \sa FEBioPlugin::Load
 int FEBioPluginManager::LoadPlugin(const char* szfile, PLUGIN_INFO& info)
 {
+	std::string sfile = szfile;
+
+	// First, make sure this plugin does not exist yet
+	for (int i=0; i<Plugins(); ++i)
+	{
+		const FEBioPlugin& pi = GetPlugin(i);
+		if (pi.GetFilePath() == sfile) return 7;		
+	}
+
 	// create a new plugin object
 	FEBioPlugin* pdll = new FEBioPlugin;
 
@@ -260,6 +323,43 @@ int FEBioPluginManager::LoadPlugin(const char* szfile, PLUGIN_INFO& info)
 
 	// pass error code to caller
 	return nerr;
+}
+
+//-----------------------------------------------------------------------------
+bool FEBioPluginManager::UnloadPlugin(int n)
+{
+	if ((n<0) || (n >= Plugins())) return false;
+
+	std::vector<FEBioPlugin*>::iterator it = m_Plugin.begin() + n;
+	(*it)->UnLoad();
+
+	m_Plugin.erase(it);
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+bool FEBioPluginManager::UnloadPlugin(const std::string& name)
+{
+	const char* szname = name.c_str();
+	for (std::vector<FEBioPlugin*>::iterator it = m_Plugin.begin(); it != m_Plugin.end(); ++it)
+	{
+		if (strcmp((*it)->GetName(), szname) == 0)
+		{
+			(*it)->UnLoad();
+			delete *it;
+			m_Plugin.erase(it);
+			return true;
+		}
+	}
+	return false;
+}
+
+//-----------------------------------------------------------------------------
+void FEBioPluginManager::UnloadAllPlugins()
+{
+	for (size_t i = 0; i < m_Plugin.size(); ++i) delete m_Plugin[i];
+	m_Plugin.clear();
 }
 
 /*

@@ -1,17 +1,34 @@
-//
-//  FEBiphasicDomain.hpp
-//  FEBioMix
-//
-//  Created by Gerard Ateshian on 12/1/16.
-//  Copyright © 2016 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#ifndef FEBiphasicDomain_hpp
-#define FEBiphasicDomain_hpp
+See Copyright-FEBio.txt for details.
 
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#pragma once
 #include <vector>
-using namespace std;
-#include "FEBioMech/FEElasticDomain.h"
+#include <FEBioMech/FEElasticDomain.h>
 #include "FEBiphasic.h"
 
 //-----------------------------------------------------------------------------
@@ -28,11 +45,10 @@ class FESolver;
 //! biphasic domain. There are basically two categories: residual functions
 //! that contribute to the global residual vector. And stiffness matrix
 //! function that calculate contributions to the global stiffness matrix.
-class FEBiphasicDomain : public FEElasticDomain
+class FEBIOMIX_API FEBiphasicDomain : public FEElasticDomain
 {
 public:
     FEBiphasicDomain(FEModel* pfem);
-    virtual ~FEBiphasicDomain(){}
     
     // --- R E S I D U A L ---
     
@@ -42,14 +58,14 @@ public:
     // --- S T I F F N E S S   M A T R I X ---
     
     //! calculates the global stiffness matrix for this domain
-    virtual void StiffnessMatrix(FESolver* psolver, bool bsymm) = 0;
+    virtual void StiffnessMatrix(FELinearSystem& LS, bool bsymm) = 0;
     
     //! calculates the global stiffness matrix (steady-state case)
-    virtual void StiffnessMatrixSS(FESolver* psolver, bool bsymm) = 0;
+    virtual void StiffnessMatrixSS(FELinearSystem& LS, bool bsymm) = 0;
     
 public: // biphasic domain "properties"
     virtual vec3d FluidFlux(FEMaterialPoint& mp) = 0;
-    
+
 protected:
     FEBiphasic*	m_pMat;
     int			m_dofP;		//!< pressure dof index
@@ -58,5 +74,3 @@ protected:
     int			m_dofVY;
     int			m_dofVZ;
 };
-
-#endif /* FEBiphasicDomain_hpp */

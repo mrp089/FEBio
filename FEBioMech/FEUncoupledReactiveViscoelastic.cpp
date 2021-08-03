@@ -1,11 +1,32 @@
-//
-//  FEUncoupledReactiveViscoelastic.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 12/12/14.
-//  Copyright (c) 2014 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEUncoupledReactiveViscoelastic.h"
 #include "FECore/FECoreKernel.h"
 #include <FECore/FEModel.h>
@@ -18,11 +39,17 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 // Material parameters for the FEUncoupledReactiveViscoelastic material
-BEGIN_PARAMETER_LIST(FEUncoupledReactiveViscoelasticMaterial, FEUncoupledMaterial)
-	ADD_PARAMETER2(m_wmin , FE_PARAM_DOUBLE, FE_RANGE_CLOSED(0.0, 1.0), "wmin"    );
-	ADD_PARAMETER2(m_btype, FE_PARAM_INT   , FE_RANGE_CLOSED(1, 2), "kinetics");
-	ADD_PARAMETER2(m_ttype, FE_PARAM_INT   , FE_RANGE_CLOSED(0, 2), "trigger" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEUncoupledReactiveViscoelasticMaterial, FEUncoupledMaterial)
+	ADD_PARAMETER(m_wmin , FE_RANGE_CLOSED(0.0, 1.0), "wmin"    );
+	ADD_PARAMETER(m_btype, FE_RANGE_CLOSED(1, 2), "kinetics");
+	ADD_PARAMETER(m_ttype, FE_RANGE_CLOSED(0, 2), "trigger" );
+
+	// set material properties
+	ADD_PROPERTY(m_pBase, "elastic");
+	ADD_PROPERTY(m_pBond, "bond");
+	ADD_PROPERTY(m_pRelx, "relaxation");
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! constructor
@@ -32,30 +59,9 @@ FEUncoupledReactiveViscoelasticMaterial::FEUncoupledReactiveViscoelasticMaterial
     m_btype = 0;
     m_ttype = 0;
 
-	// set material properties
-	AddProperty(&m_pBase, "elastic"   );
-	AddProperty(&m_pBond, "bond"      );
-	AddProperty(&m_pRelx, "relaxation");
-}
-
-//-----------------------------------------------------------------------------
-void FEUncoupledReactiveViscoelasticMaterial::SetLocalCoordinateSystem(FEElement& el, int n, FEMaterialPoint& mp)
-{
-    FEElasticMaterial::SetLocalCoordinateSystem(el, n, mp);
-    FEElasticMaterial* pme = GetBaseMaterial();
-    pme->SetLocalCoordinateSystem(el, n, mp);
-    FEElasticMaterial* pmb = GetBondMaterial();
-    pmb->SetLocalCoordinateSystem(el, n, mp);
-}
-
-//-----------------------------------------------------------------------------
-//! data initialization
-bool FEUncoupledReactiveViscoelasticMaterial::Init()
-{
-    // set the mixture's bulk modulus based on the base and bond materials
-    m_K = m_pBase->m_K + m_pBond->m_K;
-
-    return FEUncoupledMaterial::Init();
+	m_pBase = 0;
+	m_pBond = 0;
+	m_pRelx = 0;
 }
 
 //-----------------------------------------------------------------------------

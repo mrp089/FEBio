@@ -1,14 +1,32 @@
-// FileImport.h: interface for the FileImport class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FILEIMPORT_H__AC15F5F8_E069_4640_B3FD_077984EEA78F__INCLUDED_)
-#define AFX_FILEIMPORT_H__AC15F5F8_E069_4640_B3FD_077984EEA78F__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include <stdio.h>
 #include "XMLReader.h"
 #include <FECore/vec3d.h>
@@ -16,7 +34,7 @@
 #include <FECore/tens3d.h>
 #include <FECore/FECoreBase.h>
 #include "FEModelBuilder.h"
-#include <FEBioLib/febiolib_api.h>
+#include "febioxml_api.h"
 #include <map>
 using namespace std;
 
@@ -28,7 +46,7 @@ class FEFileImport;
 //-----------------------------------------------------------------------------
 // Base class for FEBio import exceptions
 // Derived classes should set the error string in their constructor
-class FEFileException
+class FEBIOXML_API FEFileException
 {
 public:
 	enum { MAX_ERR_STRING = 1024 };
@@ -49,22 +67,9 @@ protected:
 	char	m_szerr[MAX_ERR_STRING];
 };
 
-//-------------------------------------------------------------------------
-class FEFileParam
-{
-	enum { MAX_TAG = 128 };
-
-public:
-	FEFileParam() { m_szname[0] = 0; m_szval[0] = 0; }
-
-public:
-	char	m_szname[MAX_TAG];	// parameter name
-	char	m_szval[MAX_TAG];	// parameter value
-};
-
 //-----------------------------------------------------------------------------
 // Base class for XML sections parsers
-class FEFileSection
+class FEBIOXML_API FEFileSection
 {
 public:
 	FEFileSection(FEFileImport* pim) { m_pim = pim; }
@@ -84,13 +89,13 @@ public:
 	int ReadNodeID(XMLTag& tag);
 
 public:
-	bool ReadParameter(XMLTag& tag, FEParameterList& pl, const char* szparam = 0);
-	bool ReadParameter(XMLTag& tag, FECoreBase* pc, const char* szparam = 0);
+	bool ReadParameter(XMLTag& tag, FEParameterList& pl, const char* szparam = 0, FECoreBase* pc = 0, bool parseAttributes = true);
+	bool ReadParameter(XMLTag& tag, FECoreBase* pc, const char* szparam = 0, bool parseAttributes = true);
 	void ReadParameterList(XMLTag& tag, FEParameterList& pl);
 	void ReadParameterList(XMLTag& tag, FECoreBase* pc);
+	void ReadAttributes(XMLTag& tag, FECoreBase* pc);
 
 public:
-	const char* get_value_string(XMLTag& tag);
 	void value(XMLTag& tag, int&    n);
 	void value(XMLTag& tag, double& g);
 	void value(XMLTag& tag, bool&   b);
@@ -101,6 +106,12 @@ public:
 	void value(XMLTag& tag, char* szstr);
 	int value(XMLTag& tag, int* pi, int n);
 	int value(XMLTag& tag, double* pf, int n);
+	void value(XMLTag& tag, std::string& v);
+	void value(XMLTag& tag, std::vector<int>& v);
+	void value(XMLTag& tag, std::vector<double>& v);
+
+protected:
+	bool parseEnumParam(FEParam* pp, const char* val);
 
 private:
 	FEFileImport*	m_pim;
@@ -108,7 +119,7 @@ private:
 
 //-----------------------------------------------------------------------------
 // class that manages file section parsers
-class FEFileSectionMap : public map<string, FEFileSection*>
+class FEBIOXML_API FEFileSectionMap : public map<string, FEFileSection*>
 {
 public:
 	~FEFileSectionMap();
@@ -125,7 +136,7 @@ public:
 //! This class also manages "xml parameters". This is a feature of FEBio files that allow users to use parameters
 //! as values for xml tag. A parameter is defined by a name-value pair and referenced in the input file using the $(parameter_name) syntax.
 
-class FEBIOLIB_API FEFileImport
+class FEBIOXML_API FEFileImport
 {
 public:
 	//! constructor
@@ -133,9 +144,6 @@ public:
 
 	//! destructor
 	virtual ~FEFileImport();
-
-	//! open the file
-	bool Load(FEModel& fem, const char* szfile);
 
 	//! get the error message
 	void GetErrorMessage(char* szerr);
@@ -155,28 +163,22 @@ public:
 	// get file version
 	int GetFileVersion() const;
 
-public:
-	// Add a file parameter
-	void AddFileParameter(const char* szname, const char* szval);
-
-	// find a file parameter
-	FEFileParam* FindFileParameter(const char* sz);
-
-	// clear all file parameters
-	void ClearFileParams();
+	// throw exception if an unknown attribute is found
+	void SetStopOnUnknownAttribute(bool b);
+	bool StopOnUnknownAttribute() const;
 
 protected:
 	//! open a file
 	bool Open(const char* szfile, const char* szmode);
-
-	//! This function will be overloaded in the derived classes
-	virtual bool Parse(const char* szfile) = 0;
 
 	//! close the file
 	void Close();
 
 	//! helper function for reporting errors
 	bool errf(const char* szerr, ...);
+
+	//! parse the file
+	bool ParseFile(XMLTag& tag);
 
 protected:
 	FILE*	m_fp;			//!< file pointer
@@ -186,12 +188,9 @@ protected:
 
 protected:
 	FEFileSectionMap	m_map;
-	FEModel*			m_fem;
 	FEModelBuilder*		m_builder;
-	vector<FEFileParam>	m_Param;	// parameter list
+	bool				m_stopOnUnknownAttribute;
 
 private:
 	int	m_nversion;	// version of file
 };
-
-#endif // !defined(AFX_FILEIMPORT_H__AC15F5F8_E069_4640_B3FD_077984EEA78F__INCLUDED_)

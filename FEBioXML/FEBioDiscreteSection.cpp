@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBioDiscreteSection.h"
 #include "FECore/FEDiscreteMaterial.h"
@@ -38,7 +66,7 @@ void FEBioDiscreteSection::ParseSpringSection(XMLTag &tag)
 	else if (strcmp(szt, "tension-only linear") == 0) szt = "tension-only linear spring";
 	else if (strcmp(szt, "nonlinear") == 0) szt = "nonlinear spring";
 
-	FEDiscreteMaterial* pm = dynamic_cast<FEDiscreteMaterial*>(fecore_new<FEMaterial>(FEMATERIAL_ID, szt, &fem));
+	FEDiscreteMaterial* pm = dynamic_cast<FEDiscreteMaterial*>(fecore_new<FEMaterial>(szt, &fem));
 	if (pm == 0) throw XMLReader::InvalidAttributeValue(tag, "type", szt);
 
 	fem.AddMaterial(pm);
@@ -116,6 +144,8 @@ void FEBioDiscreteSection::ParseRigidAxialForce(XMLTag& tag)
 //-----------------------------------------------------------------------------
 void FEBioDiscreteSection25::Parse(XMLTag& tag)
 {
+	if (tag.isleaf()) return;
+
 	FECoreKernel& febio = FECoreKernel::GetInstance();
 	FEModel& fem = *GetFEModel();
 	FEMesh& mesh = fem.GetMesh();
@@ -136,7 +166,7 @@ void FEBioDiscreteSection25::Parse(XMLTag& tag)
 			const char* szname = tag.AttributeValue("name", true);
 
 			// create the discrete material
-			FEDiscreteMaterial* pm = dynamic_cast<FEDiscreteMaterial*>(fecore_new<FEMaterial>(FEMATERIAL_ID, szt, &fem));
+			FEDiscreteMaterial* pm = dynamic_cast<FEDiscreteMaterial*>(fecore_new<FEMaterial>(szt, &fem));
 			if (pm == 0) throw XMLReader::InvalidAttributeValue(tag, "type", szt);
 
 			// set the optional name
@@ -144,19 +174,15 @@ void FEBioDiscreteSection25::Parse(XMLTag& tag)
 
 			// add it to the model
 			fem.AddMaterial(pm);
-			pm->SetID(fem.Materials());
 
 			dmat.push_back(pm);
 
 			// read the parameter list
-			FEParameterList& pl = pm->GetParameterList();
-			++tag;
-			do
-			{
-				if (ReadParameter(tag, pl) == 0) throw XMLReader::InvalidTag(tag);
-				++tag;
-			}
-			while (!tag.isend());
+			ReadParameterList(tag, pm);
+
+			// The id in the file is one-based for discrete materials, but we want to have 
+			// a global material ID here.
+			pm->SetID(fem.Materials());
 		}
 		else if (tag == "discrete")
 		{
@@ -208,6 +234,14 @@ void FEBioDiscreteSection25::Parse(XMLTag& tag)
 			// get the domain parameters
 			FEParameterList& pl = pd->GetParameterList();
 			ReadParameterList(tag, pl);
+
+			// create an element set for this domain
+			FEElementSet* elset = new FEElementSet(&fem);
+			elset->Create(pd);
+			elset->SetName(pd->GetName());
+			mesh.AddElementSet(elset);
+
+			// create material point data for this domain
 
 			// initialize domain
 			pd->CreateMaterialPointData();

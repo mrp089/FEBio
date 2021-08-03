@@ -1,121 +1,95 @@
-// FEMaterial.cpp: implementation of the FEMaterial class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEMaterial.h"
-#include <math.h>
-#include <stdarg.h>
-#include "FECoreKernel.h"
+#include "DumpStream.h"
+
+REGISTER_SUPER_CLASS(FEMaterial, FEMATERIAL_ID);
 
 //-----------------------------------------------------------------------------
-bool MaterialError(const char* szfmt, ...)
-{
-	// get a pointer to the argument list
-	va_list	args;
-
-	// create the message
-	char szerr[512] = {0};
-	va_start(args, szfmt);
-	vsprintf(szerr, szfmt, args);
-	va_end(args);
-
-	return fecore_error(szerr);
-}
+BEGIN_FECORE_CLASS(FEMaterial, FECoreBase)
+	ADD_PARAMETER(m_Q, "mat_axis");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
-FEMaterial::FEMaterial(FEModel* pfem) : FECoreBase(FEMATERIAL_ID), m_pfem(pfem)
+FEMaterial::FEMaterial(FEModel* fem) : FECoreBase(fem)
 {
 	static int n = 1;
-	m_pmap = 0;
-	m_nRB = -1;
+	m_Q = mat3d::identity();
 }
 
 //-----------------------------------------------------------------------------
 FEMaterial::~FEMaterial()
 {
-	if (m_pmap) delete m_pmap; 
+	for (size_t i = 0; i < m_param.size(); ++i) delete m_param[i];
+	m_param.clear();
 }
 
 //-----------------------------------------------------------------------------
-//! Get the model this material belongs to
-FEModel* FEMaterial::GetFEModel()
+// evaluate local coordinate system at material point
+mat3d FEMaterial::GetLocalCS(const FEMaterialPoint& mp)
 {
-	return m_pfem;
-}
-
-//-----------------------------------------------------------------------------
-void FEMaterial::SetCoordinateSystemMap(FECoordSysMap* pmap)
-{
-	m_pmap = pmap;
-}
-
-//-----------------------------------------------------------------------------
-FECoordSysMap* FEMaterial::GetCoordinateSystemMap()
-{
-	return m_pmap;
-}
-
-//-----------------------------------------------------------------------------
-//! This function does nothing here. Derived classes will use this to set the 
-//! local coordinate systems for material points.
-void FEMaterial::SetLocalCoordinateSystem(FEElement& el, int n, FEMaterialPoint& mp)
-{
-	
+	FEMaterial* parent = dynamic_cast<FEMaterial*>(GetParent());
+	if (parent) {
+		mat3d Qp = parent->GetLocalCS(mp); return Qp*m_Q(mp);
+	}
+	else return m_Q(mp);
 }
 
 //-----------------------------------------------------------------------------
 //! Initial material.
 bool FEMaterial::Init()
 {
-	// initialize material axes
-	if (m_pmap) m_pmap->Init();
-
 	// initialize base class
 	return FECoreBase::Init();
 }
 
 //-----------------------------------------------------------------------------
-//! Store the material data to the archive
-void FEMaterial::Serialize(DumpStream &ar)
+void FEMaterial::AddDomain(FEDomain* dom)
 {
-	// We don't need to serialize material data for shallow copies.
-	if (ar.IsShallow()) return;
+	m_domList.AddDomain(dom);
+}
 
-	if (ar.IsSaving())
+//-----------------------------------------------------------------------------
+FEDomainParameter* FEMaterial::FindDomainParameter(const std::string& paramName)
+{
+	for (int i = 0; i < m_param.size(); ++i)
 	{
-		ar << m_nRB;
-
-		// save the local coodinate system generator
-		int nmap = (m_pmap ? 1 : 0);
-		ar << nmap;
-		if (m_pmap)
-		{
-			ar << m_pmap->GetTypeStr();
-			m_pmap->Serialize(ar);
-		}
+		FEDomainParameter* pi = m_param[i];
+		if (pi->name() == paramName) return pi;
 	}
-	else
-	{
-		ar >> m_nRB;
+	return nullptr;
+}
 
-		// read the local cordinate system
-		int nmap;
-		ar >> nmap;
-		if (m_pmap) delete m_pmap;
-		m_pmap = 0;
-
-		if (nmap)
-		{
-			FEModel& pfem = ar.GetFEModel();
-
-			char sztype[64]={0};
-			ar >> sztype;
-			m_pmap = fecore_new<FECoordSysMap>(FECOORDSYSMAP_ID, sztype, &pfem);
-			m_pmap->Serialize(ar);
-		}
-	}
-
-	// Save the material's parameters
-	FECoreBase::Serialize(ar);
+//-----------------------------------------------------------------------------
+void FEMaterial::AddDomainParameter(FEDomainParameter* p)
+{
+	assert(p);
+	m_param.push_back(p);
 }

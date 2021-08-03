@@ -1,6 +1,30 @@
-// FETendonMaterial.cpp: implementation of the FETendonMaterial class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FETendonMaterial.h"
@@ -10,22 +34,15 @@
 #endif
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FETendonMaterial, FEUncoupledMaterial)
-	ADD_PARAMETER(m_G1  , FE_PARAM_DOUBLE, "g1");
-	ADD_PARAMETER(m_G2  , FE_PARAM_DOUBLE, "g2");
-	ADD_PARAMETER(m_L1  , FE_PARAM_DOUBLE, "l1");
-	ADD_PARAMETER(m_L2  , FE_PARAM_DOUBLE, "l2");
-	ADD_PARAMETER(m_lam1, FE_PARAM_DOUBLE, "lam_max");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETendonMaterial, FEUncoupledMaterial)
+	ADD_PARAMETER(m_G1  , "g1");
+	ADD_PARAMETER(m_G2  , "g2");
+	ADD_PARAMETER(m_L1  , "l1");
+	ADD_PARAMETER(m_L2  , "l2");
+	ADD_PARAMETER(m_lam1, "lam_max");
+	ADD_PARAMETER(m_fiber, "fiber");
+END_FECORE_CLASS();
 
-//-----------------------------------------------------------------------------
-#ifdef WIN32
-inline double acosh(double x)
-{
-	if (x <= 1) return 0;
-	return log(x + sqrt(x*x - 1));
-}
-#endif
 
 //////////////////////////////////////////////////////////////////////
 // FETendonMaterial
@@ -48,11 +65,11 @@ mat3ds FETendonMaterial::DevStress(FEMaterialPoint& mp)
 	// deviatoric cauchy-stress, trs = trace[s]/3
 	mat3ds devs = pt.m_s.dev();
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber direction
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	vec3d a0 = Q * m_fiber.unitVector(mp);
 
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;
@@ -65,7 +82,7 @@ mat3ds FETendonMaterial::DevStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// calculate B*a
 	vec3d Ba = B*a;
@@ -176,10 +193,11 @@ tens4ds FETendonMaterial::DevTangent(FEMaterialPoint& mp)
 	// deviatoric cauchy-stress, trs = trace[s]/3
 	mat3ds devs = pt.m_s.dev();
 
-	vec3d a0;
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
+	// get the initial fiber direction
+	vec3d a0 = Q * m_fiber.unitVector(mp);
 
 	// calculate the current material axis lam*a = F*a0;
 	vec3d a = F*a0;
@@ -192,7 +210,7 @@ tens4ds FETendonMaterial::DevTangent(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// calculate B*a
 	vec3d Ba = B*a;
@@ -278,7 +296,7 @@ tens4ds FETendonMaterial::DevTangent(FEMaterialPoint& mp)
 	double FfDl = Fp/lat;
 	double FfD4  = 0.5*FfDl/lat;
 
-	double FfDll = FpDl/lat - FpDl/(lat*lat);
+	double FfDll = FpDl/lat - Fp/(lat*lat);
 	double FfD44 = 0.25*(FfDll - FfDl / lat)/I4;
 
 	// add all derivatives

@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FELMOptimizeMethod.h"
 #include "FEOptimizeData.h"
@@ -6,12 +34,12 @@
 #include "FECore/log.h"
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FELMOptimizeMethod, FEOptimizeMethod)
-	ADD_PARAMETER(m_objtol, FE_PARAM_DOUBLE, "obj_tol"     );
-	ADD_PARAMETER(m_fdiff , FE_PARAM_DOUBLE, "f_diff_scale");
-	ADD_PARAMETER(m_nmax  , FE_PARAM_INT   , "max_iter"    );
-	ADD_PARAMETER(m_bcov  , FE_PARAM_BOOL  , "print_cov"   );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FELMOptimizeMethod, FEOptimizeMethod)
+	ADD_PARAMETER(m_objtol, "obj_tol"     );
+	ADD_PARAMETER(m_fdiff , "f_diff_scale");
+	ADD_PARAMETER(m_nmax  , "max_iter"    );
+	ADD_PARAMETER(m_bcov  , "print_cov"   );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FELMOptimizeMethod* FELMOptimizeMethod::m_pThis = 0;
@@ -47,7 +75,7 @@ FELMOptimizeMethod::FELMOptimizeMethod()
 	m_fdiff  = 0.001;
 	m_nmax   = 100;
 	m_bcov   = 0;
-	m_loglevel = Logfile::LOG_NEVER;
+	m_loglevel = LogLevel::LOG_NEVER;
 }
 
 //-----------------------------------------------------------------------------
@@ -93,15 +121,15 @@ bool FELMOptimizeMethod::Solve(FEOptimizeData *pOpt, vector<double>& amin, vecto
 	// return value
 	double fret = 0.0;
 
-	felog.SetMode(Logfile::LOG_FILE_AND_SCREEN);
-
 	int niter = 1;
+
+	FEModel* fem = pOpt->GetFEModel();
 
 	try
 	{
 		// do the first call with lamda to intialize the minimization
 		double alamda = -1.0;
-		felog.printf("\n----- Major Iteration: %d -----\n", 0);
+		feLogEx(fem, "\n----- Major Iteration: %d -----\n", 0);
 		mrqmin(x, y, sig, a, covar, alpha, oneda, atry, beta, da, fret, objfun, alamda);
 
 		// repeat until converged
@@ -109,7 +137,7 @@ bool FELMOptimizeMethod::Solve(FEOptimizeData *pOpt, vector<double>& amin, vecto
 		bool bconv = false;
 		do
 		{
-			felog.printf("\n----- Major Iteration: %d -----\n", niter);
+			feLogEx(fem, "\n----- Major Iteration: %d -----\n", niter);
 			mrqmin(x, y, sig, a, covar, alpha, oneda, atry, beta, da, fret, objfun, alamda);
 
 			if (alamda < lam1)
@@ -118,10 +146,10 @@ bool FELMOptimizeMethod::Solve(FEOptimizeData *pOpt, vector<double>& amin, vecto
 				{
 					double df = (fprev - fret)/(fprev + fret + 1);
 					if ( df < m_objtol) bconv = true;
-					felog.printf("objective value: %lg (diff = %lg)\n\n", fret, df);
+					feLogEx(fem, "objective value: %lg (diff = %lg)\n\n", fret, df);
 				}
 			}
-			else felog.printf("\n objective value: %lg\n\n", fret);
+			else feLogEx(fem, "\n objective value: %lg\n\n", fret);
 
 			fprev = fret;
 			lam1 = alamda;
@@ -137,7 +165,7 @@ bool FELMOptimizeMethod::Solve(FEOptimizeData *pOpt, vector<double>& amin, vecto
 	}
 	catch (FEErrorTermination)
 	{
-		felog.printbox("F A T A L   E R R O R", "FEBio error terminated. Parameter optimization cannot continue.");
+		feLogErrorEx(fem, "FEBio error terminated. Parameter optimization cannot continue.");
 		return false;
 	}
 
@@ -178,7 +206,7 @@ void FELMOptimizeMethod::ObjFun(vector<double>& x, vector<double>& a, vector<dou
 	int ndata = (int)x.size();
 	vector<double> a1(a);
 	vector<double> y1(ndata);
-	int ma = a.size();
+	int ma = (int)a.size();
 	for (int i=0; i<ma; ++i)
 	{
 		FEInputParameter& var = *opt.GetInputParameter(i);
@@ -213,7 +241,7 @@ void mrqmin(vector<double>& x,
 	static double ochisq;
 	int j, k, l;
 
-	int ma = a.size();
+	int ma = (int)a.size();
 	if (alamda < 0)
 	{
 		alamda = 0.001;
@@ -272,8 +300,8 @@ void mrqcof(vector<double>& x,
 	int i, j, k, l, m;
 	double wt, sig2i, dy;
 
-	int ndata = x.size();
-	int ma = a.size();
+	int ndata = (int)x.size();
+	int ma = (int)a.size();
 	for (j=0; j<ma; j++)
 	{
 		for (k=0; k<=j; k++) alpha[j][k] = 0.0;

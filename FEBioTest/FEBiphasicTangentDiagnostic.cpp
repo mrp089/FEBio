@@ -1,25 +1,47 @@
-//
-//  FEBiphasicTangentDiagnostic.cpp
-//  FEBio2
-//
-//  Created by Gerard Ateshian on 8/20/15.
-//  Copyright (c) 2015 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEBiphasicTangentDiagnostic.h"
 #include "FETangentDiagnostic.h"
 #include "FEBioMix/FEBiphasicSolver.h"
 #include "FEBioMix/FEBiphasicSolidDomain.h"
-#include "FECore/BC.h"
-#include "FECore/FEDataLoadCurve.h"
+#include <FECore/FEPrescribedDOF.h>
+#include <FECore/FEFixedBC.h>
+#include <FECore/FELoadCurve.h>
 #include "FECore/log.h"
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEBiphasicTangentUniaxial, FEBiphasicScenario)
-	ADD_PARAMETER(m_strain  , FE_PARAM_DOUBLE, "solid_strain"  );
-	ADD_PARAMETER(m_pressure, FE_PARAM_DOUBLE, "fluid_pressure");
-	ADD_PARAMETER(m_dt      , FE_PARAM_DOUBLE, "time_step"     );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEBiphasicTangentUniaxial, FEBiphasicScenario)
+	ADD_PARAMETER(m_strain  , "solid_strain"  );
+	ADD_PARAMETER(m_pressure, "fluid_pressure");
+	ADD_PARAMETER(m_dt      , "time_step"     );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEBiphasicTangentUniaxial::FEBiphasicTangentUniaxial(FEDiagnostic* pdia) : FEBiphasicScenario(pdia)
@@ -45,7 +67,7 @@ bool FEBiphasicTangentUniaxial::Init()
         {-1,-1, 0, 0},{ 0,-1, 0,-1},{ 0, 0, 0,-1}, {-1, 0, 0, 0}
     };
   
-	FEModel& fem = GetDiagnostic()->GetFEModel();
+	FEModel& fem = *GetDiagnostic()->GetFEModel();
 	int MAX_DOFS = fem.GetDOFS().GetTotalDOFS();
 	const int dof_x = fem.GetDOFIndex("x");
 	const int dof_y = fem.GetDOFIndex("y");
@@ -57,6 +79,10 @@ bool FEBiphasicTangentUniaxial::Init()
     FEMesh& m = fem.GetMesh();
     m.CreateNodes(8);
 	m.SetDOFS(MAX_DOFS);
+
+	FENodeSet* nset[4] = { 0 };
+	for (int i = 0; i < 4; ++i) nset[i] = new FENodeSet(&fem);
+
     for (i=0; i<8; ++i)
     {
         FENode& n = m.Node(i);
@@ -64,19 +90,24 @@ bool FEBiphasicTangentUniaxial::Init()
         n.m_rid = -1;
         
         // set displacement BC's
-        if (BC[i][0] == -1) fem.AddFixedBC(i, dof_x);
-        if (BC[i][1] == -1) fem.AddFixedBC(i, dof_y);
-        if (BC[i][2] == -1) fem.AddFixedBC(i, dof_z);
-        if (BC[i][3] == -1) fem.AddFixedBC(i, dof_p);
+        if (BC[i][0] == -1) nset[0]->Add(i);
+        if (BC[i][1] == -1) nset[1]->Add(i);
+        if (BC[i][2] == -1) nset[2]->Add(i);
+        if (BC[i][3] == -1) nset[3]->Add(i);
     }
     
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_x, nset[0]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_y, nset[1]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_z, nset[2]));
+	fem.AddBoundaryCondition(new FEFixedBC(&fem, dof_p, nset[3]));
+
     // get the material
     FEMaterial* pmat = fem.GetMaterial(0);
     
     // create a biphasic domain
     FEBiphasicSolidDomain* pd = new FEBiphasicSolidDomain(&fem);
 	pd->SetMaterial(pmat);
-    pd->Create(1, FE_HEX8G8);
+    pd->Create(1, FEElementLibrary::GetElementSpecFromType(FE_HEX8G8));
 	pd->SetMatID(0);
     m.AddDomain(pd);
     FESolidElement& el = pd->Element(0);
@@ -89,15 +120,17 @@ bool FEBiphasicTangentUniaxial::Init()
     double d = sqrt(2*m_strain+1) - 1;
     
     // Add a loadcurve
-	FELoadCurve* plc = new FELinearRamp(1.0, 0.0);
-    fem.AddLoadCurve(plc);
+	FELoadCurve* plc = new FELoadCurve(&fem);
+	plc->Add(0.0, 0.0);
+	plc->Add(1.0, 1.0);
+    fem.AddLoadController(plc);
     
     // Add a prescribed BC
-    int nd[4] = {1, 2, 5, 6};
-    FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem);
-    fem.AddPrescribedBC(pdc);
-    pdc->SetDOF(dof_x).SetScale(d, 0);
-    for (i = 0; i<4; ++i) pdc->AddNode(nd[i]);
+	FENodeSet* dc = new FENodeSet(&fem);
+    dc->Add({1, 2, 5, 6});
+    FEPrescribedDOF* pdc = new FEPrescribedDOF(&fem, dof_x, dc);
+	pdc->SetScale(d, 0);
+	fem.AddBoundaryCondition(pdc);
 
 	return true;
 }
@@ -111,9 +144,9 @@ FEBiphasicTangentDiagnostic::FEBiphasicTangentDiagnostic(FEModel& fem) : FEDiagn
 	FEAnalysis* pstep = new FEAnalysis(&fem);
 
 	// create a new solver
-	FESolver* pnew_solver = fecore_new<FESolver>(FESOLVER_ID, "biphasic", &fem);
+	FESolver* pnew_solver = fecore_new<FESolver>("biphasic", &fem);
 	assert(pnew_solver);
-	pnew_solver->m_bsymm = false;
+	pnew_solver->m_msymm = REAL_UNSYMMETRIC;
 	pstep->SetFESolver(pnew_solver);
 
 	fem.AddStep(pstep);
@@ -147,20 +180,20 @@ void FEBiphasicTangentDiagnostic::print_matrix(matrix& m)
     int N = m.rows();
     int M = m.columns();
     
-    felog.printf("\n    ");
-    for (i=0; i<N; ++i) felog.printf("%15d ", i);
-    felog.printf("\n----");
-    for (i=0; i<N; ++i) felog.printf("----------------", i);
+    feLog("\n    ");
+    for (i=0; i<N; ++i) feLog("%15d ", i);
+    feLog("\n----");
+    for (i=0; i<N; ++i) feLog("----------------", i);
     
     for (i=0; i<N; ++i)
     {
-        felog.printf("\n%2d: ", i);
+        feLog("\n%2d: ", i);
         for (j=0; j<M; ++j)
         {
-            felog.printf("%15lg ", m[i][j]);
+            feLog("%15lg ", m[i][j]);
         }
     }
-    felog.printf("\n");
+    feLog("\n");
 }
 
 //-----------------------------------------------------------------------------
@@ -169,9 +202,7 @@ void FEBiphasicTangentDiagnostic::print_matrix(matrix& m)
 // of the element residual.
 bool FEBiphasicTangentDiagnostic::Run()
 {
-    Logfile::MODE oldmode = felog.SetMode(Logfile::LOG_FILE);
-    
-    FEModel& fem = GetFEModel();
+    FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
 	fem.GetTime().timeIncrement = pstep->m_dt0 = dt;
@@ -180,9 +211,9 @@ bool FEBiphasicTangentDiagnostic::Run()
     pstep->m_final_time = dt;
     
     // solve the problem
-	felog.SetMode(Logfile::LOG_NEVER);
+	fem.BlockLog();
     fem.Solve();
-	felog.SetMode(Logfile::LOG_FILE);
+	fem.UnBlockLog();
     
     FEMesh& mesh = fem.GetMesh();
     FEBiphasicSolidDomain& bd = static_cast<FEBiphasicSolidDomain&>(mesh.Domain(0));
@@ -197,7 +228,7 @@ bool FEBiphasicTangentDiagnostic::Run()
     bd.ElementBiphasicStiffness(el, k0, false);
     
     // print the element stiffness matrix
-    felog.printf("\nActual stiffness matrix:\n");
+    feLog("\nActual stiffness matrix:\n");
     print_matrix(k0);
     
     // now calculate the derivative of the residual
@@ -205,11 +236,11 @@ bool FEBiphasicTangentDiagnostic::Run()
     deriv_residual(k1);
     
     // print the approximate element stiffness matrix
-    felog.printf("\nApproximate stiffness matrix:\n");
+    feLog("\nApproximate stiffness matrix:\n");
     print_matrix(k1);
     
     // finally calculate the difference matrix
-    felog.printf("\n");
+    feLog("\n");
     matrix kd(4*N, 4*N);
     double kmax = 0, kij;
     int i0 = -1, j0 = -1, i, j;
@@ -227,12 +258,10 @@ bool FEBiphasicTangentDiagnostic::Run()
         }
     
     // print the difference
-    felog.printf("\ndifference matrix:\n");
+    feLog("\ndifference matrix:\n");
     print_matrix(kd);
     
-    felog.SetMode(oldmode);
-    
-    felog.printf("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+    feLog("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
     
     return (kmax < 1e-4);
 }
@@ -245,14 +274,13 @@ void FEBiphasicTangentDiagnostic::deriv_residual(matrix& ke)
     int i, j, nj;
     
     // get the solver
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
     FEAnalysis* pstep = fem.GetCurrentStep();
     double dt = m_pscn->m_dt;
 	fem.GetTime().timeIncrement = pstep->m_dt0 = dt;
     pstep->m_tstart = 0;
     pstep->m_tend = dt;
     pstep->m_final_time = dt;
-	FEBiphasicSolver& solver = static_cast<FEBiphasicSolver&>(*pstep->GetFESolver());
 
 	// get the DOFs
 	const int dof_x = fem.GetDOFIndex("x");
@@ -286,26 +314,26 @@ void FEBiphasicTangentDiagnostic::deriv_residual(matrix& ke)
         
         switch (nj)
         {
-            case 0: node.inc(dof_x, dx); node.m_rt.x += dx; break;
-            case 1: node.inc(dof_y, dx); node.m_rt.y += dx; break;
-            case 2: node.inc(dof_z, dx); node.m_rt.z += dx; break;
-            case 3: node.inc(dof_p, dx); break;
+            case 0: node.add(dof_x, dx); node.m_rt.x += dx; break;
+            case 1: node.add(dof_y, dx); node.m_rt.y += dx; break;
+            case 2: node.add(dof_z, dx); node.m_rt.z += dx; break;
+            case 3: node.add(dof_p, dx); break;
         }
         
-		solver.UpdateModel();
+		fem.Update();
         
         zero(f1);
         bd.ElementInternalForce(el, f1);
         
         switch (nj)
         {
-            case 0: node.dec(dof_x, dx); node.m_rt.x -= dx; break;
-            case 1: node.dec(dof_y, dx); node.m_rt.y -= dx; break;
-            case 2: node.dec(dof_z, dx); node.m_rt.z -= dx; break;
-            case 3: node.dec(dof_p, dx); break;
+            case 0: node.sub(dof_x, dx); node.m_rt.x -= dx; break;
+            case 1: node.sub(dof_y, dx); node.m_rt.y -= dx; break;
+            case 2: node.sub(dof_z, dx); node.m_rt.z -= dx; break;
+            case 3: node.sub(dof_p, dx); break;
         }
         
-		solver.UpdateModel();
+		fem.Update();
         
         for (i=0; i<4*N; ++i) ke[i][j] = -(f1[i] - f0[i])/dx;
     }

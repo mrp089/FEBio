@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEElemElemList.h"
 #include "FENodeElemList.h"
@@ -33,19 +61,20 @@ void FEElemElemList::Init()
 		for (int j=0; j<dom.Elements(); ++j, ++n)
 		{
 			FEElement& el = dom.ElementRef(j);
-			nf = m.Faces(el);
+			nf = el.Faces();
 			if (n != 0) m_ref[n] = m_ref[n-1] + nf;
 			NN += nf;
 		}
 	}
 
 	m_pel.resize(NN);
+	m_peli.resize(NN);
 
 	// TODO: do this for shells as well (if we have to)
 }
 
 //-----------------------------------------------------------------------------
-void FEElemElemList::Create(FEMesh* pmesh)
+bool FEElemElemList::Create(FEMesh* pmesh)
 {
 	// store a pointer to the mesh
 	m_pmesh = pmesh;
@@ -69,32 +98,34 @@ void FEElemElemList::Create(FEMesh* pmesh)
 			FEElement& el = dom.ElementRef(i);
 			
 			// get the number of neighbors
-			nf0 = m.Faces(el);
+			nf0 = el.Faces();
 
 			// loop over all neighbors
 			for (int j=0; j<nf0; ++j, ++M)
 			{
 				// get the face nodes
-				n0 = m.GetFace(el, j, en0);
+				n0 = el.GetFace(j, en0);
 
 				// find the neighbor element
 				m_pel[M] = 0;
+				m_peli[M] = -1;
 
 				// loop over all possible candidates
 				int nval = NEL.Valence(en0[0]);
 				FEElement** pne = NEL.ElementList(en0[0]);
+				int* pnei = NEL.ElementIndexList(en0[0]);
 				for (int k=0; k<nval; ++k)
 				{
 					// make sure we don't compare the current element
 					if (pne[k] != &el)
 					{
 						// get the number of faces
-						nf1 = m.Faces(*pne[k]);
+						nf1 = pne[k]->Faces();
 
 						// see if any of these faces match en0
 						for (int l=0; l<nf1; ++l)
 						{
-							n1 = m.GetFace(*pne[k], l, en1);
+							n1 = pne[k]->GetFace(l, en1);
 
 							// make sure the faces have the same nr of nodes
 							if (n1 == n0)
@@ -108,6 +139,7 @@ void FEElemElemList::Create(FEMesh* pmesh)
 									{
 										// found it!
 										m_pel[M] = pne[k];
+										m_peli[M] = pnei[k];
 										break;
 									}
 								}
@@ -121,6 +153,7 @@ void FEElemElemList::Create(FEMesh* pmesh)
 									{
 										// found it!
 										m_pel[M] = pne[k];
+										m_peli[M] = pnei[k];
 										break;
 									}
 								}
@@ -135,12 +168,14 @@ void FEElemElemList::Create(FEMesh* pmesh)
 	}
 
 	// TODO: do the same for shells
+
+	return true;
 }
 
 //-----------------------------------------------------------------------------
 //! Find the element neighbors for a surface. In this case, the elements are
 //! surface elements (i.e. FESurfaceElement).
-void FEElemElemList::Create(FESurface* psurf)
+bool FEElemElemList::Create(const FESurface* psurf)
 {
 	// allocate storage
 	int NE = psurf->Elements();
@@ -151,7 +186,7 @@ void FEElemElemList::Create(FESurface* psurf)
 	m_ref[0] = 0;
 	for (int j=0; j<NE; ++j)
 	{
-		FESurfaceElement& el = psurf->Element(j);
+		const FESurfaceElement& el = psurf->Element(j);
 
 		int nf = el.facet_edges();
 
@@ -170,7 +205,7 @@ void FEElemElemList::Create(FESurface* psurf)
 	int nf0, nf1;
 	for (int i=0; i<NE; ++i)
 	{
-		FESurfaceElement& el = psurf->Element(i);
+		const FESurfaceElement& el = psurf->Element(i);
 			
 		// get the number of neighbors
 		nf0 = el.facet_edges();
@@ -215,4 +250,6 @@ void FEElemElemList::Create(FESurface* psurf)
 			}
 		}
 	}
+
+	return true;
 }

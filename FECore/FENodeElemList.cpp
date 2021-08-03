@@ -1,6 +1,30 @@
-// FENodeElemList.cpp: implementation of the FENodeElemList class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FENodeElemList.h"
@@ -8,6 +32,7 @@
 #include "FEMesh.h"
 #include "FEDomain.h"
 #include "FEShellDomain.h"
+#include "DumpStream.h"
 
 //-----------------------------------------------------------------------------
 int FENodeElemList::MaxValence()
@@ -21,7 +46,7 @@ int FENodeElemList::MaxValence()
 //-----------------------------------------------------------------------------
 //! This function builds the node-element list for a surface
 
-void FENodeElemList::Create(FESurface& s)
+void FENodeElemList::Create(const FESurface& s)
 {
 	int i, j, n;
 
@@ -39,7 +64,7 @@ void FENodeElemList::Create(FESurface& s)
 	int nsize = 0;
 	for (i=0; i<ne; ++i)
 	{
-		FESurfaceElement& el = s.Element(i);
+		const FESurfaceElement& el = s.Element(i);
 
 		for (j=0; j<el.Nodes(); ++j)
 		{
@@ -66,12 +91,12 @@ void FENodeElemList::Create(FESurface& s)
 	// fill eref table
 	for (i=0; i<ne; ++i)
 	{
-		FESurfaceElement& el = s.Element(i);
+		const FESurfaceElement& el = s.Element(i);
 
 		for (j=0; j<el.Nodes(); ++j)
 		{
 			n = el.m_lnode[j];
-			m_eref[m_pn[n] + m_nval[n]] = &el;
+			m_eref[m_pn[n] + m_nval[n]] = const_cast<FESurfaceElement*>(&el);
 			m_iref[m_pn[n] + m_nval[n]] = i;
 			m_nval[n]++;
 		}
@@ -111,6 +136,7 @@ void FENodeElemList::Create(FEMesh& mesh)
 
 	// create the element reference array
 	m_eref.resize(nsize);
+	m_iref.resize(nsize);
 
 	// set eref pointers
 	m_pn[0] = 0;
@@ -127,18 +153,20 @@ void FENodeElemList::Create(FEMesh& mesh)
     // This is needed when shells are connected to solids
     // and contact interfaces need to use the shell properties
     // for auto-penalty calculation.
+	int nindex = 0;
 	for (nd=0; nd<mesh.Domains(); ++nd)
 	{
 		FEDomain& d = mesh.Domain(nd);
         if (d.Class() == FE_DOMAIN_SHELL) {
-            for (i=0; i<d.Elements(); ++i)
+            for (i=0; i<d.Elements(); ++i, ++nindex)
             {
                 FEElement& el = d.ElementRef(i);
                 for (j=0; j<el.Nodes(); ++j)
                 {
                     n = el.m_node[j];
                     m_eref[m_pn[n] + m_nval[n]] = &el;
-                    m_nval[n]++;
+					m_iref[m_pn[n] + m_nval[n]] = nindex;
+					m_nval[n]++;
                 }
             }
         }
@@ -147,14 +175,15 @@ void FENodeElemList::Create(FEMesh& mesh)
     {
         FEDomain& d = mesh.Domain(nd);
         if (d.Class() != FE_DOMAIN_SHELL) {
-            for (i=0; i<d.Elements(); ++i)
+            for (i=0; i<d.Elements(); ++i, ++nindex)
             {
                 FEElement& el = d.ElementRef(i);
                 for (j=0; j<el.Nodes(); ++j)
                 {
                     n = el.m_node[j];
                     m_eref[m_pn[n] + m_nval[n]] = &el;
-                    m_nval[n]++;
+					m_iref[m_pn[n] + m_nval[n]] = nindex;
+					m_nval[n]++;
                 }
             }
         }
@@ -233,17 +262,8 @@ void FENodeElemList::Clear()
 
 void FENodeElemList::Serialize(DumpStream& ar)
 {
-
-	if (ar.IsSaving())
-	{
-		ar << m_nval << m_eref << m_iref << m_pn;
-	}
-	else
-	{
-		ar >> m_nval >> m_eref >> m_iref >> m_pn;
-	}
+	ar & m_nval & m_iref & m_pn;
 }
-
 
 //-----------------------------------------------------------------------------
 void FENodeElemTree::Create(FESurface* ps, int k)

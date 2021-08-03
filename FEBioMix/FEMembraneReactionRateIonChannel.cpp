@@ -1,18 +1,39 @@
-//
-//  FEMembraneReactionRateIonChannel.cpp
-//  FEBioMix
-//
-//  Created by Gerard Ateshian on 4/6/18.
-//  Copyright © 2018 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEMembraneReactionRateIonChannel.h"
 
 // Material parameters for the FEMembraneReactionRateConst material
-BEGIN_PARAMETER_LIST(FEMembraneReactionRateIonChannel, FEMembraneReactionRate)
-ADD_PARAMETER2(m_g, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "g");
-ADD_PARAMETER(m_sol, FE_PARAM_INT, "sol");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEMembraneReactionRateIonChannel, FEMembraneReactionRate)
+	ADD_PARAMETER(m_g, FE_RANGE_GREATER_OR_EQUAL(0.0), "g");
+	ADD_PARAMETER(m_sol, "sol");
+END_FECORE_CLASS();
 
 bool FEMembraneReactionRateIonChannel::Init()
 {
@@ -36,8 +57,8 @@ double FEMembraneReactionRateIonChannel::ReactionRate(FEMaterialPoint& pt)
     double Fc = GetFEModel()->GetGlobalConstant("Fc");
     
     double k = 0;
-    if (ci != ce) k = R*T/pow(Fc*m_z,2)*m_g*log(ci/ce)/(ci-ce);
-    else if (ce != 0) k = R*T/pow(Fc*m_z,2)*m_g/ce;
+    if ((ci > 0) && (ce > 0))
+        k = (ci != ce) ? R*T*m_g/pow(Fc*m_z,2)*log(ci/ce)/(ci-ce) : R*T*m_g/pow(Fc*m_z,2)/ce;
     
     return k;
 }
@@ -54,7 +75,8 @@ double FEMembraneReactionRateIonChannel::Tangent_ReactionRate_Ci(FEMaterialPoint
     double Fc = GetFEModel()->GetGlobalConstant("Fc");
     
     double dkdc = 0;
-    if ((ci > 0) && (ce > 0)) dkdc = R*T/pow(Fc*m_z,2)*m_g*(ci*(1-log(ci/ce))-ce)/pow(ci-ce,2)/ci;
+    if ((ci > 0) && (ce > 0))
+        dkdc = (ci != ce) ? R*T/pow(Fc*m_z,2)*m_g*(ci*(1-log(ci/ce))-ce)/pow(ci-ce,2)/ci : -R*T*m_g/pow(ci*Fc*m_z,2)/2;
     
     return dkdc;
 }
@@ -71,7 +93,8 @@ double FEMembraneReactionRateIonChannel::Tangent_ReactionRate_Ce(FEMaterialPoint
     double Fc = GetFEModel()->GetGlobalConstant("Fc");
     
     double dkdc = 0;
-    if ((ci > 0) && (ce > 0)) dkdc = R*T/pow(Fc*m_z,2)*m_g*(ce*(1+log(ci/ce))-ci)/pow(ci-ce,2)/ce;
+    if ((ci > 0) && (ce > 0))
+        dkdc = (ci != ce) ? R*T*m_g/pow(Fc*m_z,2)*(ce*(1+log(ci/ce))-ci)/pow(ci-ce,2)/ce : -R*T*m_g/pow(ci*Fc*m_z,2)/2;
     
     return dkdc;
 }

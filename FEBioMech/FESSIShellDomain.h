@@ -1,11 +1,44 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include <FECore/FEShellDomain.h>
 #include <FECore/FEModel.h>
+#include <FECore/FEModelParam.h>
+#include <functional>
+#include "febiomech_api.h"
+#include <FECore/FEDofList.h>
+class FEDataStream;
 
 //-----------------------------------------------------------------------------
 // This class extends the FEShellDomain and implements the solid-shell interface (SSI) logic.
 // It is used by the new shell formulation.
-class FESSIShellDomain : public FEShellDomainNew
+class FEBIOMECH_API FESSIShellDomain : public FEShellDomainNew
 {
 public:
 	FESSIShellDomain(FEModel* pfem);
@@ -13,9 +46,15 @@ public:
     //! initialize domain
     //! one-time initialization, called during model initialization
 	bool Init() override;
+
+	//! serialization
+	void Serialize(DumpStream& ar) override;
     
 	//! Update element data prior to solving time step
 	void PreSolveUpdate(const FETimeInfo& timeInfo) override;
+    
+    //! Initialize shell normals
+    void InitShells() override;
     
 protected:
 	//! Find interfaces between solid element faces and shell elements
@@ -111,13 +150,17 @@ public:
 	void Update(const FETimeInfo& tp) override;
 
 protected:
-    int     m_dofx;
-    int     m_dofy;
-    int     m_dofz;
-    int     m_dofsx;
-    int     m_dofsy;
-    int     m_dofsz;
-    int     m_dofsxp;
-    int     m_dofsyp;
-    int     m_dofszp;
+	FEDofList	m_dofU;		// displacement dofs
+	FEDofList	m_dofSU;	// shell displacement dofs
+	FEDofList	m_dofR;		// rigid rotation
+    
+public:
+    bool        m_bnodalnormals; // flag for nodal (true) or element (false) normals
+
+	DECLARE_FECORE_CLASS();
 };
+
+
+//-----------------------------------------------------------------------------
+void writeIntegratedElementValue(FESSIShellDomain& dom, FEDataStream& ar, std::function<double (const FEMaterialPoint& mp)> fnc);
+void writeIntegratedElementValue(FESSIShellDomain& dom, FEDataStream& ar, std::function<vec3d  (const FEMaterialPoint& mp)> fnc);

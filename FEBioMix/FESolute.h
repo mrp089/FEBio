@@ -1,12 +1,42 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#include "FECore/FEMaterial.h"
-#include "FECore/FEGlobalData.h"
+#include <FECore/FEMaterial.h>
+#include <FECore/FEGlobalData.h>
+#include <FECore/tens4d.h>
+#include "febiomix_api.h"
 
 //-----------------------------------------------------------------------------
 //! Base class for solute diffusivity.
 //! These materials need to define the diffusivity and tangent diffusivity functions.
 //!
-class FESoluteDiffusivity : public FEMaterial
+class FEBIOMIX_API FESoluteDiffusivity : public FEMaterial
 {
 public:
 	//! constructor
@@ -16,7 +46,7 @@ public:
 	virtual mat3ds Diffusivity(FEMaterialPoint& pt) = 0;
 	
 	//! tangent of diffusivity with respect to strain
-	virtual tens4ds Tangent_Diffusivity_Strain(FEMaterialPoint& mp) = 0;
+	virtual tens4dmm Tangent_Diffusivity_Strain(FEMaterialPoint& mp) = 0;
 	
 	//! tangent of diffusivity with respect to solute concentration
 	virtual mat3ds Tangent_Diffusivity_Concentration(FEMaterialPoint& mp, const int isol) = 0;
@@ -42,7 +72,7 @@ private:
 //! Base class for solute solubility.
 //! These materials need to define the solubility and tangent solubility functions.
 //!
-class FESoluteSolubility : public FEMaterial
+class FEBIOMIX_API FESoluteSolubility : public FEMaterial
 {
 public:
 	//! constructor
@@ -83,7 +113,7 @@ private:
 //! These materials need to define the solute supply and tangent supply functions.
 //! The solute supply has units of moles/(referential mixture volume)/time
 //!
-class FESoluteSupply : public FEMaterial
+class FEBIOMIX_API FESoluteSupply : public FEMaterial
 {
 public:
 	//! constructor
@@ -126,18 +156,12 @@ public:
 	//! initialization
 	bool Init() override;
 
-	//! Serialize solute data to archive
-	void Serialize(DumpStream& ar) override;
-
-	//! Set the attribute
-	bool SetAttribute(const char* szname, const char* szval) override;
-
 public:
 	double	m_rhoT;			//!< true solute density
 	double	m_M;			//!< solute molecular weight
 	int		m_z;			//!< solute charge number
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -152,7 +176,7 @@ public:
 	bool Init() override;
 	
 	//! solute density
-	double Density() override { return m_rhoT; }
+	double Density() { return m_rhoT; }
 	
 	//! solute molecular weight
 	double MolarMass() { return m_M; }
@@ -175,9 +199,8 @@ public:
 	//! get solute local ID
 	int GetSoluteLocalID() {return m_LID;}
   
-public:
-	//! set the material attribute
-	bool SetAttribute(const char* szname, const char* szval) override;
+	//! return the solute's dof
+	int GetSoluteDOF() const { return m_ID - 1; }
 
 private:
 	FESoluteData* FindSoluteData(int nid);
@@ -192,11 +215,11 @@ public: // material parameters
 	int						m_z;		//!< charge number of solute
 
 public: // material properties
-	FEPropertyT<FESoluteDiffusivity>	m_pDiff;	//!< pointer to diffusivity material
-	FEPropertyT<FESoluteSolubility>		m_pSolub;	//!< pointer to solubility material
-	FEPropertyT<FESoluteSupply>			m_pSupp;	//!< pointer to solute supply material
+	FESoluteDiffusivity*	m_pDiff;	//!< pointer to diffusivity material
+	FESoluteSolubility*		m_pSolub;	//!< pointer to solubility material
+	FESoluteSupply*			m_pSupp;	//!< pointer to solute supply material
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -206,18 +229,12 @@ class FESBMData : public FEGlobalData
 public:
 	FESBMData(FEModel* pfem);
 
-	//! Serialize solute data to archive
-	void Serialize(DumpStream& ar) override;
-
-	//! Set the attribute
-	bool SetAttribute(const char* szname, const char* szval) override;
-
 public:
 	double	m_rhoT;			//!< SBM true density
 	double	m_M;			//!< SBM molar mass
 	int		m_z;			//!< SBM charge number
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
 
 //-----------------------------------------------------------------------------
@@ -232,7 +249,7 @@ public:
 	bool Init() override;
 	
 	//! solute density
-	double Density() override { return m_rhoT; }
+	double Density() { return m_rhoT; }
 	
 	//! solute molecular weight
 	double MolarMass() { return m_M; }
@@ -249,10 +266,6 @@ public:
 	//! get SBM ID
 	int GetSBMID() {return m_ID;}
 	
-public:
-	//! set the material attribute
-	bool SetAttribute(const char* szname, const char* szval) override;
-
 private:
 	FESBMData* FindSBMData(int nid);
 
@@ -267,5 +280,5 @@ public:
 	double					m_rhomin;	//!< minimum referential (apparent) density of SBM
 	double					m_rhomax;	//!< maximum referential (apparent) density of SBM
 	
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

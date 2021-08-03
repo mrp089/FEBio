@@ -1,10 +1,30 @@
-//
-//  FEFiberIntegrationTriangle.cpp
-//  FEBioXCode4
-//
-//  Created by Gerard Ateshian on 11/19/13.
-//  Copyright (c) 2013 Columbia University. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEFiberIntegrationTriangle.h"
@@ -63,9 +83,9 @@ private:
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEFiberIntegrationTriangle, FEFiberIntegrationScheme)
-	ADD_PARAMETER(m_nres, FE_PARAM_INT, "resolution");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFiberIntegrationTriangle, FEFiberIntegrationScheme)
+	ADD_PARAMETER(m_nres, "resolution");
+END_FECORE_CLASS();
 
 FEFiberIntegrationTriangle::FEFiberIntegrationTriangle(FEModel* pfem) : FEFiberIntegrationScheme(pfem)
 { 
@@ -337,10 +357,6 @@ void FEFiberIntegrationTriangle::InitIntegrationRule()
                 m_w[n] = AREA1796[n];
             }
             break;
-                
-            //            default:
-            //                return MaterialError("resolutio must 1-9");
-            //                break;
     }
 }
 
@@ -356,8 +372,9 @@ mat3ds FEFiberIntegrationTriangle::Stress(FEMaterialPoint& mp)
 {
     FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
     
-    // get the element's local coordinate system
-    mat3d QT = (pt.m_Q).transpose();
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+	mat3d QT = Q.transpose();
     
     // loop over all integration points
     double R;
@@ -389,8 +406,9 @@ tens4ds FEFiberIntegrationTriangle::Tangent(FEMaterialPoint& mp)
 {
     FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
     
-    // get the element's local coordinate system
-    mat3d QT = (pt.m_Q).transpose();
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+	mat3d QT = Q.transpose();
     
     // loop over all integration points
     double R;
@@ -423,8 +441,9 @@ double FEFiberIntegrationTriangle::StrainEnergyDensity(FEMaterialPoint& mp)
 {
     FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
     
-    // get the element's local coordinate system
-    mat3d QT = (pt.m_Q).transpose();
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+	mat3d QT = Q.transpose();
     
     // loop over all integration points
     double R;

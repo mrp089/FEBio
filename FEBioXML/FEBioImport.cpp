@@ -1,21 +1,48 @@
-// FEBioImport.cpp: implementation of the FEBioImport class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEBioImport.h"
-#include "FEBioParametersSection.h"
 #include "FEBioIncludeSection.h"
 #include "FEBioModuleSection.h"
 #include "FEBioControlSection.h"
+#include "FEBioControlSection3.h"
 #include "FEBioGlobalsSection.h"
 #include "FEBioMaterialSection.h"
 #include "FEBioGeometrySection.h"
 #include "FEBioBoundarySection.h"
+#include "FEBioBoundarySection3.h"
+#include "FEBioCodeSection.h"
 #include "FEBioLoadsSection.h"
 #include "FEBioContactSection.h"
 #include "FEBioConstraintsSection.h"
 #include "FEBioInitialSection.h"
+#include "FEBioInitialSection3.h"
 #include "FEBioLoadDataSection.h"
 #include "FEBioOutputSection.h"
 #include "FEBioStepSection.h"
@@ -23,6 +50,9 @@
 #include "FEBioMeshDataSection.h"
 #include "FEBioCodeSection.h"
 #include "FEBioRigidSection.h"
+#include "FEBioMeshAdaptorSection.h"
+#include "FEBioMeshSection.h"
+#include "FEBioStepSection3.h"
 #include "FECore/DataStore.h"
 #include "FECore/FEModel.h"
 #include "FECore/FECoreKernel.h"
@@ -87,9 +117,9 @@ FEBioImport::DuplicateMaterialSection::DuplicateMaterialSection()
 }
 
 //-----------------------------------------------------------------------------
-FEBioImport::MissingMaterialProperty::MissingMaterialProperty(const std::string& matName, const char* szprop)
+FEBioImport::MissingProperty::MissingProperty(const std::string& matName, const char* szprop)
 {
-	SetErrorString("Material \"%s\" needs to have property \"%s\" defined", matName.c_str(), szprop);
+	SetErrorString("Component \"%s\" needs to have property \"%s\" defined", matName.c_str(), szprop);
 }
 
 //-----------------------------------------------------------------------------
@@ -108,6 +138,12 @@ FEBioImport::DataGeneratorError::DataGeneratorError()
 FEBioImport::FailedBuildingPart::FailedBuildingPart(const std::string& partName)
 {
 	SetErrorString("Failed building part %s", partName.c_str());
+}
+
+//-----------------------------------------------------------------------------
+FEBioImport::MeshDataError::MeshDataError()
+{
+	SetErrorString("An error occurred processing mesh_data section.");
 }
 
 //-----------------------------------------------------------------------------
@@ -141,27 +177,28 @@ void FEBioImport::BuildFileSectionMap(int nversion)
 {
 	// define the file structure
 	m_map["Module"     ] = new FEBioModuleSection     (this);
-	m_map["Control"    ] = new FEBioControlSection    (this);
-	m_map["Material"   ] = new FEBioMaterialSection   (this);
-	m_map["LoadData"   ] = new FEBioLoadDataSection   (this);
 	m_map["Globals"    ] = new FEBioGlobalsSection    (this);
 	m_map["Output"     ] = new FEBioOutputSection     (this);
 
 	// older formats
 	if (nversion < 0x0200)
 	{
+		m_map["Control"    ] = new FEBioControlSection      (this);
+		m_map["Material"   ] = new FEBioMaterialSection     (this);
 	    m_map["Geometry"   ] = new FEBioGeometrySection1x   (this);
 		m_map["Boundary"   ] = new FEBioBoundarySection1x   (this);
 		m_map["Loads"      ] = new FEBioLoadsSection1x      (this);
 		m_map["Constraints"] = new FEBioConstraintsSection1x(this);
 		m_map["Step"       ] = new FEBioStepSection         (this);
 		m_map["Initial"    ] = new FEBioInitialSection      (this);
+		m_map["LoadData"   ] = new FEBioLoadDataSection     (this);
 	}
 
 	// version 2.0
 	if (nversion == 0x0200)
 	{
-		m_map["Parameters" ] = new FEBioParametersSection  (this);
+		m_map["Control"    ] = new FEBioControlSection     (this);
+		m_map["Material"   ] = new FEBioMaterialSection    (this);
 	    m_map["Geometry"   ] = new FEBioGeometrySection2   (this);
 		m_map["Initial"    ] = new FEBioInitialSection     (this);
 		m_map["Boundary"   ] = new FEBioBoundarySection2   (this);
@@ -172,12 +209,14 @@ void FEBioImport::BuildFileSectionMap(int nversion)
 		m_map["Code"       ] = new FEBioCodeSection        (this); // added in FEBio 2.4 (experimental feature!)
 		m_map["Constraints"] = new FEBioConstraintsSection2(this);
 		m_map["Step"       ] = new FEBioStepSection2       (this);
+		m_map["LoadData"   ] = new FEBioLoadDataSection    (this);
 	}
 
 	// version 2.5
 	if (nversion == 0x0205)
 	{
-		m_map["Parameters" ] = new FEBioParametersSection   (this);
+		m_map["Control"    ] = new FEBioControlSection      (this);
+		m_map["Material"   ] = new FEBioMaterialSection     (this);
 	    m_map["Geometry"   ] = new FEBioGeometrySection25   (this);
 		m_map["Include"    ] = new FEBioIncludeSection      (this);
 		m_map["Initial"    ] = new FEBioInitialSection25    (this);
@@ -187,19 +226,43 @@ void FEBioImport::BuildFileSectionMap(int nversion)
 		m_map["Discrete"   ] = new FEBioDiscreteSection25   (this);
 		m_map["Constraints"] = new FEBioConstraintsSection25(this);
 		m_map["Code"       ] = new FEBioCodeSection         (this); // added in FEBio 2.4 (experimental feature!)
+		m_map["LoadData"   ] = new FEBioLoadDataSection     (this);
 		m_map["MeshData"   ] = new FEBioMeshDataSection     (this);
-		m_map["Rigid"      ] = new FEBioRigidSection        (this); // added in FEBio 2.6 (experimental feature!)
 		m_map["Step"       ] = new FEBioStepSection25       (this);
+		m_map["MeshAdaptor"] = new FEBioMeshAdaptorSection  (this);	// added in FEBio 3.0
+	}
+
+	// version 3.0
+	if (nversion == 0x0300)
+	{
+		// we no longer allow unknown attributes
+		SetStopOnUnknownAttribute(true);
+
+		m_map["Control"    ] = new FEBioControlSection3     (this);
+		m_map["Material"   ] = new FEBioMaterialSection3    (this);
+		m_map["Geometry"   ] = new FEBioGeometrySection3    (this);
+		m_map["Mesh"       ] = new FEBioMeshSection         (this);
+		m_map["MeshDomains"] = new FEBioMeshDomainsSection  (this);
+		m_map["Include"    ] = new FEBioIncludeSection      (this);
+		m_map["Initial"    ] = new FEBioInitialSection3     (this);
+		m_map["Boundary"   ] = new FEBioBoundarySection3    (this);
+		m_map["Loads"      ] = new FEBioLoadsSection3       (this);
+		m_map["Contact"    ] = new FEBioContactSection25    (this);
+		m_map["Discrete"   ] = new FEBioDiscreteSection25   (this);
+		m_map["Constraints"] = new FEBioConstraintsSection25(this);
+		m_map["Code"       ] = new FEBioCodeSection         (this); // added in FEBio 2.4 (experimental feature!)
+		m_map["MeshData"   ] = new FEBioMeshDataSection3    (this);
+		m_map["LoadData"   ] = new FEBioLoadDataSection3    (this);
+		m_map["Rigid"      ] = new FEBioRigidSection        (this); // added in FEBio 3.0
+		m_map["Step"       ] = new FEBioStepSection3        (this);
+		m_map["MeshAdaptor"] = new FEBioMeshAdaptorSection  (this);	// added in FEBio 3.0
 	}
 }
 
 //-----------------------------------------------------------------------------
-bool FEBioImport::Parse(const char* szfile)
+bool FEBioImport::Load(FEModel& fem, const char* szfile)
 {
-	FEModel& fem = *GetFEModel();
-
-	// keep a pointer to the mesh
-	m_pMesh = &fem.GetMesh();
+	m_builder = new FEModelBuilder(fem);
 
 	// intialize some variables
 	m_szdmp[0] = 0;
@@ -220,16 +283,32 @@ bool FEBioImport::Parse(const char* szfile)
 	if (ch==0) m_szpath[0] = 0; else *(ch+1)=0;
 
 	// clean up
-	ClearFileParams();
-	fem.ClearDataArrays();
+	fem.GetMesh().ClearDataMaps();
 
 	// read the file
-	return ReadFile(szfile);
+	if (ReadFile(szfile) == false) return false;
+
+	// finish building
+	try {
+		m_builder->Finish();
+	}
+	catch (std::exception e)
+	{
+		const char* szerr = e.what();
+		if (szerr == nullptr) szerr = "(unknown exception)";
+		return errf("%s", e.what());
+	}	
+	catch (...)
+	{
+		return errf("unknown exception.");
+	}
+
+	return true;
 }
 
 //-----------------------------------------------------------------------------
 // This function parses the XML input file. The broot parameter is used to indicate
-// if this is the master file or an included file. 
+// if this is the main control file or an included file. 
 bool FEBioImport::ReadFile(const char* szfile, bool broot)
 {
 	// Open the XML file
@@ -253,11 +332,12 @@ bool FEBioImport::ReadFile(const char* szfile, bool broot)
 		// get the version number
 		ParseVersion(tag);
 
-		// FEBio2 only supports file version 1.2, 2.0, and 2.5
+		// FEBio3 only supports file version 1.2, 2.0, 2.5, and 3.0
 		int nversion = GetFileVersion();
 		if ((nversion != 0x0102) && 
 			(nversion != 0x0200) && 
-			(nversion != 0x0205)) throw InvalidVersion();
+			(nversion != 0x0205) && 
+			(nversion != 0x0300)) throw InvalidVersion();
 
 		// build the file section map based on the version number
 		BuildFileSectionMap(nversion);
@@ -271,104 +351,14 @@ bool FEBioImport::ReadFile(const char* szfile, bool broot)
 			// We need to define a default Module type since before 2.5 this tag is optional for structural mechanics model definitions.
 			GetBuilder()->SetModuleName("solid");
 
-			// Reset degrees of
-			FEModel& fem = *GetFEModel();
-			DOFS& dofs = fem.GetDOFS();
-			dofs.Reset();
-
-			// Add the default variables and degrees of freedom
-			int varD = dofs.AddVariable("displacement", VAR_VEC3);
-			dofs.SetDOFName(varD, 0, "x");
-			dofs.SetDOFName(varD, 1, "y");
-			dofs.SetDOFName(varD, 2, "z");
-			int varQ = dofs.AddVariable("rotation", VAR_VEC3);
-			dofs.SetDOFName(varQ, 0, "u");
-			dofs.SetDOFName(varQ, 1, "v");
-			dofs.SetDOFName(varQ, 2, "w");
-            int varSD = dofs.AddVariable("shell displacement", VAR_VEC3);
-            dofs.SetDOFName(varSD, 0, "sx");
-            dofs.SetDOFName(varSD, 1, "sy");
-            dofs.SetDOFName(varSD, 2, "sz");
-			int varP = dofs.AddVariable("fluid pressure");
-			dofs.SetDOFName(varP, 0, "p");
-            int varSP = dofs.AddVariable("shell fluid pressure");
-            dofs.SetDOFName(varSP, 0, "q");
-			int varQR = dofs.AddVariable("rigid rotation", VAR_VEC3);
-			dofs.SetDOFName(varQR, 0, "Ru");
-			dofs.SetDOFName(varQR, 1, "Rv");
-			dofs.SetDOFName(varQR, 2, "Rw");
-			int varT = dofs.AddVariable("temperature");
-			dofs.SetDOFName(varT, 0, "T");
-			int varV = dofs.AddVariable("velocity", VAR_VEC3);
-			dofs.SetDOFName(varV, 0, "vx");
-			dofs.SetDOFName(varV, 1, "vy");
-			dofs.SetDOFName(varV, 2, "vz");
-            int varW = dofs.AddVariable("relative fluid velocity", VAR_VEC3);
-            dofs.SetDOFName(varW, 0, "wx");
-            dofs.SetDOFName(varW, 1, "wy");
-            dofs.SetDOFName(varW, 2, "wz");
-            int varWP = dofs.AddVariable("previous relative fluid velocity", VAR_VEC3);
-            dofs.SetDOFName(varWP, 0, "wxp");
-            dofs.SetDOFName(varWP, 1, "wyp");
-            dofs.SetDOFName(varWP, 2, "wzp");
-            int varAW = dofs.AddVariable("relative fluid acceleration", VAR_VEC3);
-            dofs.SetDOFName(varAW, 0, "awx");
-            dofs.SetDOFName(varAW, 1, "awy");
-            dofs.SetDOFName(varAW, 2, "awz");
-            int varAWP = dofs.AddVariable("previous relative fluid acceleration", VAR_VEC3);
-            dofs.SetDOFName(varAWP, 0, "awxp");
-            dofs.SetDOFName(varAWP, 1, "awyp");
-            dofs.SetDOFName(varAWP, 2, "awzp");
-            int varVF = dofs.AddVariable("fluid velocity", VAR_VEC3);
-            dofs.SetDOFName(varVF, 0, "vfx");
-            dofs.SetDOFName(varVF, 1, "vfy");
-            dofs.SetDOFName(varVF, 2, "vfz");
-            int varAF = dofs.AddVariable("fluid acceleration", VAR_VEC3);
-            dofs.SetDOFName(varAF, 0, "afx");
-            dofs.SetDOFName(varAF, 1, "afy");
-            dofs.SetDOFName(varAF, 2, "afz");
-			int varEF = dofs.AddVariable("fluid dilation");
-			dofs.SetDOFName(varEF, 0, "ef");
-            int varEFP = dofs.AddVariable("previous fluid dilation");
-            dofs.SetDOFName(varEFP, 0, "efp");
-            int varAEF = dofs.AddVariable("fluid dilation tderiv");
-            dofs.SetDOFName(varAEF, 0, "aef");
-            int varAEP = dofs.AddVariable("previous fluid dilation tderiv");
-            dofs.SetDOFName(varAEP, 0, "aefp");
-			int varQP = dofs.AddVariable("previous rotation", VAR_VEC3);
-			dofs.SetDOFName(varQP, 0, "up");
-			dofs.SetDOFName(varQP, 1, "vp");
-			dofs.SetDOFName(varQP, 2, "wp");
-            int varSDP = dofs.AddVariable("previous shell displacement", VAR_VEC3);
-            dofs.SetDOFName(varSDP, 0, "sxp");
-            dofs.SetDOFName(varSDP, 1, "syp");
-            dofs.SetDOFName(varSDP, 2, "szp");
-			int varQV = dofs.AddVariable("shell velocity", VAR_VEC3);
-			dofs.SetDOFName(varQV, 0, "svx");
-			dofs.SetDOFName(varQV, 1, "svy");
-			dofs.SetDOFName(varQV, 2, "svz");
-			int varQA = dofs.AddVariable("shell acceleration", VAR_VEC3);
-			dofs.SetDOFName(varQA, 0, "sax");
-			dofs.SetDOFName(varQA, 1, "say");
-			dofs.SetDOFName(varQA, 2, "saz");
-			int varQVP = dofs.AddVariable("previous shell velocity", VAR_VEC3);
-			dofs.SetDOFName(varQVP, 0, "svxp");
-			dofs.SetDOFName(varQVP, 1, "svyp");
-			dofs.SetDOFName(varQVP, 2, "svzp");
-			int varQAP = dofs.AddVariable("previous shell acceleration", VAR_VEC3);
-			dofs.SetDOFName(varQAP, 0, "saxp");
-			dofs.SetDOFName(varQAP, 1, "sayp");
-			dofs.SetDOFName(varQAP, 2, "sazp");
-			// must be last variable definition!!
-			int varC = dofs.AddVariable("concentration", VAR_ARRAY); // we start with zero concentrations
-            // must be last variable definition!!
-            int varSC = dofs.AddVariable("shell concentration", VAR_ARRAY); // we start with zero concentrations
+			// set default variables for older files.
+			GetBuilder()->SetDefaultVariables();
 		}
 
 		// parse the file
 		++tag;
 
-		// From version 2.5 and up the first tag of the master file has to be the Module tag.
+		// From version 2.5 and up the first tag of the (main control) file has to be the Module tag.
 		if (broot && (nversion >= 0x0205))
 		{
 			if (tag != "Module")
@@ -444,22 +434,29 @@ bool FEBioImport::ReadFile(const char* szfile, bool broot)
 	// --- XML Reader Exceptions ---
 	catch (XMLReader::Error& e)
 	{
-		return errf("FATAL ERROR: %s (line %d)\n", e.GetErrorString(), xml.GetCurrentLine());
+		return errf("%s", e.what());
 	}
 	// --- FEBioImport Exceptions ---
 	catch (FEFileException& e)
 	{
-		return errf("FATAL ERROR: %s (line %d)\n", e.GetErrorString(), xml.GetCurrentLine());
+		return errf("%s (line %d)\n", e.GetErrorString(), xml.GetCurrentLine());
 	}
 	// --- Exception from DataStore ---
 	catch (UnknownDataField& e)
 	{
-		return errf("Fatal Error: \"%s\" is not a valid field variable name (line %d)\n", e.m_szdata, xml.GetCurrentLine()-1);
+		return errf("\"%s\" is not a valid field variable name (line %d)\n", e.what(), xml.GetCurrentLine()-1);
+	}
+	// std::exception
+	catch (std::exception e)
+	{
+		const char* szerr = e.what();
+		if (szerr == nullptr) szerr = "(unknown exception)";
+		return errf("%s", szerr);
 	}
 	// --- Unknown exceptions ---
 	catch (...)
 	{
-		return errf("FATAL ERROR: unrecoverable error (line %d)\n", xml.GetCurrentLine());
+		return errf("unrecoverable error (line %d)\n", xml.GetCurrentLine());
 		return false;
 	}
 
@@ -535,7 +532,7 @@ FENodeSet* FEBioImport::ParseNodeSet(XMLTag& tag, const char* szatt)
 		if (szname == 0) szname = "_unnamed";
 
 		// create a new node set
-		pns = new FENodeSet(&mesh);
+		pns = fecore_alloc(FENodeSet, GetFEModel());
 		pns->SetName(szname);
 
 		// add the nodeset to the mesh
@@ -547,7 +544,7 @@ FENodeSet* FEBioImport::ParseNodeSet(XMLTag& tag, const char* szatt)
 			// This format is deprecated
 			vector<int> l;
 			fexml::readList(tag, l);
-			for (int i=0; i<l.size(); ++i) pns->add(GetBuilder()->FindNodeFromID(l[i]));
+			for (int i=0; i<l.size(); ++i) pns->Add(GetBuilder()->FindNodeFromID(l[i]));
 		}
 		else
 		{
@@ -555,13 +552,13 @@ FENodeSet* FEBioImport::ParseNodeSet(XMLTag& tag, const char* szatt)
 			++tag;
 			do
 			{
-				if (tag == "node")
+				if ((tag == "n") || (tag == "node"))
 				{
 					int nid = -1;
 					tag.AttributeValue("id", nid);
 
 					nid = GetBuilder()->FindNodeFromID(nid);
-					pns->add(nid);
+					pns->Add(nid);
 				}
 				else if (tag == "NodeSet")
 				{
@@ -575,13 +572,13 @@ FENodeSet* FEBioImport::ParseNodeSet(XMLTag& tag, const char* szatt)
 					if (ps == 0) throw XMLReader::InvalidAttributeValue(tag, szatt, szset);
 
 					// add the node set
-					pns->add(*ps);
+					pns->Add(ps->GetNodeList());
 				}
 				else if (tag == "node_list")
 				{
 					vector<int> nl;
 					fexml::readList(tag, nl);
-					for (int i = 0; i<nl.size(); ++i) pns->add(GetBuilder()->FindNodeFromID(nl[i]));
+					for (int i = 0; i<nl.size(); ++i) pns->Add(GetBuilder()->FindNodeFromID(nl[i]));
 				}
 				else throw XMLReader::InvalidTag(tag);
 				++tag;
@@ -599,7 +596,7 @@ FESurface* FEBioImport::ParseSurface(XMLTag& tag, const char* szatt)
 	FEMesh& m = GetFEModel()->GetMesh();
 
 	// create new surface
-	FESurface* psurf = new FESurface(&m);
+	FESurface* psurf = fecore_alloc(FESurface, GetFEModel());
 
 	// see if the surface is referenced by a set of defined explicitly
 	const char* szset = tag.AttributeValue(szatt, true);
@@ -610,16 +607,7 @@ FESurface* FEBioImport::ParseSurface(XMLTag& tag, const char* szatt)
 
 		// see if we can find the facet set
 		FEMesh& m = GetFEModel()->GetMesh();
-		FEFacetSet* ps = 0;
-		for (int i=0; i<m.FacetSets(); ++i)
-		{
-			FEFacetSet& fi = m.FacetSet(i);
-			if (strcmp(fi.GetName(), szset) == 0)
-			{
-				ps = &fi;
-				break;
-			}
-		}
+		FEFacetSet* ps = m.FindFacetSet(szset);
 
 		// create a surface from the facet set
 		if (ps)
@@ -660,51 +648,4 @@ FESurface* FEBioImport::ParseSurface(XMLTag& tag, const char* szatt)
 	}
 
 	return psurf;
-}
-
-//-----------------------------------------------------------------------------
-void FEBioImport::ParseDataArray(XMLTag& tag, FEDataArray& map, const char* sztag)
-{
-	int dataType = map.DataSize();
-
-	if (dataType == FE_DOUBLE)
-	{
-		++tag;
-		do
-		{
-			if (tag == sztag)
-			{
-				int nid;
-				tag.AttributeValue("lid", nid);
-
-				double v;
-				tag.value(v);
-
-				map.setValue(nid - 1, v);
-			}
-			else throw XMLReader::InvalidTag(tag);
-			++tag;
-		}
-		while (!tag.isend());
-	}
-	else if (dataType == FE_VEC3D)
-	{
-		++tag;
-		do
-		{
-			if (tag == sztag)
-			{
-				int nid;
-				tag.AttributeValue("lid", nid);
-
-				double v[3];
-				tag.value(v, 3);
-
-				map.setValue(nid - 1, vec3d(v[0], v[1], v[2]));
-			}
-			else throw XMLReader::InvalidTag(tag);
-			++tag;
-		}
-		while (!tag.isend());
-	}
 }

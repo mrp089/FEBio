@@ -1,14 +1,32 @@
-// vector.h: interface for the vector class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_VECTOR_H__9F132D73_20B9_4AE9_A40B_EE4FB9D0FABD__INCLUDED_)
-#define AFX_VECTOR_H__9F132D73_20B9_4AE9_A40B_EE4FB9D0FABD__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include <math.h>
 #include <memory.h>
 #include <vector>
@@ -18,6 +36,7 @@
 using namespace std;
 
 class FEMesh;
+class FEDofList;
 
 double FECORE_API operator*(const vector<double>& a, const vector<double>& b);
 vector<double> FECORE_API operator - (vector<double>& a, vector<double>& b);
@@ -28,6 +47,8 @@ void FECORE_API operator+=(vector<double>& a, const vector<double>& b);
 void FECORE_API operator-=(vector<double>& a, const vector<double>& b);
 void FECORE_API operator*=(vector<double>& a, double b);
 vector<double> FECORE_API operator+(const vector<double>& a, const vector<double>& b);
+vector<double> FECORE_API operator*(const vector<double>& a, double g);
+vector<double> FECORE_API operator - (const vector<double>& a);
 
 // copy vector and scale
 void FECORE_API vcopys(vector<double>& a, const vector<double>& b, double s);
@@ -48,8 +69,10 @@ void FECORE_API gather(vector<double>& v, FEMesh& mesh, const vector<int>& dof);
 
 // scatter operation (copy vector data to mesh)
 void FECORE_API scatter(vector<double>& v, FEMesh& mesh, int ndof);
+void FECORE_API scatter3(vector<double>& v, FEMesh& mesh, int ndof1, int ndof2, int ndof3);
+void FECORE_API scatter(vector<double>& v, FEMesh& mesh, const FEDofList& dofs);
 
 // calculate l2 norm of vector
 double FECORE_API l2_norm(const vector<double>& v);
-
-#endif // AFX_VECTOR_H__9F132D73_20B9_4AE9_A40B_EE4FB9D0FABD__INCLUDED_
+double FECORE_API l2_sqrnorm(const vector<double>& v);
+double l2_norm(double* x, int n);

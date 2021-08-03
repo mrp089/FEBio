@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBioFluidData.h"
 #include "FEFluid.h"
@@ -7,8 +35,8 @@
 //-----------------------------------------------------------------------------
 double FENodeFluidXVel::value(int nnode)
 {
-    const int dof_VFX = m_pfem->GetDOFIndex("wx");
-    FEMesh& mesh = m_pfem->GetMesh();
+    const int dof_VFX = GetFEModel()->GetDOFIndex("wx");
+    FEMesh& mesh = GetFEModel()->GetMesh();
     FENode& node = mesh.Node(nnode);
     return node.get(dof_VFX);
 }
@@ -16,8 +44,8 @@ double FENodeFluidXVel::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeFluidYVel::value(int nnode)
 {
-    const int dof_VFY = m_pfem->GetDOFIndex("wy");
-    FEMesh& mesh = m_pfem->GetMesh();
+    const int dof_VFY = GetFEModel()->GetDOFIndex("wy");
+    FEMesh& mesh = GetFEModel()->GetMesh();
     FENode& node = mesh.Node(nnode);
     return node.get(dof_VFY);
 }
@@ -25,8 +53,8 @@ double FENodeFluidYVel::value(int nnode)
 //-----------------------------------------------------------------------------
 double FENodeFluidZVel::value(int nnode)
 {
-    const int dof_VFZ = m_pfem->GetDOFIndex("wz");
-    FEMesh& mesh = m_pfem->GetMesh();
+    const int dof_VFZ = GetFEModel()->GetDOFIndex("wz");
+    FEMesh& mesh = GetFEModel()->GetMesh();
     FENode& node = mesh.Node(nnode);
     return node.get(dof_VFZ);
 }
@@ -107,7 +135,7 @@ double FELogFluidDensity::value(FEElement& el)
 {
     double val = 0.0;
     int nint = el.GaussPoints();
-    FEMaterial* pmat = m_pfem->GetMaterial(el.GetMatID());
+    FEMaterial* pmat = GetFEModel()->GetMaterial(el.GetMatID());
     FEFluid* pfmat = dynamic_cast<FEFluid*>(pmat);
     if (pfmat) {
         for (int i=0; i<nint; ++i)

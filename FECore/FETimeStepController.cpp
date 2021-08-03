@@ -1,26 +1,60 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FETimeStepController.h"
-#include "FEDataLoadCurve.h"
+#include "FELoadCurve.h"
 #include "FEAnalysis.h"
 #include "FEModel.h"
+#include "FEPointFunction.h"
+#include "DumpStream.h"
 #include "log.h"
 
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
 #define MAX(a,b) ((a)>(b) ? (a) : (b))
 
-//-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FETimeStepController, FEParamContainer)
-	ADD_PARAMETER(m_maxretries, FE_PARAM_INT, "max_retries");
-	ADD_PARAMETER(m_iteopt, FE_PARAM_INT, "opt_iter");
-	ADD_PARAMETER(m_dtmin, FE_PARAM_DOUBLE, "dtmin");
-	ADD_PARAMETER(m_dtmax, FE_PARAM_DOUBLE, "dtmax");
-	ADD_PARAMETER(m_naggr, FE_PARAM_INT, "aggressiveness");
-	ADD_PARAMETER(m_dtforce, FE_PARAM_BOOL, "dtforce");
-END_PARAMETER_LIST();
+REGISTER_SUPER_CLASS(FETimeStepController, FETIMECONTROLLER_ID);
 
 //-----------------------------------------------------------------------------
-FETimeStepController::FETimeStepController(FEAnalysis* step) : m_step(step)
+BEGIN_FECORE_CLASS(FETimeStepController, FEParamContainer)
+	ADD_PARAMETER(m_maxretries, "max_retries");
+	ADD_PARAMETER(m_iteopt    , "opt_iter");
+	ADD_PARAMETER(m_dtmin     , "dtmin");
+	ADD_PARAMETER(m_dtmax     , "dtmax");
+	ADD_PARAMETER(m_naggr     , "aggressiveness");
+	ADD_PARAMETER(m_dtforce   , "dtforce");
+	ADD_PARAMETER(m_must_points, "must_points");
+END_FECORE_CLASS();
+
+//-----------------------------------------------------------------------------
+FETimeStepController::FETimeStepController(FEModel* fem) : FECoreBase(fem)
 {
+	m_step = nullptr; // must be set with SetAnalysis
 	m_nretries = 0;
 	m_maxretries = 5;
 	m_naggr = 0;
@@ -37,9 +71,17 @@ FETimeStepController::FETimeStepController(FEAnalysis* step) : m_step(step)
 }
 
 //-----------------------------------------------------------------------------
+void FETimeStepController::SetAnalysis(FEAnalysis* step)
+{
+	m_step = step;
+}
+
+//-----------------------------------------------------------------------------
 //! copy from
 void FETimeStepController::CopyFrom(FETimeStepController* tc)
 {
+	assert(m_step);
+
 	m_naggr = tc->m_naggr;
 	m_nmplc = tc->m_nmplc;
 	m_iteopt = tc->m_iteopt;
@@ -48,6 +90,8 @@ void FETimeStepController::CopyFrom(FETimeStepController* tc)
 
 	m_ddt = tc->m_ddt;
 	m_dtp = tc->m_dtp;
+
+	m_must_points = tc->m_must_points;
 }
 
 //-----------------------------------------------------------------------------
@@ -59,11 +103,28 @@ bool FETimeStepController::Init()
 
 	// steal the load curve param from the dtmax parameter
 	FEParam* p = FindParameterFromData((void*) &m_dtmax); assert(p);
-	int nlc = p->GetLoadCurve();
-	if (nlc >= 0)
+	FEModel* fem = GetFEModel();
+	FELoadController* plc = fem->GetLoadController(p);
+	if (plc)
 	{
-		m_nmplc = nlc;
-		p->SetLoadCurve(-1);
+		m_nmplc = plc->GetID();
+		fem->DetachLoadController(p);
+
+		// if a must-point curve is defined and the must-points are empty,
+		// we copy the load curve points to the must-points
+		if (m_must_points.empty())
+		{
+			FELoadCurve* lc = dynamic_cast<FELoadCurve*>(plc);
+			if (lc)
+			{
+				FEPointFunction& f = lc->GetFunction();
+				for (int i = 0; i < f.Points(); ++i)
+				{
+					double ti = f.LoadPoint(i).time;
+					m_must_points.push_back(ti);
+				}
+			}
+		}
 	}
 
 	// initialize "previous" time step
@@ -77,6 +138,8 @@ bool FETimeStepController::Init()
 void FETimeStepController::Reset()
 {
 	m_dtp = m_step->m_dt0;
+	m_nmust = -1;
+	m_next_must = -1;
 }
 
 //-----------------------------------------------------------------------------
@@ -84,7 +147,8 @@ void FETimeStepController::Reset()
 
 void FETimeStepController::Retry()
 {
-	felog.printf("Retrying time step. Retry attempt %d of max %d\n\n", m_nretries + 1, m_maxretries);
+	FEModel* fem = m_step->GetFEModel();
+	feLogEx(fem, "Retrying time step. Retry attempt %d of max %d\n\n", m_nretries + 1, m_maxretries);
 
 	// adjust time step
 	double dt = m_step->m_dt;
@@ -94,7 +158,7 @@ void FETimeStepController::Retry()
 	if (m_naggr == 0) dtn = dt - m_ddt;
 	else dtn = dt*0.5;
 
-	felog.printf("\nAUTO STEPPER: retry step, dt = %lg\n\n", dtn);
+	feLogEx(fem, "\nAUTO STEPPER: retry step, dt = %lg\n\n", dtn);
 
 	// increase retry counter
 	m_nretries++;
@@ -120,11 +184,11 @@ void FETimeStepController::Retry()
 
 void FETimeStepController::AutoTimeStep(int niter)
 {
-	FEModel& fem = m_step->GetFEModel();
+	FEModel* fem = m_step->GetFEModel();
 	double dt = m_step->m_dt;
 
 	double dtn = m_dtp;
-	double told = fem.GetCurrentTime();
+	double told = fem->GetCurrentTime();
 
 	// make sure the timestep size is at least the minimum
 	if (dtn < m_dtmin) dtn = m_dtmin;
@@ -136,8 +200,9 @@ void FETimeStepController::AutoTimeStep(int niter)
 	// we take the max step size from the lc
 	if (m_nmplc >= 0)
 	{
-		FELoadCurve& lc = *fem.GetLoadCurve(m_nmplc);
-		dtmax = lc.Value(told);
+		FELoadCurve& mpc = *(dynamic_cast<FELoadCurve*>(fem->GetLoadController(m_nmplc)));
+		FEPointFunction& lc = mpc.GetFunction();
+		dtmax = lc.value(told);
 	}
 
 	// adjust time step size
@@ -166,9 +231,9 @@ void FETimeStepController::AutoTimeStep(int niter)
 
 		// Report new time step size
 		if (dtn > dt)
-			felog.printf("\nAUTO STEPPER: increasing time step, dt = %lg\n\n", dtn);
+			feLogEx(fem, "\nAUTO STEPPER: increasing time step, dt = %lg\n\n", dtn);
 		else if (dtn < dt)
-			felog.printf("\nAUTO STEPPER: decreasing time step, dt = %lg\n\n", dtn);
+			feLogEx(fem, "\nAUTO STEPPER: decreasing time step, dt = %lg\n\n", dtn);
 	}
 
 	// Store this time step value. This is the value that will be used to evaluate
@@ -178,13 +243,13 @@ void FETimeStepController::AutoTimeStep(int niter)
 	m_dtp = dtn;
 
 	// check for mustpoints
-	if (m_nmplc >= 0) dtn = CheckMustPoints(told, dtn);
+	if (m_must_points.empty() == false) dtn = CheckMustPoints(told, dtn);
 
 	// make sure we are not exceeding the final time
 	if (told + dtn > m_step->m_tend)
 	{
 		dtn = m_step->m_tend - told;
-		felog.printf("MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtn);
+		feLogEx(fem, "MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtn);
 	}
 
 	// store time step size
@@ -200,17 +265,17 @@ void FETimeStepController::AutoTimeStep(int niter)
 //! \return updated time step.
 double FETimeStepController::CheckMustPoints(double t, double dt)
 {
-	FEModel& fem = m_step->GetFEModel();
+	FEModel* fem = m_step->GetFEModel();
 
 	double tnew = t + dt;
 	double dtnew = dt;
 	const double eps = m_step->m_tend*1e-12;
 	double tmust = tnew + eps;
-	FEDataLoadCurve& lc = dynamic_cast<FEDataLoadCurve&>(*fem.GetLoadCurve(m_nmplc));
 	m_nmust = -1;
-	if (m_next_must < lc.Points())
+	const int points = (int)m_must_points.size();
+	if (m_next_must < points)
 	{
-		FEDataLoadCurve::LOADPOINT lp;
+		double lp;
 		if (m_next_must < 0)
 		{
 			// find the first must-point that is on or past this time
@@ -218,34 +283,34 @@ double FETimeStepController::CheckMustPoints(double t, double dt)
 			bool bfound = false;
 			do
 			{
-				lp = lc.LoadPoint(m_next_must);
-				if ((tmust > lp.time) && (fabs(tnew - lp.time) > 1e-12)) ++m_next_must;
+				lp = m_must_points[m_next_must];
+				if ((tmust > lp) && (fabs(tnew - lp) > 1e-12)) ++m_next_must;
 				else bfound = true;
-			} while ((bfound == false) && (m_next_must < lc.Points()));
+			} while ((bfound == false) && (m_next_must < points));
 
 			// make sure we did not pass all must points
-			if (m_next_must >= lc.Points()) return dt;
+			if (m_next_must >= points) return dt;
 		}
-		else lp = lc.LoadPoint(m_next_must);
+		else lp = m_must_points[m_next_must];
 
 		// TODO: what happens when dtnew < dtmin and the next time step fails??
-		if (tmust > lp.time)
+		if (tmust > lp)
 		{
-			dtnew = lp.time - t;
-			felog.printf("MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtnew);
+			dtnew = lp - t;
+			feLogEx(fem, "MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtnew);
 			m_nmust = m_next_must++;
 		}
-		else if (fabs(tnew - lp.time) < 1e-12)
+		else if (fabs(tnew - lp) < 1e-12)
 		{
 			m_nmust = m_next_must++;
-			tnew = lp.time;
+			tnew = lp;
 			dtnew = tnew - t;
-			felog.printf("MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtnew);
+			feLogEx(fem, "MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtnew);
 		}
 		else if (tnew > m_step->m_tend)
 		{
 			dtnew = m_step->m_tend - t;
-			felog.printf("MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtnew);
+			feLogEx(fem, "MUST POINT CONTROLLER: adjusting time step. dt = %lg\n\n", dtnew);
 			m_nmust = m_next_must++;
 		}
 	}
@@ -256,34 +321,12 @@ double FETimeStepController::CheckMustPoints(double t, double dt)
 //! serialize
 void FETimeStepController::Serialize(DumpStream& ar)
 {
-	if (ar.IsSaving())
-	{
-		ar << m_naggr;
-		ar << m_nretries;
-		ar << m_maxretries;
-		ar << m_nmplc;
-		ar << m_nmust;
-		ar << m_next_must;
-		ar << m_iteopt;
-		ar << m_dtmin;
-		ar << m_dtmax;
-
-		ar << m_ddt;
-		ar << m_dtp;
-	}
-	else
-	{
-		ar >> m_naggr;
-		ar >> m_nretries;
-		ar >> m_maxretries;
-		ar >> m_nmplc;
-		ar >> m_nmust;
-		ar >> m_next_must;
-		ar >> m_iteopt;
-		ar >> m_dtmin;
-		ar >> m_dtmax;
-
-		ar >> m_ddt;
-		ar >> m_dtp;
-	}
+	FECoreBase::Serialize(ar);
+	ar & m_nretries;
+	ar & m_nmplc;
+	ar & m_nmust;
+	ar & m_next_must;
+	ar & m_ddt & m_dtp;
+	ar & m_step;
+	ar & m_must_points;
 }

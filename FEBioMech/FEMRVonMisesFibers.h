@@ -1,15 +1,32 @@
-// FEVonMisesFibers.h: interface for the FEVonMisesFibers class.
-//
-//////////////////////////////////////////////////////////////////////
- //en gros, les lignes suivantes veulent dire: si le current file n'a pas encore été inclus, définis et compile-le, sinon passe ton chemin
-#if !defined(AFX_FEVonMisesFibers_H__E918D89B_4CCD_44B9_9731_19CEC4EDF406__INCLUDED_)
-#define AFX_FEVonMisesFibers_H__E918D89B_4CCD_44B9_9731_19CEC4EDF406__INCLUDED_
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-//si la version de visual basic est suffisamment récente, on peut utiliser pragma once pour s'assurer qu'on inclut le fichier une seule fois:
-#if _MSC_VER > 1000
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "FEUncoupledMaterial.h"
 #include "FEUncoupledFiberExpLinear.h"
 
@@ -26,9 +43,6 @@ public:
 public:
 	double	m_kf;
 	double	m_tp;
-
-	// declare parameter list
-	DECLARE_PARAMETER_LIST();
 };
 
 //-----------------------------------------------------------------------------
@@ -62,10 +76,8 @@ public:
 	FEMaterialPoint* CreateMaterialPointData() override;
 
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 
 protected:
 	FEUncoupledFiberExpLinear	m_fib;
 };
-
-#endif // !defined(AFX_FEVonMisesFibers_H__E918D89B_4CCD_44B9_9731_19CEC4EDF406__INCLUDED_)

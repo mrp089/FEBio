@@ -1,11 +1,32 @@
-//
-//  FETiedMultiphasicInterface.cpp
-//  FEBioMix
-//
-//  Created by Gerard Ateshian on 1/22/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FETiedMultiphasicInterface.h"
 #include "FEBiphasic.h"
 #include "FEBiphasicSolute.h"
@@ -14,27 +35,29 @@
 #include "FECore/FEModel.h"
 #include "FECore/FEAnalysis.h"
 #include "FECore/FENormalProjection.h"
+#include <FECore/FELinearSystem.h>
 #include "FECore/log.h"
 
 //-----------------------------------------------------------------------------
 // Define sliding interface parameters
-BEGIN_PARAMETER_LIST(FETiedMultiphasicInterface, FEContactInterface)
-ADD_PARAMETER(m_blaugon  , FE_PARAM_BOOL  , "laugon"             );
-ADD_PARAMETER(m_atol     , FE_PARAM_DOUBLE, "tolerance"          );
-ADD_PARAMETER(m_gtol     , FE_PARAM_DOUBLE, "gaptol"             );
-ADD_PARAMETER(m_ptol     , FE_PARAM_DOUBLE, "ptol"               );
-ADD_PARAMETER(m_epsn     , FE_PARAM_DOUBLE, "penalty"            );
-ADD_PARAMETER(m_bautopen , FE_PARAM_BOOL  , "auto_penalty"       );
-ADD_PARAMETER(m_btwo_pass, FE_PARAM_BOOL  , "two_pass"           );
-ADD_PARAMETER(m_knmult   , FE_PARAM_INT   , "knmult"             );
-ADD_PARAMETER(m_stol     , FE_PARAM_DOUBLE, "search_tol"         );
-ADD_PARAMETER(m_epsp     , FE_PARAM_DOUBLE, "pressure_penalty"   );
-ADD_PARAMETER(m_epsc     , FE_PARAM_DOUBLE, "concentration_penalty");
-ADD_PARAMETER(m_bsymm    , FE_PARAM_BOOL  , "symmetric_stiffness");
-ADD_PARAMETER(m_srad     , FE_PARAM_DOUBLE, "search_radius"      );
-ADD_PARAMETER(m_naugmin  , FE_PARAM_INT   , "minaug"             );
-ADD_PARAMETER(m_naugmax  , FE_PARAM_INT   , "maxaug"             );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETiedMultiphasicInterface, FEContactInterface)
+	ADD_PARAMETER(m_atol     , "tolerance"          );
+	ADD_PARAMETER(m_gtol     , "gaptol"             );
+	ADD_PARAMETER(m_ptol     , "ptol"               );
+    ADD_PARAMETER(m_ctol     , "ctol"               );
+	ADD_PARAMETER(m_epsn     , "penalty"            );
+	ADD_PARAMETER(m_bautopen , "auto_penalty"       );
+    ADD_PARAMETER(m_bupdtpen , "update_penalty"     );
+	ADD_PARAMETER(m_btwo_pass, "two_pass"           );
+	ADD_PARAMETER(m_knmult   , "knmult"             );
+	ADD_PARAMETER(m_stol     , "search_tol"         );
+	ADD_PARAMETER(m_epsp     , "pressure_penalty"   );
+	ADD_PARAMETER(m_epsc     , "concentration_penalty");
+	ADD_PARAMETER(m_bsymm    , "symmetric_stiffness");
+	ADD_PARAMETER(m_srad     , "search_radius"      );
+	ADD_PARAMETER(m_naugmin  , "minaug"             );
+	ADD_PARAMETER(m_naugmax  , "maxaug"             );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FETiedMultiphasicSurface::Data::Data()
@@ -48,7 +71,21 @@ FETiedMultiphasicSurface::Data::Data()
     m_epsn = 1.0;
     m_epsp = 1.0;
     m_pg   = 0.0;
-    m_pme  = (FESurfaceElement*)0;
+}
+
+void FETiedMultiphasicSurface::Data::Serialize(DumpStream& ar)
+{
+	FEBiphasicContactPoint::Serialize(ar);
+	ar & m_Gap;
+	ar & m_dg;
+	ar & m_nu;
+	ar & m_rs;
+	ar & m_Lmd;
+	ar & m_Lmp;
+	ar & m_epsn;
+	ar & m_epsp;
+	ar & m_epsc;
+	ar & m_pg;
 }
 
 //-----------------------------------------------------------------------------
@@ -58,8 +95,14 @@ FETiedMultiphasicSurface::Data::Data()
 FETiedMultiphasicSurface::FETiedMultiphasicSurface(FEModel* pfem) : FEBiphasicContactSurface(pfem)
 {
     m_bporo = m_bsolu = false;
-    m_pfem = pfem;
     m_dofC = -1;
+}
+
+//-----------------------------------------------------------------------------
+//! create material point data
+FEMaterialPoint* FETiedMultiphasicSurface::CreateMaterialPoint()
+{
+	return new FETiedMultiphasicSurface::Data;
 }
 
 //-----------------------------------------------------------------------------
@@ -113,7 +156,7 @@ bool FETiedMultiphasicSurface::Init()
     if (Elements()) {
         FESurfaceElement& se = Element(0);
         // get the element this surface element belongs to
-        FEElement* pe = m_pMesh->FindElementFromID(se.m_elem[0]);
+        FEElement* pe = se.m_elem[0];
         if (pe)
         {
             // get the material
@@ -133,15 +176,15 @@ bool FETiedMultiphasicSurface::Init()
             {
                 m_bporo = m_bsolu = true;
                 nsol = 1;
-                m_sid.assign(nsol, pbs->GetSolute()->GetSoluteID());
+                m_sid.assign(nsol, pbs->GetSolute()->GetSoluteID() - 1);
             }
             else if (pt)
             {
                 m_bporo = m_bsolu = true;
                 nsol = 2;
                 m_sid.resize(nsol);
-                m_sid[0] = pt->m_pSolute[0]->GetSoluteID();
-                m_sid[1] = pt->m_pSolute[1]->GetSoluteID();
+                m_sid[0] = pt->m_pSolute[0]->GetSoluteID() - 1;
+                m_sid[1] = pt->m_pSolute[1]->GetSoluteID() - 1;
             }
             else if (pmp)
             {
@@ -149,7 +192,7 @@ bool FETiedMultiphasicSurface::Init()
                 nsol = pmp->Solutes();
                 m_sid.resize(nsol);
                 for (int isol=0; isol<nsol; ++isol) {
-                    m_sid[isol] = pmp->GetSolute(isol)->GetSoluteID();
+                    m_sid[isol] = pmp->GetSolute(isol)->GetSoluteID() - 1;
                 }
             }
         }
@@ -158,12 +201,11 @@ bool FETiedMultiphasicSurface::Init()
     // allocate data structures
     int NE = Elements();
     m_poro.resize(NE,false);
-    m_Data.resize(NE);
     for (int i=0; i<NE; ++i)
     {
         FESurfaceElement& el = Element(i);
         // get the element this surface element belongs to
-        FEElement* pe = m_pMesh->FindElementFromID(el.m_elem[0]);
+        FEElement* pe = el.m_elem[0];
         if (pe)
         {
             // get the material
@@ -183,12 +225,12 @@ bool FETiedMultiphasicSurface::Init()
             }
         }
         int nint = el.GaussPoints();
-        m_Data[i].resize(nint);
         if (nsol) {
             for (int j=0; j<nint; ++j) {
-                m_Data[i][j].m_Lmc.resize(nsol);
-                m_Data[i][j].m_epsc.resize(nsol);
-                m_Data[i][j].m_cg.resize(nsol);
+				Data& data = static_cast<Data&>(*el.GetMaterialPoint(j));
+                data.m_Lmc.resize(nsol);
+                data.m_epsc.resize(nsol);
+                data.m_cg.resize(nsol);
             }
         }
     }
@@ -236,119 +278,12 @@ void FETiedMultiphasicSurface::UpdateNodeNormals()
 //-----------------------------------------------------------------------------
 void FETiedMultiphasicSurface::Serialize(DumpStream& ar)
 {
-    if (ar.IsShallow())
-    {
-        if (ar.IsSaving())
-        {
-            ar << m_bporo;
-            ar << m_bsolu;
-            
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar << d.m_Lmd;
-                    ar << d.m_Gap;
-                    ar << d.m_dg;
-                    ar << d.m_pg;
-                    ar << d.m_Lmp;
-                }
-            }
-        }
-        else
-        {
-            ar >> m_bporo;
-            ar >> m_bsolu;
-            
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar >> d.m_Lmd;
-                    ar >> d.m_Gap;
-                    ar >> d.m_dg;
-                    ar >> d.m_pg;
-                    ar >> d.m_Lmp;
-                }
-            }
-        }
-    }
-    else
-    {
-        // We need to store the m_bporo flag first
-        // since we need it before we initialize the surface data
-        if (ar.IsSaving())
-        {
-            ar << m_bporo;
-            ar << m_bsolu;
-        }
-        else
-        {
-            ar >> m_bporo;
-            ar >> m_bsolu;
-        }
-        
-        // Next, we can serialize the base-class data
-        FEContactSurface::Serialize(ar);
-        
-        // And finally, we serialize the surface data
-        if (ar.IsSaving())
-        {
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar << d.m_Gap;
-                    ar << d.m_dg;
-                    ar << d.m_nu;
-                    ar << d.m_rs;
-                    ar << d.m_Lmd;
-                    ar << d.m_Lmp;
-                    ar << d.m_epsn;
-                    ar << d.m_epsp;
-                    ar << d.m_epsc;
-                    ar << d.m_pg;
-                }
-            }
-            ar << m_poro;
-            ar << m_nn;
-            ar << m_sid;
-        }
-        else
-        {
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar >> d.m_Gap;
-                    ar >> d.m_dg;
-                    ar >> d.m_nu;
-                    ar >> d.m_rs;
-                    ar >> d.m_Lmd;
-                    ar >> d.m_Lmp;
-                    ar >> d.m_epsn;
-                    ar >> d.m_epsp;
-                    ar >> d.m_epsc;
-                    ar >> d.m_pg;
-                }
-            }
-            ar >> m_poro;
-            ar >> m_nn;
-            ar >> m_sid;
-        }
-    }
+	FEBiphasicContactSurface::Serialize(ar);
+	ar & m_bporo;
+	ar & m_bsolu;
+	ar & m_poro;
+	ar & m_nn;
+	ar & m_sid;
 }
 
 //-----------------------------------------------------------------------------
@@ -370,9 +305,11 @@ FETiedMultiphasicInterface::FETiedMultiphasicInterface(FEModel* pfem) : FEContac
     m_stol = 0.01;
     m_bsymm = true;
     m_srad = 1.0;
-    m_gtol = -1;	// we use augmentation tolerance by default
-    m_ptol = -1;	// we use augmentation tolerance by default
+    m_gtol = 0;
+    m_ptol = 0;
+    m_ctol = 0;
     m_bautopen = false;
+    m_bupdtpen = false;
     
     m_naugmin = 0;
     m_naugmax = 10;
@@ -430,9 +367,6 @@ void FETiedMultiphasicInterface::BuildMatrixProfile(FEGlobalMatrix& K)
     const int dof_Z = fem.GetDOFIndex("z");
     const int dof_P = fem.GetDOFIndex("p");
     const int dof_C = fem.GetDOFIndex("concentration", 0);
-    const int dof_RU = fem.GetDOFIndex("Ru");
-    const int dof_RV = fem.GetDOFIndex("Rv");
-    const int dof_RW = fem.GetDOFIndex("Rw");
     
     int nsol = (int)m_sid.size();
     int ndpn = 7 + nsol;
@@ -452,7 +386,8 @@ void FETiedMultiphasicInterface::BuildMatrixProfile(FEGlobalMatrix& K)
             int* sn = &se.m_node[0];
             for (k=0; k<nint; ++k)
             {
-                FESurfaceElement* pe = ss.m_Data[j][k].m_pme;
+				FETiedMultiphasicSurface::Data& data = static_cast<FETiedMultiphasicSurface::Data&>(*se.GetMaterialPoint(k));
+                FESurfaceElement* pe = data.m_pme;
                 if (pe != 0)
                 {
                     FESurfaceElement& me = *pe;
@@ -470,11 +405,8 @@ void FETiedMultiphasicInterface::BuildMatrixProfile(FEGlobalMatrix& K)
                         lm[ndpn*l+1] = id[dof_Y];
                         lm[ndpn*l+2] = id[dof_Z];
                         lm[ndpn*l+3] = id[dof_P];
-                        lm[ndpn*l+4] = id[dof_RU];
-                        lm[ndpn*l+5] = id[dof_RV];
-                        lm[ndpn*l+6] = id[dof_RW];
                         for (int m=0; m<nsol; ++m) {
-                            lm[ndpn*l+7+m] = id[dof_C + m_sid[m]];
+                            lm[ndpn*l+4+m] = id[dof_C + m_sid[m]];
                         }
                     }
                     
@@ -485,11 +417,8 @@ void FETiedMultiphasicInterface::BuildMatrixProfile(FEGlobalMatrix& K)
                         lm[ndpn*(l+nseln)+1] = id[dof_Y];
                         lm[ndpn*(l+nseln)+2] = id[dof_Z];
                         lm[ndpn*(l+nseln)+3] = id[dof_P];
-                        lm[ndpn*(l+nseln)+4] = id[dof_RU];
-                        lm[ndpn*(l+nseln)+5] = id[dof_RV];
-                        lm[ndpn*(l+nseln)+6] = id[dof_RW];
                         for (int m=0; m<nsol; ++m) {
-                            lm[ndpn*(l+nseln)+7+m] = id[dof_C + m_sid[m]];
+                            lm[ndpn*(l+nseln)+4+m] = id[dof_C + m_sid[m]];
                         }
                     }
                     
@@ -502,11 +431,8 @@ void FETiedMultiphasicInterface::BuildMatrixProfile(FEGlobalMatrix& K)
 }
 
 //-----------------------------------------------------------------------------
-void FETiedMultiphasicInterface::Activate()
+void FETiedMultiphasicInterface::UpdateAutoPenalty()
 {
-    // don't forget to call the base class
-    FEContactInterface::Activate();
-    
     // calculate the penalty
     if (m_bautopen)
     {
@@ -519,6 +445,15 @@ void FETiedMultiphasicInterface::Activate()
         for (int im=0; im<m_msl.size(); ++im)
             CalcAutoConcentrationPenalty(m_ms, m_msl[im]);
     }
+}
+
+//-----------------------------------------------------------------------------
+void FETiedMultiphasicInterface::Activate()
+{
+    // don't forget to call the base class
+    FEContactInterface::Activate();
+    
+    UpdateAutoPenalty();
     
     // project the surfaces onto each other
     // this will evaluate the gap functions in the reference configuration
@@ -542,15 +477,15 @@ void FETiedMultiphasicInterface::CalcAutoPenalty(FETiedMultiphasicSurface& s)
         int nint = el.GaussPoints();
         for (int j=0; j<nint; ++j)
         {
-            FETiedMultiphasicSurface::Data& pt = s.m_Data[i][j];
-            pt.m_epsn = eps;
+			FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+			pt.m_epsn = eps;
         }
     }
 }
 
 //-----------------------------------------------------------------------------
 //! This function calculates a contact penalty parameter based on the
-//! material and geometrical properties of the slave and master surfaces
+//! material and geometrical properties of the primary and secondary surfaces
 //!
 double FETiedMultiphasicInterface::AutoPenalty(FESurfaceElement& el, FESurface &s)
 {
@@ -558,7 +493,7 @@ double FETiedMultiphasicInterface::AutoPenalty(FESurfaceElement& el, FESurface &
     FEMesh& m = GetFEModel()->GetMesh();
     
     // get the element this surface element belongs to
-    FEElement* pe = m.FindElementFromID(el.m_elem[0]);
+    FEElement* pe = el.m_elem[0];
     if (pe == 0) return 0.0;
 
     tens4ds S;
@@ -628,8 +563,8 @@ void FETiedMultiphasicInterface::CalcAutoPressurePenalty(FETiedMultiphasicSurfac
         int nint = el.GaussPoints();
         for (int j=0; j<nint; ++j)
         {
-            FETiedMultiphasicSurface::Data& pt = s.m_Data[i][j];
-            pt.m_epsp = eps;
+			FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+			pt.m_epsp = eps;
         }
     }
 }
@@ -649,7 +584,7 @@ double FETiedMultiphasicInterface::AutoPressurePenalty(FESurfaceElement& el, FET
     
    
     // get the element this surface element belongs to
-    FEElement* pe = m.FindElementFromID(el.m_elem[0]);
+    FEElement* pe = el.m_elem[0];
     if (pe == 0) return 0.0;
 
     // get the material
@@ -705,8 +640,8 @@ void FETiedMultiphasicInterface::CalcAutoConcentrationPenalty(FETiedMultiphasicS
         int nint = el.GaussPoints();
         for (int j=0; j<nint; ++j, ++ni)
         {
-            FETiedMultiphasicSurface::Data& pt = s.m_Data[i][j];
-            pt.m_epsc[isol] = eps;
+			FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+			pt.m_epsc[isol] = eps;
         }
     }
 }
@@ -724,7 +659,7 @@ double FETiedMultiphasicInterface::AutoConcentrationPenalty(FESurfaceElement& el
     n.unit();
     
 	// get the element this surface element belongs to
-    FEElement* pe = m.FindElementFromID(el.m_elem[0]);
+    FEElement* pe = el.m_elem[0];
     if (pe == 0) return 0.0;
 
     // get the material
@@ -771,9 +706,6 @@ double FETiedMultiphasicInterface::AutoConcentrationPenalty(FESurfaceElement& el
 // Perform initial projection between tied surfaces in reference configuration
 void FETiedMultiphasicInterface::InitialProjection(FETiedMultiphasicSurface& ss, FETiedMultiphasicSurface& ms)
 {
-    FEMesh& mesh = GetFEModel()->GetMesh();
-    double R = m_srad*mesh.GetBoundingBox().radius();
-    
     FESurfaceElement* pme;
     vec3d r, nu;
     double rs[2];
@@ -800,11 +732,11 @@ void FETiedMultiphasicInterface::InitialProjection(FETiedMultiphasicSurface& ss,
             // calculate the normal at this integration point
             nu = ss.SurfaceNormal(el, j);
             
-            // find the intersection point with the master surface
+            // find the intersection point with the secondary surface
             pme = np.Project2(r, nu, rs);
             
-            FETiedMultiphasicSurface::Data& pt = ss.m_Data[i][j];
-            pt.m_pme = pme;
+			FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+			pt.m_pme = pme;
             pt.m_rs[0] = rs[0];
             pt.m_rs[1] = rs[1];
             if (pme)
@@ -850,6 +782,7 @@ void FETiedMultiphasicInterface::ProjectSurface(FETiedMultiphasicSurface& ss, FE
         int nint = el.GaussPoints();
         
         // get the nodal pressures
+        p1 = 0;
         if (sporo)
         {
             for (int j=0; j<ne; ++j) ps[j] = mesh.Node(el.m_node[j]).get(m_dofP);
@@ -862,8 +795,8 @@ void FETiedMultiphasicInterface::ProjectSurface(FETiedMultiphasicSurface& ss, FE
         
         for (int j=0; j<nint; ++j)
         {
-            FETiedMultiphasicSurface::Data& pt = ss.m_Data[i][j];
-            
+			FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+
             // calculate the global position of the integration point
             r = ss.Local2Global(el, j);
             
@@ -923,7 +856,7 @@ void FETiedMultiphasicInterface::ProjectSurface(FETiedMultiphasicSurface& ss, FE
 
 //-----------------------------------------------------------------------------
 
-void FETiedMultiphasicInterface::Update(int niter, const FETimeInfo& tp)
+void FETiedMultiphasicInterface::Update()
 {
     // project the surfaces onto each other
     // this will update the gap functions as well
@@ -933,7 +866,7 @@ void FETiedMultiphasicInterface::Update(int niter, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FETiedMultiphasicInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FETiedMultiphasicInterface::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
     int i, j, k;
     vector<int> sLM, mLM, LM, en;
@@ -947,19 +880,24 @@ void FETiedMultiphasicInterface::Residual(FEGlobalVector& R, const FETimeInfo& t
     vector< vector<double> > jn(nsol,vector<double>(MN));
     
     FEModel& fem = *GetFEModel();
-    
+    FEAnalysis* pstep = fem.GetCurrentStep();
+    FESolver* psolver = pstep->GetFESolver();
+
     double dt = fem.GetTime().timeIncrement;
+    
+    // Update auto-penalty if requested
+    if (m_bupdtpen && psolver->m_niter == 0) UpdateAutoPenalty();
     
     // loop over the nr of passes
     int npass = (m_btwo_pass?2:1);
     for (int np=0; np<npass; ++np)
     {
-        // get slave and master surface
+        // get primary and seconary surface
         FETiedMultiphasicSurface& ss = (np == 0? m_ss : m_ms);
         FETiedMultiphasicSurface& ms = (np == 0? m_ms : m_ss);
         vector<int>& sl = (np == 0? m_ssl : m_msl);
         
-        // loop over all slave elements
+        // loop over all primary surface elements
         for (i=0; i<ss.Elements(); ++i)
         {
             // get the surface element
@@ -988,8 +926,8 @@ void FETiedMultiphasicInterface::Residual(FEGlobalVector& R, const FETimeInfo& t
                 // integration weights
                 w[j] = se.GaussWeights()[j];
                 
-                FETiedMultiphasicSurface::Data& pt = ss.m_Data[i][j];
-                
+				FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*se.GetMaterialPoint(j));
+
                 // contact traction
                 double eps = m_epsn*pt.m_epsn;      // penalty
                 tn[j] = pt.m_Lmd + pt.m_dg*eps;    // contact traction
@@ -1011,17 +949,17 @@ void FETiedMultiphasicInterface::Residual(FEGlobalVector& R, const FETimeInfo& t
             // note that we are integrating over the current surface
             for (j=0; j<nint; ++j)
             {
-                FETiedMultiphasicSurface::Data& pt = ss.m_Data[i][j];
-                // get the master element
+				FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*se.GetMaterialPoint(j));
+				// get the secondary surface element
                 FESurfaceElement* pme = pt.m_pme;
                 if (pme)
                 {
-                    // get the master element
+                    // get the secondary surface element
                     FESurfaceElement& me = *pme;
                     
                     bool mporo = ms.m_bporo;
                     
-                    // get the nr of master element nodes
+                    // get the nr of secondary surface element nodes
                     int nmeln = me.Nodes();
                     
                     // copy LM vector
@@ -1051,10 +989,10 @@ void FETiedMultiphasicInterface::Residual(FEGlobalVector& R, const FETimeInfo& t
                     for (k=0; k<nseln; ++k) en[k      ] = se.m_node[k];
                     for (k=0; k<nmeln; ++k) en[k+nseln] = me.m_node[k];
                     
-                    // get slave element shape functions
+                    // get element shape functions
                     Hs = se.H(j);
                     
-                    // get master element shape functions
+                    // get secondary surface element shape functions
                     double r = pt.m_rs[0];
                     double s = pt.m_rs[1];
                     me.shape_fnc(Hm, r, s);
@@ -1134,13 +1072,13 @@ void FETiedMultiphasicInterface::Residual(FEGlobalVector& R, const FETimeInfo& t
 }
 
 //-----------------------------------------------------------------------------
-void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FETiedMultiphasicInterface::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
     int i, j, k, l;
     vector<int> sLM, mLM, LM, en;
     const int MN = FEElement::MAX_NODES;
     double detJ[MN], w[MN], *Hs, Hm[MN];
-    matrix ke;
+    FEElementMatrix ke;
     int nsol = (int)m_sid.size();
     vec3d tn[MN];
     double wn[MN];
@@ -1149,7 +1087,7 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
     FEModel& fem = *GetFEModel();
     
     // see how many reformations we've had to do so far
-    int nref = psolver->m_nref;
+    int nref = LS.GetSolver()->m_nref;
     
     // set higher order stiffness mutliplier
     // NOTE: this algorithm doesn't really need this
@@ -1162,7 +1100,7 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
         if (nref >= ni)
         {
             knmult = 1;
-            felog.printf("Higher order stiffness terms included.\n");
+            feLog("Higher order stiffness terms included.\n");
         }
         else knmult = 0;
     }
@@ -1171,15 +1109,15 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
     int npass = (m_btwo_pass?2:1);
     for (int np=0; np < npass; ++np)
     {
-        // get the slave and master surface
+        // get the primary and secondary surface
         FETiedMultiphasicSurface& ss = (np == 0? m_ss : m_ms);
         FETiedMultiphasicSurface& ms = (np == 0? m_ms : m_ss);
         vector<int>& sl = (np == 0? m_ssl : m_msl);
         
-        // loop over all slave elements
+        // loop over all primary surface elements
         for (i=0; i<ss.Elements(); ++i)
         {
-            // get ths slave element
+            // get the next element
             FESurfaceElement& se = ss.Element(i);
             
             bool sporo = ss.m_bporo;
@@ -1215,8 +1153,8 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
                 // integration weights
                 w[j] = se.GaussWeights()[j];
                 
-                FETiedMultiphasicSurface::Data& pd = ss.m_Data[i][j];
-                
+				FETiedMultiphasicSurface::Data& pd = static_cast<FETiedMultiphasicSurface::Data&>(*se.GetMaterialPoint(j));
+
                 // contact traction
                 double eps = m_epsn*pd.m_epsn;      // penalty
                 tn[j] = pd.m_Lmd + pd.m_dg*eps;     // contact traction
@@ -1233,7 +1171,7 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
                     jn[isol][j] = pd.m_Lmc[l] + epsc*pd.m_cg[l];
                 }
                 
-                // contravariant basis vectors of slave surface
+                // contravariant basis vectors of primary surface
                 vec3d Gs[2];
                 ss.ContraBaseVectors(se, j, Gs);
             }
@@ -1241,8 +1179,9 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
             // loop over all integration points
             for (j=0; j<nint; ++j)
             {
-                FETiedMultiphasicSurface::Data& pt = ss.m_Data[i][j];
-                // get the master element
+				FETiedMultiphasicSurface::Data& pt = static_cast<FETiedMultiphasicSurface::Data&>(*se.GetMaterialPoint(j));
+
+				// get the secondary surface element
                 FESurfaceElement* pme = pt.m_pme;
                 if (pme)
                 {
@@ -1250,7 +1189,7 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
                     
                     bool mporo = ms.m_bporo;
                     
-                    // get the nr of master nodes
+                    // get the nr of secondary surface nodes
                     int nmeln = me.Nodes();
                     
                     // nodal data
@@ -1350,15 +1289,15 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
                     for (k=0; k<nseln; ++k) en[k      ] = se.m_node[k];
                     for (k=0; k<nmeln; ++k) en[k+nseln] = me.m_node[k];
                     
-                    // slave shape functions
+                    // shape functions
                     Hs = se.H(j);
                     
-                    // master shape functions
+                    // secondary surface element shape functions
                     double r = pt.m_rs[0];
                     double s = pt.m_rs[1];
                     me.shape_fnc(Hm, r, s);
                     
-                    // get slave normal vector
+                    // get normal vector
                     vec3d nu = pt.m_nu;
                     
                     // penalty
@@ -1434,7 +1373,7 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
                                 ke[k+3][l  ] += gac.x; ke[k+3][l+1] += gac.y; ke[k+3][l+2] += gac.z;
                                 for (int isol=0; isol<nsol; ++isol) {
                                     double epsc = m_epsc*pt.m_epsc[sl[isol]];
-                                    vec3d hac = (as[c]*(Hs[a]*jn[isol][j]))*(dt*detJ[j]*w[j]);
+                                    vec3d hac = (as[c]*(Hs[a]*jn[isol][j])*epsc)*(dt*detJ[j]*w[j]);
                                     ke[k+4+isol][l  ] += hac.x; ke[k+4+isol][l+1] += hac.y; ke[k+4+isol][l+2] += hac.z;
                                 }
                             }
@@ -1447,7 +1386,7 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
                                 ke[k+3][l  ] += gbc.x; ke[k+3][l+1] += gbc.y; ke[k+3][l+2] += gbc.z;
                                 for (int isol=0; isol<nsol; ++isol) {
                                     double epsc = m_epsc*pt.m_epsc[sl[isol]];
-                                    vec3d hbc = (-as[c]*(Hm[b]*jn[isol][j]))*(dt*detJ[j]*w[j]);
+                                    vec3d hbc = (-as[c]*(Hm[b]*jn[isol][j])*epsc)*(dt*detJ[j]*w[j]);
                                     ke[k+4+isol][l  ] += hbc.x; ke[k+4+isol][l+1] += hbc.y; ke[k+4+isol][l+2] += hbc.z;
                                 }
                             }
@@ -1504,7 +1443,9 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
                     }
                     
                     // assemble the global stiffness
-                    psolver->AssembleStiffness(en, LM, ke);
+					ke.SetNodes(en);
+					ke.SetIndices(LM);
+					LS.Assemble(ke);
                 }
             }
         }
@@ -1515,9 +1456,8 @@ void FETiedMultiphasicInterface::StiffnessMatrix(FESolver* psolver, const FETime
 bool FETiedMultiphasicInterface::Augment(int naug, const FETimeInfo& tp)
 {
     // make sure we need to augment
-    if (!m_blaugon) return true;
-    
-    int i;
+	if (m_laugon != 1) return true;
+
     vec3d Ln;
     double Lp;
     int nsol = (int)m_sid.size();
@@ -1526,29 +1466,30 @@ bool FETiedMultiphasicInterface::Augment(int naug, const FETimeInfo& tp)
     
     bool bporo = (m_ss.m_bporo && m_ms.m_bporo);
     bool bsolu = (m_ss.m_bsolu && m_ms.m_bsolu);
-    int NS = (int)m_ss.m_Data.size();
-	int NM = (int)m_ms.m_Data.size();
-    
+
+	int NS = m_ss.Elements();
+	int NM = m_ms.Elements();
+
     // --- c a l c u l a t e   i n i t i a l   n o r m s ---
     // a. normal component
     double normL0 = 0, normP = 0, normDP = 0, normC = 0;
     vector<double>normDC(nsol,0);
     for (int i=0; i<NS; ++i)
     {
-        vector<FETiedMultiphasicSurface::Data>& sd = m_ss.m_Data[i];
-        for (int j=0; j<(int)sd.size(); ++j)
-        {
-            FETiedMultiphasicSurface::Data& ds = sd[j];
-            normL0 += ds.m_Lmd*ds.m_Lmd;
+		FESurfaceElement& el = m_ss.Element(i);
+		for (int j = 0; j<el.GaussPoints(); ++j)
+		{
+			FETiedMultiphasicSurface::Data& ds = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+			normL0 += ds.m_Lmd*ds.m_Lmd;
         }
     }
     for (int i=0; i<NM; ++i)
     {
-        vector<FETiedMultiphasicSurface::Data>& md = m_ms.m_Data[i];
-        for (int j=0; j<(int)md.size(); ++j)
+		FESurfaceElement& el = m_ms.Element(i);
+        for (int j=0; j<el.GaussPoints(); ++j)
         {
-            FETiedMultiphasicSurface::Data& dm = md[j];
-            normL0 += dm.m_Lmd*dm.m_Lmd;
+			FETiedMultiphasicSurface::Data& dm = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+			normL0 += dm.m_Lmd*dm.m_Lmd;
         }
     }
     
@@ -1560,14 +1501,14 @@ bool FETiedMultiphasicInterface::Augment(int naug, const FETimeInfo& tp)
     
     // update Lagrange multipliers
     double normL1 = 0, eps, epsp, epsc;
-    for (i=0; i<NS; ++i)
-    {
-        vector<FETiedMultiphasicSurface::Data>& sd = m_ss.m_Data[i];
-        for (int j=0; j<(int)sd.size(); ++j)
-        {
-            FETiedMultiphasicSurface::Data& ds = sd[j];
-            
-            // update Lagrange multipliers on slave surface
+	for (int i = 0; i<NS; ++i)
+	{
+		FESurfaceElement& el = m_ss.Element(i);
+		for (int j = 0; j<el.GaussPoints(); ++j)
+		{
+			FETiedMultiphasicSurface::Data& ds = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+
+            // update Lagrange multipliers on primary surface
             eps = m_epsn*ds.m_epsn;
             ds.m_Lmd = ds.m_Lmd + ds.m_dg*eps;
             
@@ -1598,14 +1539,14 @@ bool FETiedMultiphasicInterface::Augment(int naug, const FETimeInfo& tp)
         }
     }
     
-    for (i=0; i<NM; ++i)
-    {
-        vector<FETiedMultiphasicSurface::Data>& md = m_ms.m_Data[i];
-        for (int j=0; j<(int)md.size(); ++j)
-        {
-            FETiedMultiphasicSurface::Data& dm = md[j];
-            
-            // update Lagrange multipliers on master surface
+	for (int i = 0; i<NM; ++i)
+	{
+		FESurfaceElement& el = m_ms.Element(i);
+		for (int j = 0; j<el.GaussPoints(); ++j)
+		{
+			FETiedMultiphasicSurface::Data& dm = static_cast<FETiedMultiphasicSurface::Data&>(*el.GetMaterialPoint(j));
+
+            // update Lagrange multipliers on secondary surface
             eps = m_epsn*dm.m_epsn;
             dm.m_Lmd = dm.m_Lmd + dm.m_dg*eps;
             
@@ -1663,33 +1604,33 @@ bool FETiedMultiphasicInterface::Augment(int naug, const FETimeInfo& tp)
     if (naug < m_naugmin ) bconv = false;
     if (naug >= m_naugmax) bconv = true;
     
-    felog.printf(" sliding interface # %d\n", GetID());
-    felog.printf("                        CURRENT        REQUIRED\n");
-    felog.printf("    D multiplier : %15le", lnorm);
-    if (m_atol > 0) felog.printf("%15le\n", m_atol);
-    else felog.printf("       ***\n");
+    feLog(" sliding interface # %d\n", GetID());
+    feLog("                        CURRENT        REQUIRED\n");
+    feLog("    D multiplier : %15le", lnorm);
+    if (m_atol > 0) feLog("%15le\n", m_atol);
+    else feLog("       ***\n");
     if (bporo) {
-        felog.printf("    P gap        : %15le", pnorm);
-        if (m_atol > 0) felog.printf("%15le\n", m_atol);
-        else felog.printf("       ***\n"); }
+        feLog("    P gap        : %15le", pnorm);
+        if (m_atol > 0) feLog("%15le\n", m_atol);
+        else feLog("       ***\n"); }
     for (int isol=0; isol<nsol; ++isol) {
-        felog.printf("    C[%d] gap   : %15le", m_sid[isol], cnorm[isol]);
-        if (m_atol > 0) felog.printf("%15le\n", m_atol);
-        else felog.printf("       ***\n");
+        feLog("    C[%d] gap   : %15le", m_sid[isol], cnorm[isol]);
+        if (m_atol > 0) feLog("%15le\n", m_atol);
+        else feLog("       ***\n");
     }
     
-    felog.printf("    maximum gap  : %15le", maxgap);
-    if (m_gtol > 0) felog.printf("%15le\n", m_gtol);
-    else felog.printf("       ***\n");
+    feLog("    maximum gap  : %15le", maxgap);
+    if (m_gtol > 0) feLog("%15le\n", m_gtol);
+    else feLog("       ***\n");
     if (bporo) {
-        felog.printf("    maximum pgap : %15le", maxpg);
-        if (m_ptol > 0) felog.printf("%15le\n", m_ptol);
-        else felog.printf("       ***\n");
+        feLog("    maximum pgap : %15le", maxpg);
+        if (m_ptol > 0) feLog("%15le\n", m_ptol);
+        else feLog("       ***\n");
     }
     for (int isol=0; isol<nsol; ++isol) {
-        felog.printf("    maximum cgap[%d] : %15le", m_sid[isol], maxcg[isol]);
-        if (m_ctol > 0) felog.printf("%15le\n", m_ctol);
-        else felog.printf("       ***\n");
+        feLog("    maximum cgap[%d] : %15le", m_sid[isol], maxcg[isol]);
+        if (m_ctol > 0) feLog("%15le\n", m_ctol);
+        else feLog("       ***\n");
     }
     
     return bconv;
@@ -1698,55 +1639,24 @@ bool FETiedMultiphasicInterface::Augment(int naug, const FETimeInfo& tp)
 //-----------------------------------------------------------------------------
 void FETiedMultiphasicInterface::Serialize(DumpStream &ar)
 {
-    // store contact data
+    // store base class data
     FEContactInterface::Serialize(ar);
     
     // store contact surface data
     m_ms.Serialize(ar);
     m_ss.Serialize(ar);
     
-    if (ar.IsShallow())
-    {
-        if (ar.IsSaving())
-        {
-            ar << m_epsp;
-            ar << m_epsc;
-            ar << m_sid;
-            ar << m_ssl;
-            ar << m_msl;
-            ar << m_sz;
-        }
-        else
-        {
-            ar >> m_epsp;
-            ar >> m_epsc;
-            ar >> m_sid;
-            ar >> m_ssl;
-            ar >> m_msl;
-            ar >> m_sz;
-        }
-    }
-    else
-    {
-        if (ar.IsSaving())
-        {
-            ar << m_epsp;
-            ar << m_epsc;
-            ar << m_sid;
-            ar << m_ssl;
-            ar << m_msl;
-            ar << m_sz;
-        }
-        else
-        {
-            ar >> m_epsp;
-            ar >> m_epsc;
-            ar >> m_sid;
-            ar >> m_ssl;
-            ar >> m_msl;
-            ar >> m_sz;
-        }
-    }
+	// serialize interface data
+	ar & m_epsp;
+	ar & m_epsc;
+	ar & m_sid;
+	ar & m_ssl;
+	ar & m_msl;
+	ar & m_sz;
+
+	// serialize element pointers
+	SerializeElementPointers(m_ss, m_ms, ar);
+	SerializeElementPointers(m_ms, m_ss, ar);
 }
 
 //-----------------------------------------------------------------------------

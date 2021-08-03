@@ -1,26 +1,60 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEViscoElasticMaterial.h"
 #include "FEUncoupledMaterial.h"
 #include "FECore/FECoreKernel.h"
 #include <FECore/FEModel.h>
+#include <FECore/DumpStream.h>
 
 //-----------------------------------------------------------------------------
-// define the material parameters
-BEGIN_PARAMETER_LIST(FEViscoElasticMaterial, FEElasticMaterial)
-	ADD_PARAMETER(m_t[0], FE_PARAM_DOUBLE, "t1");
-	ADD_PARAMETER(m_t[1], FE_PARAM_DOUBLE, "t2");
-	ADD_PARAMETER(m_t[2], FE_PARAM_DOUBLE, "t3");
-	ADD_PARAMETER(m_t[3], FE_PARAM_DOUBLE, "t4");
-	ADD_PARAMETER(m_t[4], FE_PARAM_DOUBLE, "t5");
-	ADD_PARAMETER(m_t[5], FE_PARAM_DOUBLE, "t6");
-	ADD_PARAMETER(m_g0  , FE_PARAM_DOUBLE, "g0");
-	ADD_PARAMETER(m_g[0], FE_PARAM_DOUBLE, "g1");
-	ADD_PARAMETER(m_g[1], FE_PARAM_DOUBLE, "g2");
-	ADD_PARAMETER(m_g[2], FE_PARAM_DOUBLE, "g3");
-	ADD_PARAMETER(m_g[3], FE_PARAM_DOUBLE, "g4");
-	ADD_PARAMETER(m_g[4], FE_PARAM_DOUBLE, "g5");
-	ADD_PARAMETER(m_g[5], FE_PARAM_DOUBLE, "g6");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEViscoElasticMaterial, FEElasticMaterial)
+
+	// material parameters
+	ADD_PARAMETER(m_t[0], "t1");
+	ADD_PARAMETER(m_t[1], "t2");
+	ADD_PARAMETER(m_t[2], "t3");
+	ADD_PARAMETER(m_t[3], "t4");
+	ADD_PARAMETER(m_t[4], "t5");
+	ADD_PARAMETER(m_t[5], "t6");
+	ADD_PARAMETER(m_g0  , "g0");
+	ADD_PARAMETER(m_g[0], "g1");
+	ADD_PARAMETER(m_g[1], "g2");
+	ADD_PARAMETER(m_g[2], "g3");
+	ADD_PARAMETER(m_g[3], "g4");
+	ADD_PARAMETER(m_g[4], "g5");
+	ADD_PARAMETER(m_g[5], "g6");
+
+	// define the material properties
+	ADD_PROPERTY(m_Base, "elastic");
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! Create a shallow copy of the material point data
@@ -79,19 +113,9 @@ void FEViscoElasticMaterialPoint::Update(const FETimeInfo& timeInfo)
 void FEViscoElasticMaterialPoint::Serialize(DumpStream& ar)
 {
 	FEMaterialPoint::Serialize(ar);
-
-	if (ar.IsSaving())
-	{
-		ar << m_se;
-		ar << m_Sep;
-		for (int i=0; i<MAX_TERMS; ++i) ar << m_H[i] << m_Hp[i];
-	}
-	else
-	{
-		ar >> m_se;
-		ar >> m_Sep;
-		for (int i=0; i<MAX_TERMS; ++i) ar >> m_H[i] >> m_Hp[i];
-	}
+	ar & m_se;
+	ar & m_Sep;
+	ar & m_H & m_Hp;
 }
 
 //-----------------------------------------------------------------------------
@@ -105,8 +129,7 @@ FEViscoElasticMaterial::FEViscoElasticMaterial(FEModel* pfem) : FEElasticMateria
 		m_g[i] = 0;
 	}
 
-	// define the material properties
-	AddProperty(&m_Base, "elastic");
+	m_Base = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -121,14 +144,6 @@ FEElasticMaterial* FEViscoElasticMaterial::GetBaseMaterial()
 void FEViscoElasticMaterial::SetBaseMaterial(FEElasticMaterial* pbase)
 { 
 	m_Base = pbase; 
-}
-
-//-----------------------------------------------------------------------------
-void FEViscoElasticMaterial::SetLocalCoordinateSystem(FEElement& el, int n, FEMaterialPoint& mp)
-{
-	FEElasticMaterial::SetLocalCoordinateSystem(el, n, mp);
-	FEElasticMaterial* pme2 = GetBaseMaterial();
-	pme2->SetLocalCoordinateSystem(el, n, mp);
 }
 
 //-----------------------------------------------------------------------------
@@ -232,5 +247,6 @@ double FEViscoElasticMaterial::StrainEnergyDensity(FEMaterialPoint& mp)
     
 	// return the total strain energy density
 	return sedt; */
-    return 0;
+	throw std::runtime_error("FEViscoElasticMaterial::StrainEnergyDensity NOT implemented!");
+	return 0;
 }

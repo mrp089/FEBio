@@ -1,13 +1,41 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FECoupledVerondaWestmann.h"
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FECoupledVerondaWestmann, FEElasticMaterial)
-	ADD_PARAMETER2(m_c1, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "c1");
-	ADD_PARAMETER(m_c2, FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETER2(m_k , FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "k" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FECoupledVerondaWestmann, FEElasticMaterial)
+	ADD_PARAMETER(m_c1, FE_RANGE_GREATER(0.0), "c1");
+	ADD_PARAMETER(m_c2, "c2");
+	ADD_PARAMETER(m_k , FE_RANGE_GREATER(0.0), "k" );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! calculate stress at material point
@@ -23,7 +51,7 @@ mat3ds FECoupledVerondaWestmann::Stress(FEMaterialPoint& mp)
 	mat3ds B = pt.LeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	double I1 = B.tr();
@@ -81,7 +109,7 @@ double FECoupledVerondaWestmann::StrainEnergyDensity(FEMaterialPoint& mp)
 	mat3ds B = pt.LeftCauchyGreen();
     
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
     
 	// Invariants of B (= invariants of C)
 	double I1 = B.tr();

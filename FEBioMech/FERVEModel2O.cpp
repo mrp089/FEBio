@@ -1,26 +1,52 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FERVEModel2O.h"
 #include "FECore/FESolidDomain.h"
 #include "FECore/FEElemElemList.h"
-#include "FECore/BC.h"
+#include <FECore/FEPrescribedDOF.h>
 #include "FEElasticMaterial.h"
 #include "FEPeriodicBoundary2O.h"
 #include "FECore/FEAnalysis.h"
-#include "FECore/FEDataLoadCurve.h"
 #include "FESolidSolver2.h"
 #include "FEElasticSolidDomain.h"
 #include "FEBCPrescribedDeformation.h"
 #include "FEPeriodicLinearConstraint2O.h"
 #include <FECore/FELinearConstraintManager.h>
 #include <FECore/FECube.h>
+#include <FECore/FEPointFunction.h>
+#include <FECore/FELoadCurve.h>
 
 //-----------------------------------------------------------------------------
 FERVEModel2O::FERVEModel2O()
 {
 	m_rveType = FERVEModel2O::DISPLACEMENT;
-
-	// set the pardiso solver as default
-	SetLinearSolverType(PARDISO_SOLVER);
 }
 
 //-----------------------------------------------------------------------------
@@ -84,7 +110,7 @@ bool FERVEModel2O::InitRVE(int rveType, const char* szbc)
 
 			int NN = m.Nodes();
 			m_BN.assign(NN, 0);
-			for (int i = 0; i<pset->size(); ++i) m_BN[ns[i]] = 1;
+			for (int i = 0; i<pset->Size(); ++i) m_BN[ns[i]] = 1;
 		}
 		else FindBoundaryNodes(m_BN);
 
@@ -194,13 +220,13 @@ void FERVEModel2O::FindBoundaryNodes(vector<int>& BN)
 		for (int i=0; i<dom.Elements(); ++i, ++M)
 		{
 			FEElement& el = dom.ElementRef(i);
-			int nf = m.Faces(el);
+			int nf = el.Faces();
 			for (int j=0; j<nf; ++j)
 			{
 				if (EEL.Neighbor(M, j) == 0)
 				{
 					// mark all nodes
-					int nn = m.GetFace(el, j, fn);
+					int nn = el.GetFace(j, fn);
 					for (int k=0; k<nn; ++k)
 					{
 						FENode& node = m.Node(fn[k]);
@@ -229,28 +255,29 @@ bool FERVEModel2O::PrepDisplacementBC()
 	assert(NN > 0);
 
 	// create a load curve
-	FEDataLoadCurve* plc = new FEDataLoadCurve(this);
-	plc->SetInterpolation(FEDataLoadCurve::LINEAR);
+	FELoadCurve* plc = new FELoadCurve(this);
 	plc->Add(0.0, 0.0);
 	plc->Add(1.0, 1.0);
-	AddLoadCurve(plc);
-	int NLC = LoadCurves() - 1;
+	AddLoadController(plc);
+	int NLC = LoadControllers() - 1;
 
 	// clear all BCs
-	ClearBCs();
+	ClearBoundaryConditions();
 
 	// we create the prescribed deformation BC
-	FEBCPrescribedDeformation2O* pdc = fecore_new<FEBCPrescribedDeformation2O>(FEBC_ID, "prescribed deformation 2O", this);
-	AddPrescribedBC(pdc);
+	FEBCPrescribedDeformation2O* pdc = fecore_new<FEBCPrescribedDeformation2O>("prescribed deformation 2O", this);
+	AddBoundaryCondition(pdc);
 
 	// assign the boundary nodes
+	FENodeSet* nset = new FENodeSet(this);
 	int c = -1;
 	for (i = 0; i<N; ++i)
 	if (m_BN[i] == 1)
 	{
 		if (c == -1) { pdc->SetReferenceNode(m_BN[i]); c = 1; }
-		pdc->AddNode(i);
+		nset->Add(i);
 	}
+	pdc->SetNodeSet(nset);
 
 	return true;
 }
@@ -280,28 +307,27 @@ bool FERVEModel2O::PrepPeriodicBC(const char* szbc)
 	}
 
 	// create a load curve
-	FEDataLoadCurve* plc = new FEDataLoadCurve(this);
-	plc->SetInterpolation(FEDataLoadCurve::LINEAR);
+	FELoadCurve* plc = new FELoadCurve(this);
 	plc->Add(0.0, 0.0);
 	plc->Add(1.0, 1.0);
-	AddLoadCurve(plc);
-	int NLC = LoadCurves() - 1;
+	AddLoadController(plc);
+	int NLC = LoadControllers() - 1;
 
 	// create the DC's
-	ClearBCs();
+	ClearBoundaryConditions();
 	FEPrescribedDOF* pdc[3] = { 0 };
-	pdc[0] = new FEPrescribedDOF(this); pdc[0]->SetDOF(0).SetScale(1.0, NLC); AddPrescribedBC(pdc[0]);
-	pdc[1] = new FEPrescribedDOF(this); pdc[1]->SetDOF(1).SetScale(1.0, NLC); AddPrescribedBC(pdc[1]);
-	pdc[2] = new FEPrescribedDOF(this); pdc[2]->SetDOF(2).SetScale(1.0, NLC); AddPrescribedBC(pdc[2]);
+	pdc[0] = new FEPrescribedDOF(this); pdc[0]->SetDOF(0); pdc[0]->SetScale(1.0, NLC); AddBoundaryCondition(pdc[0]);
+	pdc[1] = new FEPrescribedDOF(this); pdc[1]->SetDOF(1); pdc[1]->SetScale(1.0, NLC); AddBoundaryCondition(pdc[1]);
+	pdc[2] = new FEPrescribedDOF(this); pdc[2]->SetDOF(2); pdc[2]->SetScale(1.0, NLC); AddBoundaryCondition(pdc[2]);
 
 	// assign nodes to BCs
-	pdc[0]->AddNodes(ns, 0.0);
-	pdc[1]->AddNodes(ns, 0.0);
-	pdc[2]->AddNodes(ns, 0.0);
+	pdc[0]->SetNodeSet(pset);
+	pdc[1]->SetNodeSet(pset);
+	pdc[2]->SetNodeSet(pset);
 
 	// create the boundary node flags
 	m_BN.assign(m.Nodes(), 0);
-	int N = ns.size();
+	int N = ns.Size();
 	for (int i=0; i<N; ++i) m_BN[ns[i]] = 1;
 
 	return true;
@@ -311,45 +337,45 @@ bool FERVEModel2O::PrepPeriodicBC(const char* szbc)
 bool FERVEModel2O::PrepPeriodicLC()
 {
 	// clear all BCs, just to be sure
-	ClearBCs();
+	ClearBoundaryConditions();
 
 	// get the RVE mesh
 	FEMesh& m = GetMesh();
 
 	// Assuming this is a cube, build the cube data
 	FECube cube;
-	if (cube.Build(&m) == false) return false;
+	if (cube.Build(this) == false) return false;
 
 	// setup the linear constraints
 	FEPeriodicLinearConstraint2O lc;
-	lc.AddNodeSetPair(cube.GetSurface(0)->GetNodeSet(), cube.GetSurface(1)->GetNodeSet());
-	lc.AddNodeSetPair(cube.GetSurface(2)->GetNodeSet(), cube.GetSurface(3)->GetNodeSet());
-	lc.AddNodeSetPair(cube.GetSurface(4)->GetNodeSet(), cube.GetSurface(5)->GetNodeSet());
 	lc.GenerateConstraints(this);
+
+	lc.AddNodeSetPair(cube.GetSurface(0)->GetNodeList(), cube.GetSurface(1)->GetNodeList());
+	lc.AddNodeSetPair(cube.GetSurface(2)->GetNodeList(), cube.GetSurface(3)->GetNodeList());
+	lc.AddNodeSetPair(cube.GetSurface(4)->GetNodeList(), cube.GetSurface(5)->GetNodeList());
 
 	// find the node set that defines the corner nodes
 	const FENodeSet& set = cube.GetCornerNodes();
 
 	// create a load curve
-	FEDataLoadCurve* plc = new FEDataLoadCurve(this);
-	plc->SetInterpolation(FEDataLoadCurve::LINEAR);
+	FELoadCurve* plc = new FELoadCurve(this);
 	plc->Add(0.0, 0.0);
 	plc->Add(1.0, 1.0);
-	AddLoadCurve(plc);
-	int NLC = LoadCurves() - 1;
+	AddLoadController(plc);
+	int NLC = LoadControllers() - 1;
 
 	// we create the prescribed deformation BC
-	FEBCPrescribedDeformation2O* pdc = fecore_new<FEBCPrescribedDeformation2O>(FEBC_ID, "prescribed deformation 2O", this);
-	AddPrescribedBC(pdc);
+	FEBCPrescribedDeformation2O* pdc = fecore_new<FEBCPrescribedDeformation2O>("prescribed deformation 2O", this);
+	AddBoundaryCondition(pdc);
 
 	// assign nodes to BCs
 	pdc->SetReferenceNode(set[0]);
-	pdc->AddNodes(set);
+	pdc->SetNodeSet(const_cast<FENodeSet*>(&set));
 	pdc->SetScale(1.0, NLC);
 
 	// create the boundary node flags
 	m_BN.assign(m.Nodes(), 0);
-	int N = set.size();
+	int N = set.Size();
 	for (int i = 0; i<N; ++i) m_BN[set[i]] = 1;
 
 	return true;
@@ -371,13 +397,13 @@ FEMicroModel2O::~FEMicroModel2O()
 //-----------------------------------------------------------------------------
 bool FEMicroModel2O::Init(FERVEModel2O& rve)
 {
-	// copy the master RVE
+	// copy the parent RVE
 	CopyFrom(rve);
 
 	// initialize model
 	if (FEModel::Init() == false) return false;
 
-	// copy some stuff from the master RVE model
+	// copy some stuff from the parent RVE model
 	m_V0 = rve.InitialVolume();
 	m_rveType = rve.RVEType();
 	m_BN = &rve.BoundaryList();
@@ -405,7 +431,7 @@ void FEMicroModel2O::UpdateBC(const mat3d& F, const tens3drs& G)
 	FEMesh& m = GetMesh();
 
 	// assign new DC's for the boundary nodes
-	FEBCPrescribedDeformation2O& bc = dynamic_cast<FEBCPrescribedDeformation2O&>(*PrescribedBC(0));
+	FEBCPrescribedDeformation2O& bc = dynamic_cast<FEBCPrescribedDeformation2O&>(*BoundaryCondition(0));
 	bc.SetDeformationGradient(F);
 	bc.SetDeformationHessian(G);
 
@@ -439,18 +465,18 @@ void FEMicroModel2O::UpdateBC(const mat3d& F, const tens3drs& G)
 		{
 			FELinearConstraint& lc = LM.LinearConstraint(i);
 
-			FENode& slaveNode = m.Node(lc.master.node);
-			FENode& masterNode = m.Node(lc.slave[0].node);
+			FENode& parentNode = m.Node(lc.m_parentDof.node);
+			FENode& childNode = m.Node(lc.m_childDof[0].node);
 
-			vec3d Xp = slaveNode.m_r0;
-			vec3d Xm = masterNode.m_r0;
+			vec3d Xp = parentNode.m_r0;
+			vec3d Xm = childNode.m_r0;
 
 			mat3ds XXp = dyad(Xp);
 			mat3ds XXm = dyad(Xm);
 
 			vec3d d = U*(Xp - Xm) + (G.contract2s(XXp - XXm))*0.5;
 
-			switch (lc.master.dof)
+			switch (lc.m_parentDof.dof)
 			{
 			case 0: lc.m_off = d.x; break;
 			case 1: lc.m_off = d.y; break;
@@ -486,11 +512,11 @@ mat3d FEMicroModel2O::AveragedStressPK1(FEMaterialPoint &mp)
 			for (int i=0; i<N; ++i)
 			{
 				FENode& node = ss.Node(i);
-				vec3d f = ss.m_Fr[i];
+				vec3d f = ss.m_data[i].m_Fr;
 
-				// We multiply by two since the reaction forces are only stored at the slave surface 
-				// and we also need to sum over the master nodes (NOTE: should I figure out a way to 
-				// store the reaction forces on the master nodes as well?)
+				// We multiply by two since the reaction forces are only stored at the primary surface 
+				// and we also need to sum over the secondary nodes (NOTE: should I figure out a way to 
+				// store the reaction forces on the secondary nodes as well?)
 				PK1 += (f & node.m_r0)*2.0;
 			}
 		}
@@ -506,11 +532,13 @@ mat3d FEMicroModel2O::AveragedStressPK1(FEMaterialPoint &mp)
 	FESolidSolver2* ps = dynamic_cast<FESolidSolver2*>(pstep->GetFESolver());
 	assert(ps);
 	vector<double>& R = ps->m_Fr;
-	FEBCPrescribedDeformation2O& dc = dynamic_cast<FEBCPrescribedDeformation2O&>(*PrescribedBC(0));
-	int nitems = dc.Items();
+	FEBCPrescribedDeformation2O& dc = dynamic_cast<FEBCPrescribedDeformation2O&>(*BoundaryCondition(0));
+
+	const FENodeSet& nset = *dc.GetNodeSet();
+	int nitems = nset.Size();
 	for (int i=0; i<nitems; ++i)
 	{
-		FENode& n = m.Node(dc.NodeID(i));
+		const FENode& n = *nset.Node(i);
 		vec3d f;
 		f.x = R[-n.m_ID[dof_X]-2];
 		f.y = R[-n.m_ID[dof_Y]-2];
@@ -603,9 +631,9 @@ void FEMicroModel2O::AveragedStress2O(mat3d& Pa, tens3drs& Qa)
 				vec3d f = ss.m_Fr[i];
 				const vec3d& X = node.m_r0;
 				
-				// We multiply by two since the reaction forces are only stored at the slave surface 
-				// and we also need to sum over the master nodes (NOTE: should I figure out a way to 
-				// store the reaction forces on the master nodes as well?)
+				// We multiply by two since the reaction forces are only stored at the primary surface 
+				// and we also need to sum over the secondary nodes (NOTE: should I figure out a way to 
+				// store the reaction forces on the secondary nodes as well?)
 				Pa += (f & X)*2.0;
 
 				Qa += dyad3rs(f, X)*2.0;
@@ -678,9 +706,9 @@ void FEMicroModel2O::AveragedStress2OPK1(FEMaterialPoint &mp, mat3d &PK1a, tens3
 				FENode& node = ss.Node(i);
 				vec3d f = ss.m_Fr[i];
 
-				// We multiply by two since the reaction forces are only stored at the slave surface 
-				// and we also need to sum over the master nodes (NOTE: should I figure out a way to 
-				// store the reaction forces on the master nodes as well?)
+				// We multiply by two since the reaction forces are only stored at the primary surface 
+				// and we also need to sum over the secondary nodes (NOTE: should I figure out a way to 
+				// store the reaction forces on the secondary nodes as well?)
 				PK1 += (f & node.m_r0)*2.0;
 
 				vec3d X = node.m_r0;
@@ -754,9 +782,9 @@ void FEMicroModel2O::AveragedStress2OPK2(FEMaterialPoint &mp, mat3ds &Sa, tens3d
 				vec3d f = ss.m_Fr[i];
 				vec3d f0 = Finv*f;
 
-				// We multiply by two since the reaction forces are only stored at the slave surface 
-				// and we also need to sum over the master nodes (NOTE: should I figure out a way to 
-				// store the reaction forces on the master nodes as well?)
+				// We multiply by two since the reaction forces are only stored at the primary surface 
+				// and we also need to sum over the secondary nodes (NOTE: should I figure out a way to 
+				// store the reaction forces on the secondary nodes as well?)
 				S += (f0 & node.m_r0)*2.0;
 
 				vec3d X = node.m_r0;

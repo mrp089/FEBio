@@ -1,33 +1,55 @@
-//
-//  FETiedElasticInterface.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 2/28/18.
-//  Copyright © 2018 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FETiedElasticInterface.h"
 #include "FECore/FEModel.h"
 #include "FECore/FEAnalysis.h"
 #include "FECore/FENormalProjection.h"
+#include <FECore/FELinearSystem.h>
 #include "FECore/log.h"
 
 //-----------------------------------------------------------------------------
 // Define sliding interface parameters
-BEGIN_PARAMETER_LIST(FETiedElasticInterface, FEContactInterface)
-ADD_PARAMETER(m_blaugon  , FE_PARAM_BOOL  , "laugon"             );
-ADD_PARAMETER(m_atol     , FE_PARAM_DOUBLE, "tolerance"          );
-ADD_PARAMETER(m_gtol     , FE_PARAM_DOUBLE, "gaptol"             );
-ADD_PARAMETER(m_epsn     , FE_PARAM_DOUBLE, "penalty"            );
-ADD_PARAMETER(m_bautopen , FE_PARAM_BOOL  , "auto_penalty"       );
-ADD_PARAMETER(m_btwo_pass, FE_PARAM_BOOL  , "two_pass"           );
-ADD_PARAMETER(m_knmult   , FE_PARAM_INT   , "knmult"             );
-ADD_PARAMETER(m_stol     , FE_PARAM_DOUBLE, "search_tol"         );
-ADD_PARAMETER(m_bsymm    , FE_PARAM_BOOL  , "symmetric_stiffness");
-ADD_PARAMETER(m_srad     , FE_PARAM_DOUBLE, "search_radius"      );
-ADD_PARAMETER(m_naugmin  , FE_PARAM_INT   , "minaug"             );
-ADD_PARAMETER(m_naugmax  , FE_PARAM_INT   , "maxaug"             );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETiedElasticInterface, FEContactInterface)
+	ADD_PARAMETER(m_atol     , "tolerance"          );
+	ADD_PARAMETER(m_gtol     , "gaptol"             );
+	ADD_PARAMETER(m_epsn     , "penalty"            );
+	ADD_PARAMETER(m_bautopen , "auto_penalty"       );
+    ADD_PARAMETER(m_bupdtpen , "update_penalty"     );
+	ADD_PARAMETER(m_btwo_pass, "two_pass"           );
+	ADD_PARAMETER(m_knmult   , "knmult"             );
+	ADD_PARAMETER(m_stol     , "search_tol"         );
+	ADD_PARAMETER(m_bsymm    , "symmetric_stiffness");
+	ADD_PARAMETER(m_srad     , "search_radius"      );
+	ADD_PARAMETER(m_naugmin  , "minaug"             );
+	ADD_PARAMETER(m_naugmax  , "maxaug"             );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FETiedElasticSurface::Data::Data()
@@ -39,7 +61,19 @@ FETiedElasticSurface::Data::Data()
     m_Lmd = vec3d(0,0,0);
     m_tr = vec3d(0,0,0);
     m_epsn = 1.0;
-    m_pme  = (FESurfaceElement*)0;
+}
+
+//-----------------------------------------------------------------------------
+void FETiedElasticSurface::Data::Serialize(DumpStream& ar)
+{
+	FEContactMaterialPoint::Serialize(ar);
+	ar & m_Gap;
+	ar & m_dg;
+	ar & m_nu;
+	ar & m_rs;
+	ar & m_Lmd;
+	ar & m_epsn;
+	ar & m_tr;
 }
 
 //-----------------------------------------------------------------------------
@@ -48,7 +82,7 @@ FETiedElasticSurface::Data::Data()
 
 FETiedElasticSurface::FETiedElasticSurface(FEModel* pfem) : FEContactSurface(pfem)
 {
-    m_pfem = pfem;
+
 }
 
 //-----------------------------------------------------------------------------
@@ -56,16 +90,6 @@ bool FETiedElasticSurface::Init()
 {
     // initialize surface data first
     if (FEContactSurface::Init() == false) return false;
-    
-    // allocate data structures
-    int NE = Elements();
-    m_Data.resize(NE);
-    for (int i=0; i<NE; ++i)
-    {
-        FESurfaceElement& el = Element(i);
-        int nint = el.GaussPoints();
-        m_Data[i].resize(nint);
-    }
     
     // allocate node normals
     m_nn.assign(Nodes(), vec3d(0,0,0));
@@ -111,90 +135,17 @@ void FETiedElasticSurface::UpdateNodeNormals()
 }
 
 //-----------------------------------------------------------------------------
+//! create material point data
+FEMaterialPoint* FETiedElasticSurface::CreateMaterialPoint()
+{
+	return new FETiedElasticSurface::Data;
+}
+
+//-----------------------------------------------------------------------------
 void FETiedElasticSurface::Serialize(DumpStream& ar)
 {
-    if (ar.IsShallow())
-    {
-        if (ar.IsSaving())
-        {
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar << d.m_Lmd;
-                    ar << d.m_Gap;
-                    ar << d.m_dg;
-                    ar << d.m_tr;
-                }
-            }
-        }
-        else
-        {
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar >> d.m_Lmd;
-                    ar >> d.m_Gap;
-                    ar >> d.m_dg;
-                    ar >> d.m_tr;
-                }
-            }
-        }
-    }
-    else
-    {
-        // Next, we can serialize the base-class data
-        FEContactSurface::Serialize(ar);
-        
-        // And finally, we serialize the surface data
-        if (ar.IsSaving())
-        {
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar << d.m_Gap;
-                    ar << d.m_dg;
-                    ar << d.m_nu;
-                    ar << d.m_rs;
-                    ar << d.m_Lmd;
-                    ar << d.m_epsn;
-                    ar << d.m_tr;
-                }
-            }
-            ar << m_nn;
-        }
-        else
-        {
-            for (int i=0; i<(int) m_Data.size(); ++i)
-            {
-                vector<Data>& di = m_Data[i];
-                int nint = (int) di.size();
-                for (int j=0; j<nint; ++j)
-                {
-                    Data& d = di[j];
-                    ar >> d.m_Gap;
-                    ar >> d.m_dg;
-                    ar >> d.m_nu;
-                    ar >> d.m_rs;
-                    ar >> d.m_Lmd;
-                    ar >> d.m_epsn;
-                    ar >> d.m_tr;
-                }
-            }
-            ar >> m_nn;
-        }
-    }
+	FEContactSurface::Serialize(ar);
+	ar & m_nn;
 }
 
 //-----------------------------------------------------------------------------
@@ -203,7 +154,11 @@ void FETiedElasticSurface::GetVectorGap(int nface, vec3d& pg)
     FESurfaceElement& el = Element(nface);
     int ni = el.GaussPoints();
     pg = vec3d(0,0,0);
-    for (int k=0; k<ni; ++k) pg += m_Data[nface][k].m_dg;
+	for (int k = 0; k < ni; ++k)
+	{
+		Data& data = static_cast<Data&>(*el.GetMaterialPoint(k));
+		pg += data.m_dg;
+	}
     pg /= ni;
 }
 
@@ -213,7 +168,11 @@ void FETiedElasticSurface::GetContactTraction(int nface, vec3d& pt)
     FESurfaceElement& el = Element(nface);
     int ni = el.GaussPoints();
     pt = vec3d(0,0,0);
-    for (int k=0; k<ni; ++k) pt += m_Data[nface][k].m_tr;
+	for (int k = 0; k < ni; ++k)
+	{
+		Data& data = static_cast<Data&>(*el.GetMaterialPoint(k));
+		pt += data.m_tr;
+	}
     pt /= ni;
 }
 
@@ -236,6 +195,7 @@ FETiedElasticInterface::FETiedElasticInterface(FEModel* pfem) : FEContactInterfa
     m_srad = 1.0;
     m_gtol = -1;    // we use augmentation tolerance by default
     m_bautopen = false;
+    m_bupdtpen = false;
     
     m_naugmin = 0;
     m_naugmax = 10;
@@ -291,7 +251,7 @@ void FETiedElasticInterface::BuildMatrixProfile(FEGlobalMatrix& K)
             int* sn = &se.m_node[0];
             for (k=0; k<nint; ++k, ++ni)
             {
-                FETiedElasticSurface::Data& pt = ss.m_Data[j][k];
+				FETiedElasticSurface::Data& pt = static_cast<FETiedElasticSurface::Data&>(*se.GetMaterialPoint(k));
                 FESurfaceElement* pe = pt.m_pme;
                 if (pe != 0)
                 {
@@ -333,17 +293,23 @@ void FETiedElasticInterface::BuildMatrixProfile(FEGlobalMatrix& K)
 }
 
 //-----------------------------------------------------------------------------
-void FETiedElasticInterface::Activate()
+void FETiedElasticInterface::UpdateAutoPenalty()
 {
-    // don't forget to call the base class
-    FEContactInterface::Activate();
-    
     // calculate the penalty
     if (m_bautopen)
     {
         CalcAutoPenalty(m_ss);
         if (m_btwo_pass) CalcAutoPenalty(m_ms);
     }
+}
+
+//-----------------------------------------------------------------------------
+void FETiedElasticInterface::Activate()
+{
+    // don't forget to call the base class
+    FEContactInterface::Activate();
+    
+    UpdateAutoPenalty();
     
     // project the surfaces onto each other
     // this will evaluate the gap functions in the reference configuration
@@ -367,8 +333,8 @@ void FETiedElasticInterface::CalcAutoPenalty(FETiedElasticSurface& s)
         int nint = el.GaussPoints();
         for (int j=0; j<nint; ++j)
         {
-            FETiedElasticSurface::Data& pt = s.m_Data[i][j];
-            pt.m_epsn = eps;
+			FETiedElasticSurface::Data& pt = static_cast<FETiedElasticSurface::Data&>(*el.GetMaterialPoint(j));
+			pt.m_epsn = eps;
         }
     }
 }
@@ -403,11 +369,11 @@ void FETiedElasticInterface::InitialProjection(FETiedElasticSurface& ss, FETiedE
             // calculate the normal at this integration point
             nu = ss.SurfaceNormal(el, j);
             
-            // find the intersection point with the master surface
+            // find the intersection point with the secondary surface
             pme = np.Project2(r, nu, rs);
             
-            FETiedElasticSurface::Data& pt = ss.m_Data[i][j];
-            pt.m_pme = pme;
+			FETiedElasticSurface::Data& pt = static_cast<FETiedElasticSurface::Data&>(*el.GetMaterialPoint(j));
+			pt.m_pme = pme;
             pt.m_rs[0] = rs[0];
             pt.m_rs[1] = rs[1];
             if (pme)
@@ -444,8 +410,8 @@ void FETiedElasticInterface::ProjectSurface(FETiedElasticSurface& ss, FETiedElas
         
         for (int j=0; j<nint; ++j)
         {
-            FETiedElasticSurface::Data& pt = ss.m_Data[i][j];
-            
+			FETiedElasticSurface::Data& pt = static_cast<FETiedElasticSurface::Data&>(*el.GetMaterialPoint(j));
+
             // calculate the global position of the integration point
             r = ss.Local2Global(el, j);
             
@@ -462,12 +428,13 @@ void FETiedElasticInterface::ProjectSurface(FETiedElasticSurface& ss, FETiedElas
                 // calculate the gap function
                 vec3d g = q - r;
                 pt.m_dg = g - pt.m_Gap;
-                
+				pt.m_gap = pt.m_dg.norm();                
             }
             else
             {
                 // the node is not tied
                 pt.m_dg = vec3d(0,0,0);
+				pt.m_gap = 0.0;
             }
         }
     }
@@ -475,7 +442,7 @@ void FETiedElasticInterface::ProjectSurface(FETiedElasticSurface& ss, FETiedElas
 
 //-----------------------------------------------------------------------------
 
-void FETiedElasticInterface::Update(int niter, const FETimeInfo& tp)
+void FETiedElasticInterface::Update()
 {
     // project the surfaces onto each other
     // this will update the gap functions as well
@@ -485,7 +452,7 @@ void FETiedElasticInterface::Update(int niter, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FETiedElasticInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FETiedElasticInterface::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
     int i, j, k;
     vector<int> sLM, mLM, LM, en;
@@ -494,15 +461,19 @@ void FETiedElasticInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
     double detJ[MN], w[MN], *Hs, Hm[MN];
     double N[8*MN];
     
+    // Update auto-penalty if requested
+    if (m_bupdtpen && (GetFEModel()->GetCurrentStep()->GetFESolver()->m_niter == 0))
+        UpdateAutoPenalty();
+    
     // loop over the nr of passes
     int npass = (m_btwo_pass?2:1);
     for (int np=0; np<npass; ++np)
     {
-        // get slave and master surface
+        // get primary and secondary surface
         FETiedElasticSurface& ss = (np == 0? m_ss : m_ms);
         FETiedElasticSurface& ms = (np == 0? m_ms : m_ss);
         
-        // loop over all slave elements
+        // loop over all primary elements
         for (i=0; i<ss.Elements(); ++i)
         {
             // get the surface element
@@ -534,16 +505,16 @@ void FETiedElasticInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
             // note that we are integrating over the current surface
             for (j=0; j<nint; ++j)
             {
-                FETiedElasticSurface::Data& pt = ss.m_Data[i][j];
-                
-                // get the master element
+				FETiedElasticSurface::Data& pt = static_cast<FETiedElasticSurface::Data&>(*se.GetMaterialPoint(j));
+
+                // get the secondary element
                 FESurfaceElement* pme = pt.m_pme;
                 if (pme)
                 {
-                    // get the master element
+                    // get the secondary element
                     FESurfaceElement& me = *pme;
                     
-                    // get the nr of master element nodes
+                    // get the nr of secondary element nodes
                     int nmeln = me.Nodes();
                     
                     // copy LM vector
@@ -573,10 +544,10 @@ void FETiedElasticInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
                     for (k=0; k<nseln; ++k) en[k      ] = se.m_node[k];
                     for (k=0; k<nmeln; ++k) en[k+nseln] = me.m_node[k];
                     
-                    // get slave element shape functions
+                    // get primary element shape functions
                     Hs = se.H(j);
                     
-                    // get master element shape functions
+                    // get secondary element shape functions
                     double r = pt.m_rs[0];
                     double s = pt.m_rs[1];
                     me.shape_fnc(Hm, r, s);
@@ -623,16 +594,16 @@ void FETiedElasticInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FETiedElasticInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FETiedElasticInterface::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
     int i, j, k, l;
     vector<int> sLM, mLM, LM, en;
     const int MN = FEElement::MAX_NODES;
     double detJ[MN], w[MN], *Hs, Hm[MN];
-    matrix ke;
+    FEElementMatrix ke;
     
     // see how many reformations we've had to do so far
-    int nref = psolver->m_nref;
+    int nref = LS.GetSolver()->m_nref;
     
     // set higher order stiffness mutliplier
     // NOTE: this algrotihm doesn't really need this
@@ -645,7 +616,7 @@ void FETiedElasticInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo
         if (nref >= ni)
         {
             knmult = 1;
-            felog.printf("Higher order stiffness terms included.\n");
+            feLog("Higher order stiffness terms included.\n");
         }
         else knmult = 0;
     }
@@ -654,14 +625,14 @@ void FETiedElasticInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo
     int npass = (m_btwo_pass?2:1);
     for (int np=0; np < npass; ++np)
     {
-        // get the slave and master surface
+        // get the primary and secondary surface
         FETiedElasticSurface& ss = (np == 0? m_ss : m_ms);
         FETiedElasticSurface& ms = (np == 0? m_ms : m_ss);
         
-        // loop over all slave elements
+        // loop over all primary elements
         for (i=0; i<ss.Elements(); ++i)
         {
-            // get ths slave element
+            // get ths primary element
             FESurfaceElement& se = ss.Element(i);
             
             // get nr of nodes and integration points
@@ -690,15 +661,15 @@ void FETiedElasticInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo
             // loop over all integration points
             for (j=0; j<nint; ++j)
             {
-                FETiedElasticSurface::Data& pt = ss.m_Data[i][j];
-                
-                // get the master element
+				FETiedElasticSurface::Data& pt = static_cast<FETiedElasticSurface::Data&>(*se.GetMaterialPoint(j));
+
+                // get the secondary element
                 FESurfaceElement* pme = pt.m_pme;
                 if (pme)
                 {
                     FESurfaceElement& me = *pme;
                     
-                    // get the nr of master nodes
+                    // get the nr of secondary nodes
                     int nmeln = me.Nodes();
                     
                     // copy the LM vector
@@ -733,15 +704,15 @@ void FETiedElasticInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo
                     for (k=0; k<nseln; ++k) en[k      ] = se.m_node[k];
                     for (k=0; k<nmeln; ++k) en[k+nseln] = me.m_node[k];
                     
-                    // slave shape functions
+                    // primary shape functions
                     Hs = se.H(j);
                     
-                    // master shape functions
+                    // secondary shape functions
                     double r = pt.m_rs[0];
                     double s = pt.m_rs[1];
                     me.shape_fnc(Hm, r, s);
                     
-                    // get slave normal vector
+                    // get primary normal vector
                     vec3d nu = pt.m_nu;
                     
                     // gap function
@@ -902,7 +873,9 @@ void FETiedElasticInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo
                         }
                     }
                     // assemble the global stiffness
-                    psolver->AssembleStiffness(en, LM, ke);
+					ke.SetNodes(en);
+					ke.SetIndices(LM);
+					LS.Assemble(ke);
                 }
             }
         }
@@ -913,34 +886,34 @@ void FETiedElasticInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo
 bool FETiedElasticInterface::Augment(int naug, const FETimeInfo& tp)
 {
     // make sure we need to augment
-    if (!m_blaugon) return true;
+    if (m_laugon != 1) return true;
     
     int i;
     vec3d Ln;
     bool bconv = true;
     
-    int NS = (int)m_ss.m_Data.size();
-    int NM = (int)m_ms.m_Data.size();
+    int NS = m_ss.Elements();
+	int NM = m_ms.Elements();
     
     // --- c a l c u l a t e   i n i t i a l   n o r m s ---
     // a. normal component
     double normL0 = 0, normP = 0, normDP = 0;
     for (int i=0; i<NS; ++i)
     {
-        vector<FETiedElasticSurface::Data>& sd = m_ss.m_Data[i];
-        for (int j=0; j<(int)sd.size(); ++j)
+		FESurfaceElement& el = m_ss.Element(i);
+        for (int j=0; j<el.GaussPoints(); ++j)
         {
-            FETiedElasticSurface::Data& ds = sd[j];
-            normL0 += ds.m_Lmd*ds.m_Lmd;
+			FETiedElasticSurface::Data& ds = static_cast<FETiedElasticSurface::Data&>(*el.GetMaterialPoint(j));
+			normL0 += ds.m_Lmd*ds.m_Lmd;
         }
     }
     for (int i=0; i<NM; ++i)
     {
-        vector<FETiedElasticSurface::Data>& md = m_ms.m_Data[i];
-        for (int j=0; j<(int)md.size(); ++j)
+		FESurfaceElement& el = m_ms.Element(i);
+		for (int j=0; j<el.GaussPoints(); ++j)
         {
-            FETiedElasticSurface::Data& dm = md[j];
-            normL0 += dm.m_Lmd*dm.m_Lmd;
+			FETiedElasticSurface::Data& dm = static_cast<FETiedElasticSurface::Data&>(*el.GetMaterialPoint(j));
+			normL0 += dm.m_Lmd*dm.m_Lmd;
         }
     }
     
@@ -952,12 +925,12 @@ bool FETiedElasticInterface::Augment(int naug, const FETimeInfo& tp)
     double normL1 = 0, eps;
     for (i=0; i<NS; ++i)
     {
-        vector<FETiedElasticSurface::Data>& sd = m_ss.m_Data[i];
-        for (int j=0; j<(int)sd.size(); ++j)
-        {
-            FETiedElasticSurface::Data& ds = sd[j];
-            
-            // update Lagrange multipliers on slave surface
+		FESurfaceElement& el = m_ss.Element(i);
+		for (int j = 0; j<el.GaussPoints(); ++j)
+		{
+			FETiedElasticSurface::Data& ds = static_cast<FETiedElasticSurface::Data&>(*el.GetMaterialPoint(j));
+
+            // update Lagrange multipliers on primary surface
             eps = m_epsn*ds.m_epsn;
             ds.m_Lmd = ds.m_Lmd + ds.m_dg*eps;
             
@@ -967,14 +940,14 @@ bool FETiedElasticInterface::Augment(int naug, const FETimeInfo& tp)
         }
     }
     
-    for (i=0; i<NM; ++i)
-    {
-        vector<FETiedElasticSurface::Data>& md = m_ms.m_Data[i];
-        for (int j=0; j<(int)md.size(); ++j)
-        {
-            FETiedElasticSurface::Data& dm = md[j];
-            
-            // update Lagrange multipliers on master surface
+	for (int i = 0; i<NM; ++i)
+	{
+		FESurfaceElement& el = m_ms.Element(i);
+		for (int j = 0; j<el.GaussPoints(); ++j)
+		{
+			FETiedElasticSurface::Data& dm = static_cast<FETiedElasticSurface::Data&>(*el.GetMaterialPoint(j));
+
+            // update Lagrange multipliers on secondary surface
             eps = m_epsn*dm.m_epsn;
             dm.m_Lmd = dm.m_Lmd + dm.m_dg*eps;
             
@@ -1002,12 +975,12 @@ bool FETiedElasticInterface::Augment(int naug, const FETimeInfo& tp)
     if (naug < m_naugmin ) bconv = false;
     if (naug >= m_naugmax) bconv = true;
     
-    felog.printf(" sliding interface # %d\n", GetID());
-    felog.printf("                        CURRENT        REQUIRED\n");
-    felog.printf("    D multiplier : %15le", lnorm); if (m_atol > 0) felog.printf("%15le\n", m_atol); else felog.printf("       ***\n");
+    feLog(" sliding interface # %d\n", GetID());
+    feLog("                        CURRENT        REQUIRED\n");
+    feLog("    D multiplier : %15le", lnorm); if (m_atol > 0) feLog("%15le\n", m_atol); else feLog("       ***\n");
     
-    felog.printf("    maximum gap  : %15le", maxgap);
-    if (m_gtol > 0) felog.printf("%15le\n", m_gtol); else felog.printf("       ***\n");
+    feLog("    maximum gap  : %15le", maxgap);
+    if (m_gtol > 0) feLog("%15le\n", m_gtol); else feLog("       ***\n");
     
     return bconv;
 }
@@ -1025,31 +998,6 @@ void FETiedElasticInterface::Serialize(DumpStream &ar)
     // serialize pointers
     if (ar.IsShallow() == false)
     {
-        if (ar.IsSaving())
-        {
-            int NE = (int)m_ss.m_Data.size();
-            for (int i=0; i<NE; ++i)
-            {
-                int NI = (int)m_ss.m_Data[i].size();
-                for (int j=0; j<NI; ++j)
-                {
-                    FESurfaceElement* pe = m_ss.m_Data[i][j].m_pme;
-                    if (pe) ar << pe->m_lid; else ar << -1;
-                }
-            }
-        }
-        else
-        {
-            int NE = (int)m_ss.m_Data.size(), lid;
-            for (int i=0; i<NE; ++i)
-            {
-                int NI = (int)m_ss.m_Data[i].size();
-                for (int j = 0; j<NI; ++j)
-                {
-                    ar >> lid;
-                    m_ss.m_Data[i][j].m_pme = (lid < 0 ? 0 : &m_ms.Element(lid));
-                }
-            }
-        }
+		SerializeElementPointers(m_ss, m_ms, ar);
     }
 }

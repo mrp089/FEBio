@@ -1,15 +1,43 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEPRLig.h"
 
 // Define the material parameters
-BEGIN_PARAMETER_LIST(FEPRLig, FEElasticMaterial)
-	ADD_PARAMETER(m_c1,   FE_PARAM_DOUBLE,  "c1");
-	ADD_PARAMETER(m_c2,   FE_PARAM_DOUBLE,  "c2");
-	ADD_PARAMETER(m_u,   FE_PARAM_DOUBLE,   "mu");
-	ADD_PARAMETER(m_v0,   FE_PARAM_DOUBLE,  "v0");
-	ADD_PARAMETER(m_m,    FE_PARAM_DOUBLE,  "m");
-	ADD_PARAMETER(m_k,   FE_PARAM_DOUBLE,  "k");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEPRLig, FEElasticMaterial)
+	ADD_PARAMETER(m_c1, "c1");
+	ADD_PARAMETER(m_c2, "c2");
+	ADD_PARAMETER(m_u,  "mu");
+	ADD_PARAMETER(m_v0, "v0");
+	ADD_PARAMETER(m_m,  "m");
+	ADD_PARAMETER(m_k, "k");
+END_FECORE_CLASS();
 
 extern tens4ds material_to_spatial(tens4ds& C, mat3d& F);
 
@@ -35,27 +63,20 @@ mat3ds FEPRLig::Stress(FEMaterialPoint& mp)
 	// calculate left and right Cauchy-Green tensors and their squares
 	mat3ds b  =  pt.LeftCauchyGreen();
 	mat3ds c  =  pt.RightCauchyGreen();				
-	mat3ds b2 =  b*b;
-	mat3ds c2 =  c*c;
+	mat3ds b2 =  b.sqr();
+	mat3ds c2 =  c.sqr();
 
 	// Define the 2nd order identity tensor 
 	mat3dd I(1);
 
-	// declare initial and current material direction vectors
-	vec3d a0, a;
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
 
-	// set the initial fiber direction vector
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
-
-	// for testing (comment out)
-//	a0.x=1;
-//	a0.y=0;
-//	a0.z=0;
+	// declare initial material direction vector
+	vec3d a0 = Q.col(0);
 
 	// calculate the current material axis lam*a = F*a0;
-	a = F*a0;
+	vec3d a = F*a0;
 
 	// normalize material axis and store fiber stretch ; 
 	double lam = a.unit();
@@ -135,28 +156,20 @@ tens4ds FEPRLig::Tangent(FEMaterialPoint& mp)
 	// calculate left and right Cauchy-Green tensors, and their squares
 	mat3ds b  =  pt.LeftCauchyGreen();
 	mat3ds c  =  pt.RightCauchyGreen();				
-	mat3ds b2 =  b*b;
-	mat3ds c2 =  c*c;
+	mat3ds b2 =  b.sqr();
+	mat3ds c2 =  c.sqr();
 
 	// define the 2nd order identity tensor 
 	mat3dd I(1);
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
 
-	// declare initial and current material direction vectors
-	vec3d a0, a;
-
-	// set the initial fiber direction vector
-	a0.x = pt.m_Q[0][0];
-	a0.y = pt.m_Q[1][0];
-	a0.z = pt.m_Q[2][0];
-
-	// for testing (comment out)
-//	a0.x=1;
-//	a0.y=0;
-//	a0.z=0;
+	// declare initial material direction vectors
+	vec3d a0 = Q.col(0);
 
 	// calculate the current material axis lam*a = F*a0;
-	a = F*a0;
+	vec3d a = F*a0;
 
 	// normalize material axis and store fiber stretch ; 
 	double lam = a.unit();
@@ -326,4 +339,51 @@ tens4ds Dc2 =  (4/sqrt(i3))*((w11 +w2 + 2*i1*w12 + 2*i2*w13 + 2*i1*i2*w23 + i1*i
  double PPP2=0;
  */
 	return D;
+}
+
+//! calculate strain energy density at material point
+double FEPRLig::StrainEnergyDensity(FEMaterialPoint& pt)
+{
+    double sed = 0;
+
+    FEElasticMaterialPoint& mp = *pt.ExtractData<FEElasticMaterialPoint>();
+    
+    // obtain the deformation tensor F
+    mat3d &F = mp.m_F;
+    
+    // calculate left and right Cauchy-Green tensors and their squares
+    mat3ds c  =  mp.RightCauchyGreen();
+    mat3ds c2 =  c.sqr();
+    
+    // Define the 2nd order identity tensor
+    mat3dd I(1);
+    
+    // get the local coordinate systems
+    mat3d Q = GetLocalCS(pt);
+    
+    // declare initial material direction vector
+    vec3d a0 = Q.col(0);
+    
+    // calculate the current material axis lam*a = F*a0;
+    vec3d a = F*a0;
+    
+    // normalize material axis and store fiber stretch ;
+    double lam = a.unit();
+    
+    //////////////////////////Strain invariants ///////////////////////////////////////////////
+    
+    // define scalar strain invariants i1:15
+    double i1 =  c.tr();
+    double i2 =  0.5*(i1*i1 - c2.tr());
+    double i3 =  c.det();
+    double i4 =     a0*(c*a0);
+    double i5 =  a0*(c2*a0);
+
+    double Wfiber = 0.5*m_c1/m_c2*(exp(m_c2*pow(lam-1,2))-1);
+    double Wmatrix = m_u/2*(i1-3) - m_u*log(sqrt(i3));
+    double Wvol = m_k/2*pow(log((i5-i1*i4+i2)/(pow(i4, 2*(m_m-m_v0)*exp(-4*m_m*(lam-1))))),2);
+    
+    sed = Wfiber + Wmatrix + Wvol;
+    
+    return sed;
 }

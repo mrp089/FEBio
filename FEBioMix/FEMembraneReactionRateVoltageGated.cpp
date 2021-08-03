@@ -1,21 +1,42 @@
-//
-//  FEMembraneReactionRateVoltageGated.cpp
-//  FEBioMix
-//
-//  Created by Gerard Ateshian on 4/30/18.
-//  Copyright © 2018 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEMembraneReactionRateVoltageGated.h"
 
 // Material parameters for the FEMembraneReactionRateVoltageGated material
-BEGIN_PARAMETER_LIST(FEMembraneReactionRateVoltageGated, FEMembraneReactionRate)
-ADD_PARAMETER2(m_a, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "a");
-ADD_PARAMETER2(m_b, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "b");
-ADD_PARAMETER2(m_c, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "c");
-ADD_PARAMETER2(m_d, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "d");
-ADD_PARAMETER(m_sol, FE_PARAM_INT, "sol");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEMembraneReactionRateVoltageGated, FEMembraneReactionRate)
+	ADD_PARAMETER(m_a, FE_RANGE_GREATER_OR_EQUAL(0.0), "a");
+	ADD_PARAMETER(m_b, FE_RANGE_GREATER_OR_EQUAL(0.0), "b");
+	ADD_PARAMETER(m_c, FE_RANGE_GREATER_OR_EQUAL(0.0), "c");
+	ADD_PARAMETER(m_d, FE_RANGE_GREATER_OR_EQUAL(0.0), "d");
+	ADD_PARAMETER(m_sol, "sol");
+END_FECORE_CLASS();
 
 bool FEMembraneReactionRateVoltageGated::Init()
 {

@@ -1,21 +1,41 @@
-/*
- *  FECarterHayesNew.h
- *  FEBioXCode
- *
- *  Created by Gerard Ateshian on 5/24/13.
- *  Copyright 2013 Columbia University. All rights reserved.
- *
- */
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #pragma once
 #include "FEBioMech/FEElasticMaterial.h"
 #include "FEBioMech/FERemodelingElasticMaterial.h"
+#include "febiomix_api.h"
 
 //-----------------------------------------------------------------------------
 //! This is a neo-Hookean material whose Young's modulus is evaluated from the density
 //! according to the power-law relation proposed by Carter and Hayes for trabecular bone
 
-class FECarterHayes : public FEElasticMaterial, public FERemodelingInterface
+class FEBIOMIX_API FECarterHayes : public FEElasticMaterial, public FERemodelingInterface
 {
 public:
 	FECarterHayes(FEModel* pfem) : FEElasticMaterial(pfem) { m_E0 = 0; m_rho0 = 1; m_sbm = -1; m_lsbm = -1; m_g = 0; }
@@ -64,5 +84,5 @@ public: // --- remodeling interface ---
 	double YoungModulus(double rhor) { return m_E0*pow(rhor/m_rho0, m_g);}
 	
 	// declare the parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

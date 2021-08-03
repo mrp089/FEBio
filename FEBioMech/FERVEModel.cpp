@@ -1,25 +1,51 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FERVEModel.h"
 #include "FECore/FESolidDomain.h"
 #include "FECore/FEElemElemList.h"
-#include "FECore/BC.h"
 #include "FEElasticMaterial.h"
 #include "FEPeriodicBoundary1O.h"
 #include "FECore/FEAnalysis.h"
-#include "FECore/FEDataLoadCurve.h"
+#include "FECore/FELoadCurve.h"
 #include "FEBCPrescribedDeformation.h"
 #include "FESolidSolver2.h"
 #include "FEElasticSolidDomain.h"
 #include "FEPeriodicLinearConstraint.h"
 #include <FECore/FECube.h>
+#include <FECore/FEPointFunction.h>
+#include <FECore/FECoreKernel.h>
 
 //-----------------------------------------------------------------------------
 FERVEModel::FERVEModel()
 {
 	m_bctype = DISPLACEMENT;
-
-	// set the pardiso solver as default
-	SetLinearSolverType(PARDISO_SOLVER);
 }
 
 //-----------------------------------------------------------------------------
@@ -28,7 +54,7 @@ FERVEModel::~FERVEModel()
 }
 
 //-----------------------------------------------------------------------------
-// copy from the master RVE
+// copy from the parent RVE
 void FERVEModel::CopyFrom(FERVEModel& rve)
 {
 	// base class does most work
@@ -46,7 +72,8 @@ void FERVEModel::CopyFrom(FERVEModel& rve)
 bool FERVEModel::InitRVE(int rveType, const char* szbc)
 {
 	// make sure the RVE problem doesn't output anything to a plot file
-	GetCurrentStep()->SetPlotLevel(FE_PLOT_NEVER);
+	for (int i=0; i<Steps(); ++i)
+		GetStep(i)->SetPlotLevel(FE_PLOT_NEVER);
 
 	// Center the RVE about the origin.
 	// This also calculates the bounding box
@@ -67,15 +94,14 @@ bool FERVEModel::InitRVE(int rveType, const char* szbc)
 			FENodeSet* pset = m.FindNodeSet(szbc);
 			if (pset == 0) return false;
 
-			FENodeSet& ns = *pset;
-
 			// prep displacement BC's
-			if (PrepDisplacementBC(ns) == false) return false;
+			if (PrepDisplacementBC(pset) == false) return false;
 
 			// tag all boundary nodes
 			int NN = m.Nodes();
 			m_BN.assign(NN, 0);
-			for (int i=0; i<pset->size(); ++i) m_BN[ns[i]] = 1; 
+			FENodeSet& ns = *pset;
+			for (int i=0; i<pset->Size(); ++i) m_BN[ns[i]] = 1; 
 		}
 		else 
 		{
@@ -84,10 +110,10 @@ bool FERVEModel::InitRVE(int rveType, const char* szbc)
 			
 			// create a (temporary) node set from the boundary nodes
 			FEMesh& mesh = GetMesh();
-			FENodeSet set(&mesh);
+			FENodeSet* set = new FENodeSet(this);
 
 			int NN = mesh.Nodes();
-			for (int i = 0; i<NN; ++i) if (m_BN[i] == 1) set.add(i);
+			for (int i = 0; i<NN; ++i) if (m_BN[i] == 1) set->Add(i);
 
 			// prep the displacement BCs
 			if (PrepDisplacementBC(set) == false) return false;
@@ -119,7 +145,7 @@ bool FERVEModel::InitRVE(int rveType, const char* szbc)
 bool FERVEModel::PrepPeriodicLC()
 {
 	// make sure there no BCs defined
-	ClearBCs();
+	ClearBoundaryConditions();
 
 	// user needs to define corner nodes
 	// get the RVE mesh
@@ -127,23 +153,24 @@ bool FERVEModel::PrepPeriodicLC()
 
 	// Assuming it's a cube, build the surface, edge, and corner node data
 	FECube cube;
-	if (cube.Build(&m) == false) return false;
+	if (cube.Build(this) == false) return false;
 
 	// tag all boundary nodes
 	int NN = m.Nodes();
 	const FENodeSet& bs = cube.GetBoundaryNodes();
 	m_BN.resize(NN, 0);
-	for (int i = 0; i<bs.size(); ++i) m_BN[bs[i]] = 1;
+	for (int i = 0; i<bs.Size(); ++i) m_BN[bs[i]] = 1;
 
 	// now, build the linear constraints
-	FEPeriodicLinearConstraint plc;
-	plc.AddNodeSetPair(cube.GetSurface(0)->GetNodeSet(), cube.GetSurface(1)->GetNodeSet());
-	plc.AddNodeSetPair(cube.GetSurface(2)->GetNodeSet(), cube.GetSurface(3)->GetNodeSet());
-	plc.AddNodeSetPair(cube.GetSurface(4)->GetNodeSet(), cube.GetSurface(5)->GetNodeSet());
+	FEPeriodicLinearConstraint plc(this);
+	plc.AddNodeSetPair(cube.GetSurface(0)->GetNodeList(), cube.GetSurface(1)->GetNodeList());
+	plc.AddNodeSetPair(cube.GetSurface(2)->GetNodeList(), cube.GetSurface(3)->GetNodeList());
+	plc.AddNodeSetPair(cube.GetSurface(4)->GetNodeList(), cube.GetSurface(5)->GetNodeList());
 	plc.GenerateConstraints(this);
 
 	// find the node set that defines the corner nodes
-	if (PrepDisplacementBC(cube.GetCornerNodes()) == false) return false;
+	FENodeSet* corners = const_cast<FENodeSet*>(&cube.GetCornerNodes());
+	if (PrepDisplacementBC(corners) == false) return false;
 
 	return true;
 }
@@ -231,13 +258,13 @@ void FERVEModel::FindBoundaryNodes(vector<int>& BN)
 		for (int i=0; i<dom.Elements(); ++i, ++M)
 		{
 			FEElement& el = dom.ElementRef(i);
-			int nf = m.Faces(el);
+			int nf = el.Faces();
 			for (int j=0; j<nf; ++j)
 			{
 				if (EEL.Neighbor(M, j) == 0)
 				{
 					// mark all nodes
-					int nn = m.GetFace(el, j, fn);
+					int nn = el.GetFace(j, fn);
 					for (int k=0; k<nn; ++k)
 					{
 						FENode& node = m.Node(fn[k]);
@@ -254,25 +281,24 @@ void FERVEModel::FindBoundaryNodes(vector<int>& BN)
 
 //-----------------------------------------------------------------------------
 // Setup the displacement boundary conditions.
-bool FERVEModel::PrepDisplacementBC(const FENodeSet& ns)
+bool FERVEModel::PrepDisplacementBC(FENodeSet* ns)
 {
 	// create a load curve
-	FEDataLoadCurve* plc = new FEDataLoadCurve(this);
-	plc->SetInterpolation(FEDataLoadCurve::LINEAR);
+	FELoadCurve* plc = fecore_alloc(FELoadCurve, this);
 	plc->Add(0.0, 0.0);
 	plc->Add(1.0, 1.0);
-	AddLoadCurve(plc);
-	int NLC = LoadCurves() - 1;
+	AddLoadController(plc);
+	int NLC = LoadControllers() - 1;
 
 	// clear all BCs
-	ClearBCs();
+	ClearBoundaryConditions();
 
 	// we create the prescribed deformation BC
-	FEBCPrescribedDeformation* pdc = fecore_new<FEBCPrescribedDeformation>(FEBC_ID, "prescribed deformation", this);
-	AddPrescribedBC(pdc);
+	FEBCPrescribedDeformation* pdc = fecore_new<FEBCPrescribedDeformation>("prescribed deformation", this);
+	AddBoundaryCondition(pdc);
 
 	// assign the boundary nodes
-	pdc->AddNodes(ns);
+	pdc->SetNodeSet(ns);
 
 	return true;
 }
@@ -302,24 +328,23 @@ bool FERVEModel::PrepPeriodicBC(const char* szbc)
 	}
 
 	// create a load curve
-	FEDataLoadCurve* plc = new FEDataLoadCurve(this);
-	plc->SetInterpolation(FEDataLoadCurve::LINEAR);
+	FELoadCurve* plc = fecore_alloc(FELoadCurve, this);
 	plc->Add(0.0, 0.0);
 	plc->Add(1.0, 1.0);
-	AddLoadCurve(plc);
-	int NLC = LoadCurves() - 1;
+	AddLoadController(plc);
+	int NLC = LoadControllers() - 1;
 
 	// create the DC's
-	ClearBCs();
-	FEBCPrescribedDeformation* pdc = fecore_new<FEBCPrescribedDeformation>(FEBC_ID, "prescribed deformation", this);
-	AddPrescribedBC(pdc);
+	ClearBoundaryConditions();
+	FEBCPrescribedDeformation* pdc = fecore_new<FEBCPrescribedDeformation>("prescribed deformation", this);
+	AddBoundaryCondition(pdc);
 
 	// assign nodes to BCs
-	pdc->AddNodes(ns);
+	pdc->SetNodeSet(pset);
 
 	// create the boundary node flags
 	m_BN.assign(m.Nodes(), 0);
-	int N = ns.size();
+	int N = ns.Size();
 	for (int i=0; i<N; ++i) m_BN[ns[i]] = 1;
 
 	return true;
@@ -332,7 +357,7 @@ void FERVEModel::Update(const mat3d& F)
 	FEMesh& m = GetMesh();
 
 	// assign new DC's for the boundary nodes
-	FEBCPrescribedDeformation& dc = dynamic_cast<FEBCPrescribedDeformation&>(*PrescribedBC(0));
+	FEBCPrescribedDeformation& dc = dynamic_cast<FEBCPrescribedDeformation&>(*BoundaryCondition(0));
 	dc.SetDeformationGradient(F);
 
 	if (m_bctype == FERVEModel::PERIODIC_AL)
@@ -482,9 +507,9 @@ mat3ds FERVEModel::StressAverage(FEMaterialPoint& mp)
 				FENode& node = ss.Node(i);
 				vec3d f = ss.m_Fr[i];
 
-				// We multiply by two since the reaction forces are only stored at the slave surface 
-				// and we also need to sum over the master nodes (NOTE: should I figure out a way to 
-				// store the reaction forces on the master nodes as well?)
+				// We multiply by two since the reaction forces are only stored at the primary surface 
+				// and we also need to sum over the secondary nodes (NOTE: should I figure out a way to 
+				// store the reaction forces on the secondary nodes as well?)
 				T += (f & node.m_rt)*2.0;
 			}
 		}

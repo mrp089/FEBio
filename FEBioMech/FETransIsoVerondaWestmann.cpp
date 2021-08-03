@@ -1,19 +1,46 @@
-// FETransIsoVerondaWestmann.cpp: implementation of the FETransIsoVerondaWestmann class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FETransIsoVerondaWestmann.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FETransIsoVerondaWestmann, FEUncoupledMaterial)
-	ADD_PARAMETER(      m_c1  , FE_PARAM_DOUBLE, "c1");
-	ADD_PARAMETER(      m_c2  , FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETER(m_fib.m_c3  , FE_PARAM_DOUBLE, "c3");
-	ADD_PARAMETER(m_fib.m_c4  , FE_PARAM_DOUBLE, "c4");
-	ADD_PARAMETER(m_fib.m_c5  , FE_PARAM_DOUBLE, "c5");
-	ADD_PARAMETER(m_fib.m_lam1, FE_PARAM_DOUBLE, "lam_max");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETransIsoVerondaWestmann, FEUncoupledMaterial)
+	ADD_PARAMETER(      m_c1  , "c1");
+	ADD_PARAMETER(      m_c2  , "c2");
+	ADD_PARAMETER(m_fib.m_c3  , "c3");
+	ADD_PARAMETER(m_fib.m_c4  , "c4");
+	ADD_PARAMETER(m_fib.m_c5  , "c5");
+	ADD_PARAMETER(m_fib.m_lam1, "lam_max");
+	ADD_PARAMETER(m_fib.m_fiber, "fiber");
+
+	ADD_PROPERTY(m_ac, "active_contraction", FEProperty::Optional);
+END_FECORE_CLASS();
 
 //////////////////////////////////////////////////////////////////////
 // FETransIsoVerondaWestmann
@@ -22,13 +49,8 @@ END_PARAMETER_LIST();
 //-----------------------------------------------------------------------------
 FETransIsoVerondaWestmann::FETransIsoVerondaWestmann(FEModel* pfem) : FEUncoupledMaterial(pfem), m_fib(pfem)
 {
-	AddProperty(&m_ac, "active_contraction", 0);
-}
-
-//-----------------------------------------------------------------------------
-FEMaterialPoint* FETransIsoVerondaWestmann::CreateMaterialPointData()
-{
-	return m_fib.CreateMaterialPointData();
+	m_ac = 0;
+	m_fib.SetParent(this);
 }
 
 //-----------------------------------------------------------------------------
@@ -44,7 +66,7 @@ mat3ds FETransIsoVerondaWestmann::DevStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!
@@ -66,7 +88,7 @@ mat3ds FETransIsoVerondaWestmann::DevStress(FEMaterialPoint& mp)
 	s += m_fib.DevStress(mp);
 
 	// add the active fiber stress
-	if ((FEActiveFiberContraction*)m_ac) s += m_ac->FiberStress(mp);
+	if ((FEActiveFiberContraction*)m_ac) s += m_ac->FiberStress(m_fib.FiberVector(mp), mp);
 
 	return s;
 }
@@ -85,7 +107,7 @@ tens4ds FETransIsoVerondaWestmann::DevTangent(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	double I1 = B.tr();
@@ -121,7 +143,6 @@ tens4ds FETransIsoVerondaWestmann::DevTangent(FEMaterialPoint& mp)
 	tens4ds cw = BxB*((W11 + W2)*4.0*Ji) - B4*(W2*4.0*Ji) - dyad1s(WCCxC, I)*(4.0/3.0*Ji) + IxI*(4.0/9.0*Ji*CWWC);
 
 	tens4ds c = dyad1s(devs, I)*(-2.0/3.0) + (I4 - IxI/3.0)*(4.0/3.0*Ji*WC) + cw;
-
 	return c + m_fib.DevTangent(mp);
 }
 
@@ -134,7 +155,7 @@ double FETransIsoVerondaWestmann::DevStrainEnergyDensity(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
     
 	// calculate square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
     
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!

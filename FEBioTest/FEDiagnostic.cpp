@@ -1,7 +1,32 @@
-// FEDiagnostic.cpp: implementation of the FEDiagnostic class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEDiagnostic.h"
 #include "FETangentDiagnostic.h"
 #include "FEEASShellTangentDiagnostic.h"
@@ -36,19 +61,23 @@ FEDiagnostic::~FEDiagnostic()
 
 }
 
+void FEDiagnostic::SetFileName(const std::string& fileName)
+{
+	m_file = fileName;
+}
+
+const std::string& FEDiagnostic::GetFileName()
+{
+	return m_file;
+}
+
 //-----------------------------------------------------------------------------
 FEDiagnostic* FEDiagnosticImport::LoadFile(FEModel& fem, const char* szfile)
 {
 	m_pdia = 0;
 
-	if (Load(fem, szfile) == false) return 0;
+	m_builder = new FEModelBuilder(fem);
 
-	return m_pdia;
-}
-
-//-----------------------------------------------------------------------------
-bool FEDiagnosticImport::Parse(const char* szfile)
-{
 	// Open the XML file
 	XMLReader xml;
 	if (xml.Open(szfile) == false) 
@@ -58,13 +87,13 @@ bool FEDiagnosticImport::Parse(const char* szfile)
 	}
 
 	// define file structure
-	FEFileSectionMap map;
-	map["Control" ] = new FEDiagnosticControlSection (this);
-	map["Material"] = new FEBioMaterialSection       (this);
-	map["Scenario"] = new FEDiagnosticScenarioSection(this);
-    map["Globals" ] = new FEBioGlobalsSection        (this);
+	m_map.clear();
+	m_map["Control" ] = new FEDiagnosticControlSection (this);
+	m_map["Material"] = new FEBioMaterialSection       (this);
+	m_map["Scenario"] = new FEDiagnosticScenarioSection(this);
+    m_map["Globals" ] = new FEBioGlobalsSection        (this);
 
-	FEModel& fem = *GetFEModel();
+	FECoreKernel& fecore = FECoreKernel::GetInstance();
 
 	// loop over all child tags
 	try
@@ -74,21 +103,21 @@ bool FEDiagnosticImport::Parse(const char* szfile)
 		if (xml.FindTag("febio_diagnostic", tag) == false) return 0;
 
 		XMLAtt& att = tag.m_att[0];
-        if      (att == "tangent test"            ) m_pdia = new FETangentDiagnostic           (fem);
-        else if (att == "shell tangent test"      ) m_pdia = new FEEASShellTangentDiagnostic   (fem);
-        else if (att == "contact test"            ) m_pdia = new FEContactDiagnostic           (fem);
-        else if (att == "print matrix"            ) m_pdia = new FEPrintMatrixDiagnostic       (fem);
-        else if (att == "print hbmatrix"          ) m_pdia = new FEPrintHBMatrixDiagnostic     (fem);
-        else if (att == "memory test"             ) m_pdia = new FEMemoryDiagnostic            (fem);
-        else if (att == "biphasic tangent test"   ) m_pdia = new FEBiphasicTangentDiagnostic   (fem);
-        else if (att == "biphasic contact test"   ) m_pdia = new FEContactDiagnosticBiphasic   (fem);
-        else if (att == "tied biphasic test"      ) m_pdia = new FETiedBiphasicDiagnostic      (fem);
-        else if (att == "multiphasic tangent test") m_pdia = new FEMultiphasicTangentDiagnostic(fem);
-        else if (att == "fluid tangent test"      ) m_pdia = new FEFluidTangentDiagnostic      (fem);
-        else if (att == "fluid-FSI tangent test"  ) m_pdia = new FEFluidFSITangentDiagnostic   (fem);
+        if      (att == "tangent test"            ) { fecore.SetActiveModule("solid"      ); m_pdia = new FETangentDiagnostic           (fem); }
+        else if (att == "shell tangent test"      ) { fecore.SetActiveModule("solid"      ); m_pdia = new FEEASShellTangentDiagnostic   (fem); }
+        else if (att == "contact test"            ) { fecore.SetActiveModule("solid"      ); m_pdia = new FEContactDiagnostic           (fem); }
+        else if (att == "print matrix"            ) { fecore.SetActiveModule("solid"      ); m_pdia = new FEPrintMatrixDiagnostic       (fem); }
+        else if (att == "print hbmatrix"          ) { fecore.SetActiveModule("solid"      ); m_pdia = new FEPrintHBMatrixDiagnostic     (fem); }
+        else if (att == "memory test"             ) { fecore.SetActiveModule("solid"      ); m_pdia = new FEMemoryDiagnostic            (fem); }
+        else if (att == "biphasic tangent test"   ) { fecore.SetActiveModule("biphasic"   ); m_pdia = new FEBiphasicTangentDiagnostic   (fem); }
+        else if (att == "biphasic contact test"   ) { fecore.SetActiveModule("biphasic"   ); m_pdia = new FEContactDiagnosticBiphasic   (fem); }
+        else if (att == "tied biphasic test"      ) { fecore.SetActiveModule("biphasic"   ); m_pdia = new FETiedBiphasicDiagnostic      (fem); }
+        else if (att == "multiphasic tangent test") { fecore.SetActiveModule("multiphasic"); m_pdia = new FEMultiphasicTangentDiagnostic(fem); }
+        else if (att == "fluid tangent test"      ) { fecore.SetActiveModule("fluid"      ); m_pdia = new FEFluidTangentDiagnostic      (fem); }
+        else if (att == "fluid-FSI tangent test"  ) { fecore.SetActiveModule("fluid-FSI"  ); m_pdia = new FEFluidFSITangentDiagnostic   (fem); }
 		else
 		{
-			felog.printf("\nERROR: unknown diagnostic\n\n");
+			feLog("\nERROR: unknown diagnostic\n\n");
 			return 0;
 		}
 
@@ -97,36 +126,38 @@ bool FEDiagnosticImport::Parse(const char* szfile)
 		fem.SetCurrentStepIndex(0);
         
 		// parse the file
-		map.Parse(tag);
+		if (ParseFile(tag) == false) return nullptr;
 	}
 	catch (XMLReader::Error& e)
 	{
-		felog.printf("FATAL ERROR: %s (line %d)\n", e.GetErrorString(), xml.GetCurrentLine());
+		feLog("FATAL ERROR: %s\n", e.what());
 		return 0;
 	}
 	catch (FEFileException& e)
 	{
-		felog.printf("FATAL ERROR: %s (line %d)\n", e.GetErrorString(), xml.GetCurrentLine());
+		feLog("FATAL ERROR: %s (line %d)\n", e.GetErrorString(), xml.GetCurrentLine());
 		return 0;
 	}
 	catch (...)
 	{
-		felog.printf("FATAL ERROR: unrecoverable error (line %d)\n", xml.GetCurrentLine());
+		feLog("FATAL ERROR: unrecoverable error (line %d)\n", xml.GetCurrentLine());
 		return 0;
 	}
 
 	// close the XML file
 	xml.Close();
 
+	if (m_pdia) m_pdia->SetFileName(szfile);
+
 	// we're done!
-	return true;
+	return m_pdia;
 }
 
 //-----------------------------------------------------------------------------
 void FEDiagnosticControlSection::Parse(XMLTag &tag)
 {
 	FEModel& fem = *GetFEModel();
-	FEAnalysis* pstep = new FEAnalysis(&fem);
+	FEAnalysis* pstep = fem.GetCurrentStep();
 
 	++tag;
 	do
@@ -153,6 +184,7 @@ void FEDiagnosticScenarioSection::Parse(XMLTag &tag)
 
 	// create the scenario
 	FEDiagnosticScenario* pscn = pdia->CreateScenario(type.cvalue());
+	if (pscn == nullptr) throw XMLReader::InvalidAttributeValue(tag, "type", type.cvalue());
 
 	// parse the parameter list
 	FEParameterList& pl = pscn->GetParameterList();

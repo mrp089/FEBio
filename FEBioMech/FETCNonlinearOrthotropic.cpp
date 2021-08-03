@@ -1,21 +1,57 @@
-// FETCNonlinearOrthotropic.cpp: implementation of the FETCNonlinearOrthotropic class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
+#include <limits>
 #include "FETCNonlinearOrthotropic.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FETCNonlinearOrthotropic, FEUncoupledMaterial)
-	ADD_PARAMETER(m_c1, FE_PARAM_DOUBLE, "c1");
-	ADD_PARAMETER(m_c2, FE_PARAM_DOUBLE, "c2");
-	ADD_PARAMETERV2(m_beta, FE_PARAM_DOUBLE, 3, FE_RANGE_GREATER_OR_EQUAL(2.0), "beta");
-	ADD_PARAMETERV2(m_ksi , FE_PARAM_DOUBLE, 3, FE_RANGE_GREATER_OR_EQUAL(0.0), "ksi" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETCNonlinearOrthotropic, FEUncoupledMaterial)
+	ADD_PARAMETER(m_c1, "c1");
+	ADD_PARAMETER(m_c2, "c2");
+	ADD_PARAMETER(m_beta, 3, FE_RANGE_GREATER_OR_EQUAL(2.0), "beta");
+	ADD_PARAMETER(m_ksi , 3, FE_RANGE_GREATER_OR_EQUAL(0.0), "ksi" );
+	ADD_PARAMETER(m_epsf, "epsilon_scale");
+END_FECORE_CLASS();
 
 //////////////////////////////////////////////////////////////////////
 // FETCNonlinearOrthotropic
 //////////////////////////////////////////////////////////////////////
+
+FETCNonlinearOrthotropic::FETCNonlinearOrthotropic(FEModel* pfem) : FEUncoupledMaterial(pfem) 
+{
+	m_c1 = 0.0;
+	m_c2 = 0.0;
+	m_beta[0] = m_beta[1] = m_beta[2] = 0.0;
+	m_ksi[0] = m_ksi[1] = m_ksi[2] = 0.0;
+
+	m_epsf = 0.0;
+}
 
 //-----------------------------------------------------------------------------
 // Calculate the deviatoric Cauchy stress
@@ -45,10 +81,13 @@ mat3ds FETCNonlinearOrthotropic::DevStress(FEMaterialPoint& mp)
 
 	const double third = 1.0/3.0;
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber directions
-	a0.x = pt.m_Q[0][0]; b0.x = pt.m_Q[0][1]; c0.x = pt.m_Q[0][2];
-	a0.y = pt.m_Q[1][0]; b0.y = pt.m_Q[1][1]; c0.y = pt.m_Q[1][2];
-	a0.z = pt.m_Q[2][0]; b0.z = pt.m_Q[2][1]; c0.z = pt.m_Q[2][2];
+	a0.x = Q[0][0]; b0.x = Q[0][1]; c0.x = Q[0][2];
+	a0.y = Q[1][0]; b0.y = Q[1][1]; c0.y = Q[1][2];
+	a0.z = Q[2][0]; b0.z = Q[2][1]; c0.z = Q[2][2];
 
 	// calculate the current material axes lam*a = F*a0;
 	a = F*a0;
@@ -69,7 +108,7 @@ mat3ds FETCNonlinearOrthotropic::DevStress(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
 
 	// square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
 
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!
@@ -171,10 +210,13 @@ tens4ds FETCNonlinearOrthotropic::DevTangent(FEMaterialPoint& mp)
 	vec3d a, b, c, a0, b0, c0;
 	double la, lb, lc, lat, lbt, lct;
 
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber directions
-	a0.x = pt.m_Q[0][0]; b0.x = pt.m_Q[0][1]; c0.x = pt.m_Q[0][2];
-	a0.y = pt.m_Q[1][0]; b0.y = pt.m_Q[1][1]; c0.y = pt.m_Q[1][2];
-	a0.z = pt.m_Q[2][0]; b0.z = pt.m_Q[2][1]; c0.z = pt.m_Q[2][2];
+	a0.x = Q[0][0]; b0.x = Q[0][1]; c0.x = Q[0][2];
+	a0.y = Q[1][0]; b0.y = Q[1][1]; c0.y = Q[1][2];
+	a0.z = Q[2][0]; b0.z = Q[2][1]; c0.z = Q[2][2];
 
 	// calculate the current material axes lam*a = F*a0;
 	a.x = F[0][0]*a0.x + F[0][1]*a0.y + F[0][2]*a0.z;
@@ -269,8 +311,10 @@ tens4ds FETCNonlinearOrthotropic::DevTangent(FEMaterialPoint& mp)
 	W1 = m_c1;
 	W2 = m_c2;
 
+	const double eps = m_epsf*std::numeric_limits<double>::epsilon();
+
 	// fiber a
-	if (lat >= 1)
+	if (lat >= 1 + eps)
 	{
 		double lati = 1.0/lat;
 
@@ -287,7 +331,7 @@ tens4ds FETCNonlinearOrthotropic::DevTangent(FEMaterialPoint& mp)
 	}
 
 	// fiber b
-	if (lbt >= 1)
+	if (lbt >= 1 + eps)
 	{
 		double lbti = 1.0/lbt;
 
@@ -304,7 +348,7 @@ tens4ds FETCNonlinearOrthotropic::DevTangent(FEMaterialPoint& mp)
 	}
 
 	// fiber c
-	if (lct >= 1)
+	if (lct >= 1 + eps)
 	{
 		double lcti = 1.0/lct;
 
@@ -525,11 +569,14 @@ double FETCNonlinearOrthotropic::DevStrainEnergyDensity(FEMaterialPoint& mp)
 	// current local material axis
 	vec3d a0, b0, c0, a, b, c;
 	double la, lb, lc, lat, lbt, lct;
-    
+
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+
 	// get the initial fiber directions
-	a0.x = pt.m_Q[0][0]; b0.x = pt.m_Q[0][1]; c0.x = pt.m_Q[0][2];
-	a0.y = pt.m_Q[1][0]; b0.y = pt.m_Q[1][1]; c0.y = pt.m_Q[1][2];
-	a0.z = pt.m_Q[2][0]; b0.z = pt.m_Q[2][1]; c0.z = pt.m_Q[2][2];
+	a0.x = Q[0][0]; b0.x = Q[0][1]; c0.x = Q[0][2];
+	a0.y = Q[1][0]; b0.y = Q[1][1]; c0.y = Q[1][2];
+	a0.z = Q[2][0]; b0.z = Q[2][1]; c0.z = Q[2][2];
     
 	// calculate the current material axes lam*a = F*a0;
 	a = F*a0;
@@ -550,7 +597,7 @@ double FETCNonlinearOrthotropic::DevStrainEnergyDensity(FEMaterialPoint& mp)
 	mat3ds B = pt.DevLeftCauchyGreen();
     
 	// square of B
-	mat3ds B2 = B*B;
+	mat3ds B2 = B.sqr();
     
 	// Invariants of B (= invariants of C)
 	// Note that these are the invariants of Btilde, not of B!

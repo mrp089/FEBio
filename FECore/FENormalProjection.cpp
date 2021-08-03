@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FENormalProjection.h"
 #include "FEMesh.h"
@@ -32,7 +60,7 @@ FESurfaceElement* FENormalProjection::Project(vec3d r, vec3d n, double rs[2])
 	// those that intersect the ray, then pick the closest intersection
 	set<int>::iterator it;
 	bool found = false;
-	double rsl[2], gl, g;
+	double rsl[2], gl, g = 0;
 	FESurfaceElement* pei = 0;
 	for (it=selist.begin(); it!=selist.end(); ++it) {
 		// get the surface element
@@ -56,7 +84,7 @@ FESurfaceElement* FENormalProjection::Project(vec3d r, vec3d n, double rs[2])
 	}
 	if (found) return pei;
 	
-	// we did not find a master surface
+	// we did not find a surface
 	return 0;
 }
 
@@ -100,7 +128,7 @@ FESurfaceElement* FENormalProjection::Project2(vec3d r, vec3d n, double rs[2])
 	}
 	if (found) return pei;
 	
-	// we did not find a master surface
+	// we did not find a surface
 	return 0;
 }
 
@@ -161,6 +189,24 @@ vec3d FENormalProjection::Project(const vec3d& x, const vec3d& N)
 		FEMesh& mesh = *m_surf.GetMesh();
 		vec3d r[FEElement::MAX_NODES];
 		for (int i=0; i<pe->Nodes(); ++i) r[i] = mesh.Node(pe->m_node[i]).m_rt;
+		vec3d q = pe->eval(r, rs[0], rs[1]);
+		return q;
+	}
+	else return x;
+}
+
+//-----------------------------------------------------------------------------
+vec3d FENormalProjection::Project2(const vec3d& x, const vec3d& N)
+{
+	double rs[2];
+	FESurfaceElement* pe = FENormalProjection::Project3(x, N, rs);
+	if (pe == nullptr) pe = FENormalProjection::Project3(x, -N, rs);
+
+	if (pe)
+	{
+		FEMesh& mesh = *m_surf.GetMesh();
+		vec3d r[FEElement::MAX_NODES];
+		for (int i = 0; i<pe->Nodes(); ++i) r[i] = mesh.Node(pe->m_node[i]).m_rt;
 		vec3d q = pe->eval(r, rs[0], rs[1]);
 		return q;
 	}

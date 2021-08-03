@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include <FECore/vec3d.h>
 #include <vector>
@@ -54,16 +82,22 @@ public:
 		int Elements() const { return (int) m_Elem.size(); }
 
 		FE_Element_Spec ElementSpec() const { return m_spec; }
+		void SetElementSpec(FE_Element_Spec spec) { m_spec = spec; }
 		
 		void Create(int nsize) { m_Elem.resize(nsize); }
+		void Reserve(int nsize) { m_Elem.reserve(nsize); }
 		const ELEMENT& GetElement(int i) const { return m_Elem[i]; }
 		ELEMENT& GetElement(int i) { return m_Elem[i]; }
+		void AddElement(const ELEMENT& el) { m_Elem.push_back(el); }
 
 	private:
 		FE_Element_Spec		m_spec;
 		string				m_name;
 		string				m_matName;
 		vector<ELEMENT>		m_Elem;
+
+	public:
+		double	m_defaultShellThickness;
 	};
 
 	class Surface
@@ -125,6 +159,42 @@ public:
 		vector<int>	m_elem;
 	};
 
+	class SurfacePair
+	{
+	public:
+		SurfacePair();
+		SurfacePair(const SurfacePair& surfPair);
+
+		const string& Name() const;
+
+	public:
+		string	m_name;
+		string	m_primary;
+		string	m_secondary;		
+	};
+
+	class DiscreteSet
+	{
+	public:
+		struct ELEM
+		{
+			int	node[2];
+		};
+
+	public:
+		DiscreteSet();
+		DiscreteSet(const DiscreteSet& set);
+
+		void SetName(const string& name);
+		const string& Name() const;
+
+		void AddElement(int n0, int n1);
+		const vector<ELEM>& ElementList() const;
+
+	private:
+		string			m_name;
+		vector<ELEM>	m_elem;
+	};
 	class Part
 	{
 	public:
@@ -146,6 +216,7 @@ public:
 		int Surfaces() const { return (int) m_Surf.size(); }
 		void AddSurface(Surface* surf);
 		Surface* GetSurface(int i) { return m_Surf[i]; }
+		Surface* FindSurface(const string& name);
 
 		int NodeSets() const { return (int) m_NSet.size(); }
 		void AddNodeSet(NodeSet* nset) { m_NSet.push_back(nset); }
@@ -154,6 +225,14 @@ public:
 		int ElementSets() const { return (int) m_ESet.size(); }
 		void AddElementSet(ElementSet* eset) { m_ESet.push_back(eset); }
 		ElementSet* GetElementSet(int i) { return m_ESet[i]; }
+
+		int SurfacePairs() const { return (int)m_SurfPair.size(); }
+		void AddSurfacePair(SurfacePair* sp) { m_SurfPair.push_back(sp); }
+		SurfacePair* GetSurfacePair(int i) { return m_SurfPair[i]; }
+
+		int DiscreteSets() const { return (int)m_DiscSet.size(); }
+		void AddDiscreteSet(DiscreteSet* sp) { m_DiscSet.push_back(sp); }
+		DiscreteSet* GetDiscreteSet(int i) { return m_DiscSet[i]; }
 
 		int Nodes() const { return (int) m_Node.size(); }
 
@@ -166,6 +245,8 @@ public:
 		vector<Surface*>	m_Surf;
 		vector<NodeSet*>	m_NSet;
 		vector<ElementSet*>	m_ESet;
+		vector<SurfacePair*>	m_SurfPair;
+		vector<DiscreteSet*>	m_DiscSet;
 	};
 
 public:
@@ -173,12 +254,13 @@ public:
 	~FEBModel();
 
 	size_t Parts() const;
+	Part* GetPart(int i);
 	Part* AddPart(const std::string& name);
 	void AddPart(Part* part);
 
 	Part* FindPart(const string& name);
 
-	bool BuildPart(FEModel& fem, Part& part, const FETransform& T = FETransform());
+	bool BuildPart(FEModel& fem, Part& part, bool buildDomains = true, const FETransform& T = FETransform());
 
 private:
 	std::vector<Part*>	m_Part;

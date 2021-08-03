@@ -18,6 +18,12 @@
     <Text Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\FEBioMix\FEActiveConstantSupply.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEActiveMomentumSupply.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEBioMix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -33,6 +39,12 @@
     <ClInclude Include="..\..\FEBioMix\FEBiphasicContactSurface.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEBiphasicDomain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEBiphasicShellDomain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEBiphasicSolidDomain.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -40,6 +52,12 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEBiphasicSoluteDomain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEBiphasicSoluteShellDomain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEBiphasicSoluteSolidDomain.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEBiphasicSoluteSolver.h">
@@ -69,6 +87,12 @@
     <ClInclude Include="..\..\FEBioMix\FEDiffRefIso.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEFiberExpPowSBM.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEFiberPowLinearSBM.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEFluidFlux.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -78,7 +102,31 @@
     <ClInclude Include="..\..\FEBioMix\FEMassActionForward.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMassActionForwardEffective.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEMassActionReversible.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMassActionReversibleEffective.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMembraneMassActionForward.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMembraneMassActionReversible.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMembraneReaction.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMembraneReactionRateConst.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMembraneReactionRateIonChannel.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMembraneReactionRateVoltageGated.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEMichaelisMenten.h">
@@ -93,7 +141,16 @@
     <ClInclude Include="..\..\FEBioMix\FEMultiphasicDomain.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMultiphasicFCD.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEMultiphasicMultigeneration.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMultiphasicShellDomain.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEMultiphasicSolidDomain.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEMultiphasicSolver.h">
@@ -103,6 +160,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEOsmCoefConst.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEOsmCoefManning.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEOsmoticCoefficient.h">
@@ -126,7 +186,16 @@
     <ClInclude Include="..\..\FEBioMix\FEPoroTraction.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEPressureStabilization.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEReaction.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEReactionRateConst.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FEReactionRateExpSED.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FEReactionRateHuiskes.h">
@@ -144,16 +213,25 @@
     <ClInclude Include="..\..\FEBioMix\FESlidingInterface3.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FESlidingInterfaceBiphasic.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FESlidingInterfaceMP.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FESolubConst.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FESolubManning.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FESolute.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FESoluteFlux.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FESoluteInterface.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FESolutesMaterialPoint.h">
@@ -180,6 +258,9 @@
     <ClInclude Include="..\..\FEBioMix\FETiedBiphasicInterface.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioMix\FETiedMultiphasicInterface.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioMix\FETriphasic.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -189,38 +270,35 @@
     <ClInclude Include="..\..\FEBioMix\stdafx.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEActiveConstantSupply.h">
+    <ClInclude Include="..\..\FEBioMix\FEPorousNeoHookean.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEActiveMomentumSupply.h">
+    <ClInclude Include="..\..\FEBioMix\febiomix_api.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEReactionRateExpSED.h">
+    <ClInclude Include="..\..\FEBioMix\FESBMPointSource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEFiberExpPowSBM.h">
+    <ClInclude Include="..\..\FEBioMix\FESlidingInterfaceBiphasicMixed.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEFiberPowLinearSBM.h">
+    <ClInclude Include="..\..\FEBioMix\FESolutePointSource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEOsmCoefManning.h">
+    <ClInclude Include="..\..\FEBioMix\FEPermExpIso.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FESolubManning.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FESlidingInterfaceBiphasic.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEMassActionForwardEffective.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\..\FEBioMix\FEMassActionReversibleEffective.h">
+    <ClInclude Include="..\..\FEBioMix\FEMatchingOsmoticCoefficientBC.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\FEBioMix\FEActiveConstantSupply.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEActiveMomentumSupply.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEBioMix.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -236,6 +314,12 @@
     <ClCompile Include="..\..\FEBioMix\FEBiphasicContactSurface.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEBiphasicDomain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEBiphasicShellDomain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEBiphasicSolidDomain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -243,6 +327,12 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEBiphasicSoluteDomain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEBiphasicSoluteShellDomain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEBiphasicSoluteSolidDomain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEBiphasicSoluteSolver.cpp">
@@ -272,6 +362,12 @@
     <ClCompile Include="..\..\FEBioMix\FEDiffRefIso.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEFiberExpPowSBM.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEFiberPowLinearSBM.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEFluidFlux.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -281,7 +377,31 @@
     <ClCompile Include="..\..\FEBioMix\FEMassActionForward.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMassActionForwardEffective.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEMassActionReversible.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMassActionReversibleEffective.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMembraneMassActionForward.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMembraneMassActionReversible.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMembraneReaction.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMembraneReactionRateConst.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMembraneReactionRateIonChannel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMembraneReactionRateVoltageGated.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEMichaelisMenten.cpp">
@@ -296,7 +416,16 @@
     <ClCompile Include="..\..\FEBioMix\FEMultiphasicDomain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMultiphasicFCD.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEMultiphasicMultigeneration.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMultiphasicShellDomain.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEMultiphasicSolidDomain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEMultiphasicSolver.cpp">
@@ -306,6 +435,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEOsmCoefConst.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEOsmCoefManning.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEOsmoticCoefficient.cpp">
@@ -329,7 +461,16 @@
     <ClCompile Include="..\..\FEBioMix\FEPoroTraction.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEPressureStabilization.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEReaction.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEReactionRateConst.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FEReactionRateExpSED.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FEReactionRateHuiskes.cpp">
@@ -347,16 +488,25 @@
     <ClCompile Include="..\..\FEBioMix\FESlidingInterface3.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FESlidingInterfaceBiphasic.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FESlidingInterfaceMP.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FESolubConst.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FESolubManning.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FESolute.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FESoluteFlux.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FESoluteInterface.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FESolutesMaterialPoint.cpp">
@@ -383,40 +533,31 @@
     <ClCompile Include="..\..\FEBioMix\FETiedBiphasicInterface.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioMix\FETiedMultiphasicInterface.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FETriphasic.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioMix\FETriphasicDomain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEActiveConstantSupply.cpp">
+    <ClCompile Include="..\..\FEBioMix\FEPorousNeoHookean.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEActiveMomentumSupply.cpp">
+    <ClCompile Include="..\..\FEBioMix\FESBMPointSource.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEReactionRateExpSED.cpp">
+    <ClCompile Include="..\..\FEBioMix\FESlidingInterfaceBiphasicMixed.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEFiberExpPowSBM.cpp">
+    <ClCompile Include="..\..\FEBioMix\FESolutePointSource.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEFiberPowLinearSBM.cpp">
+    <ClCompile Include="..\..\FEBioMix\FEPermExpIso.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEOsmCoefManning.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FESolubManning.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FESlidingInterfaceBiphasic.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEMassActionForwardEffective.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\..\FEBioMix\FEMassActionReversibleEffective.cpp">
+    <ClCompile Include="..\..\FEBioMix\FEMatchingOsmoticCoefficientBC.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

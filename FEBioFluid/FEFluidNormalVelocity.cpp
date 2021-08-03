@@ -1,39 +1,60 @@
-//
-//  FEFluidNormalVelocity.cpp
-//  FEBioFluid
-//
-//  Created by Gerard Ateshian on 3/2/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEFluidNormalVelocity.h"
-#include "FECore/FEModel.h"
 #include "FECore/FEElemElemList.h"
 #include "FECore/FEGlobalMatrix.h"
 #include "FECore/FEGlobalVector.h"
 #include "FECore/log.h"
 #include "FECore/LinearSolver.h"
+#include "FEBioFluid.h"
 
 //=============================================================================
-BEGIN_PARAMETER_LIST(FEFluidNormalVelocity, FESurfaceLoad)
-ADD_PARAMETER(m_velocity, FE_PARAM_DOUBLE    , "velocity");
-ADD_PARAMETER(m_VC      , FE_PARAM_DATA_ARRAY, "value"   );
-ADD_PARAMETER(m_bpv     , FE_PARAM_BOOL      , "prescribe_nodal_velocities");
-ADD_PARAMETER(m_bpar    , FE_PARAM_BOOL      , "parabolic"  );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFluidNormalVelocity, FESurfaceLoad)
+	ADD_PARAMETER(m_velocity, "velocity"                  );
+	ADD_PARAMETER(m_VC      , "value"                     );
+	ADD_PARAMETER(m_bpv     , "prescribe_nodal_velocities");
+	ADD_PARAMETER(m_bpar    , "parabolic"                 );
+    ADD_PARAMETER(m_brim    , "prescribe_rim_pressure"    );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! constructor
-FEFluidNormalVelocity::FEFluidNormalVelocity(FEModel* pfem) : FESurfaceLoad(pfem), m_VC(FE_DOUBLE)
+FEFluidNormalVelocity::FEFluidNormalVelocity(FEModel* pfem) : FESurfaceLoad(pfem), m_VC(FE_DOUBLE), m_dofW(pfem)
 {
     m_velocity = 0.0;
     m_bpv = true;
     m_bpar = false;
+    m_brim = false;
     
-    m_dofWX = pfem->GetDOFIndex("wx");
-    m_dofWY = pfem->GetDOFIndex("wy");
-    m_dofWZ = pfem->GetDOFIndex("wz");
-    m_dofEF = pfem->GetDOFIndex("ef");
+	m_dofW.AddVariable(FEBioFluid::GetVariableName(FEBioFluid::RELATIVE_FLUID_VELOCITY));
+    m_dofEF = pfem->GetDOFIndex(FEBioFluid::GetVariableName(FEBioFluid::FLUID_DILATATION), 0);
 }
 
 //-----------------------------------------------------------------------------
@@ -41,168 +62,96 @@ FEFluidNormalVelocity::FEFluidNormalVelocity(FEModel* pfem) : FESurfaceLoad(pfem
 void FEFluidNormalVelocity::SetSurface(FESurface* ps)
 {
     FESurfaceLoad::SetSurface(ps);
-    m_VC.Create(ps, 1.0);
+    m_VC.Create(ps->GetFacetSet(), 1.0);
 }
 
 //-----------------------------------------------------------------------------
-void FEFluidNormalVelocity::UnpackLM(FEElement& el, vector<int>& lm)
+double FEFluidNormalVelocity::NormalVelocity(FESurfaceMaterialPoint& mp)
 {
-    FEMesh& mesh = GetFEModel()->GetMesh();
-    int N = el.Nodes();
-    lm.resize(N);
-    for (int i=0; i<N; ++i)
-    {
-        int n = el.m_node[i];
-        FENode& node = mesh.Node(n);
-        vector<int>& id = node.m_ID;
-        
-        lm[i] = id[m_dofEF];
-    }
+	FESurfaceElement& el = *mp.SurfaceElement();
+	double vn = 0;
+	double* N = mp.m_shape;
+	int neln = el.Nodes();
+	for (int i = 0; i<neln; ++i)
+	{
+		vn += N[i] * m_VN[el.m_lnode[i]];
+	}
+	return vn;
 }
 
 //-----------------------------------------------------------------------------
 //! Calculate the residual for the prescribed normal velocity
-void FEFluidNormalVelocity::Residual(const FETimeInfo& tp, FEGlobalVector& R)
+void FEFluidNormalVelocity::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
-    int N = (int)m_psurf->Elements();
-#pragma omp parallel for
-    for (int iel=0; iel<N; ++iel)
-    {
-        int i, n;
-        vector<double> fe;
-        vector<int> elm;
-        
-        vec3d rt[FEElement::MAX_NODES];
-        
-        FESurfaceElement& el = m_psurf->Element(iel);
-        
-        int ndof = el.Nodes();
-        fe.resize(ndof);
-        
-        // nr integration points
-        int nint = el.GaussPoints();
-        
-        // nr of element nodes
-        int neln = el.Nodes();
-        
-        // nodal coordinates
-        for (i=0; i<neln; ++i) {
-            FENode& node = m_psurf->GetMesh()->Node(el.m_node[i]);
-            rt[i] = node.m_rt*tp.alphaf + node.m_rp*(1-tp.alphaf);
-        }
+	FEDofList dofE(GetFEModel());
+	dofE.AddDof(m_dofEF);
+	m_psurf->LoadVector(R, dofE, false, [=](FESurfaceMaterialPoint& mp, const FESurfaceDofShape& dof_a, vector<double>& fa) {
 
-        double* Gr, *Gs;
-        double* N;
-        double* w  = el.GaussWeights();
-        
-        vec3d dxr, dxs;
-        
-        // get the velocity at the integration point
-        double vn;
-        
-        // repeat over integration points
-        zero(fe);
-        for (n=0; n<nint; ++n)
-        {
-            N  = el.H(n);
-            Gr = el.Gr(n);
-            Gs = el.Gs(n);
-            
-            // calculate the tangent vectors
-            vn = 0;
-            dxr = dxs = vec3d(0,0,0);
-            for (i=0; i<neln; ++i)
-            {
-                vn += N[i]*m_VN[el.m_lnode[i]];
-                dxr += rt[i]*Gr[i];
-                dxs += rt[i]*Gs[i];
-            }
-            
-            vn *= m_velocity;
-            double da = (dxr ^ dxs).norm();
-            
-            for (i=0; i<neln; ++i)
-                fe[i] += N[i]*vn*w[n]*da;
-        }
-        
-        // get the element's LM vector and adjust it
-        UnpackLM(el, elm);
-        
-        // add element force vector to global force vector
-        R.Assemble(el.m_node, elm, fe);
-    }
+		FESurfaceElement& el = *mp.SurfaceElement();
+
+		// nodal coordinates
+		vec3d rt[FEElement::MAX_NODES];
+		m_psurf->GetNodalCoordinates(el, tp.alphaf, rt);
+
+		// calculate the tangent vectors
+		vec3d dxr = el.eval_deriv1(rt, mp.m_index);
+		vec3d dxs = el.eval_deriv2(rt, mp.m_index);
+
+		// normal velocity
+		double vn = NormalVelocity(mp);
+		vn *= m_velocity;
+		double da = (dxr ^ dxs).norm();
+
+		double H = dof_a.shape;
+		fa[0] = H * vn * da;
+	});
 }
 
 //-----------------------------------------------------------------------------
 //! initialize
 bool FEFluidNormalVelocity::Init()
 {
-    FEModelComponent::Init();
+    if (FESurfaceLoad::Init() == false) return false;
     
-    FESurface* ps = &GetSurface();
-    ps->Init();
-    FEMesh* mesh = ps->GetMesh();
+    m_dof.Clear();
+    m_dof.AddDofs(m_dofW);
+    m_dof.AddDof(m_dofEF);
 
-    // evaluate surface normals
-    vector<vec3d> sn(ps->Elements(),vec3d(0,0,0));
-    m_nu.resize(ps->Nodes(),vec3d(0,0,0));
-    m_VN.resize(ps->Nodes(),0);
-    vector<int> nf(ps->Nodes(),0);
-    vec3d r0[FEElement::MAX_NODES];
-    for (int iel=0; iel<ps->Elements(); ++iel)
-    {
-        FESurfaceElement& el = m_psurf->Element(iel);
+    
+    // Set up data structure for setting rim pressure
+    if (m_brim) {
+        // find rim nodes (rim)
+        FEElemElemList EEL;
+        FESurface* ps = &GetSurface();
+        EEL.Create(ps);
         
-        // nr integration points
-        int nint = el.GaussPoints();
-        
-        // nr of element nodes
-        int neln = el.Nodes();
-        
-        // nodal coordinates
-        for (int i=0; i<neln; ++i) {
-            r0[i] = mesh->Node(el.m_node[i]).m_r0;
-            m_VN[el.m_lnode[i]] += m_VC.value<double>(iel, i);
-            ++nf[el.m_lnode[i]];
-        }
-        
-        double* Nr, *Ns;
-        
-        vec3d dxr, dxs;
-        
-        // repeat over integration points
-        for (int n=0; n<nint; ++n)
-        {
-            Nr = el.Gr(n);
-            Ns = el.Gs(n);
-            
-            // calculate the tangent vectors at integration point
-            dxr = dxs = vec3d(0,0,0);
-            for (int i=0; i<neln; ++i)
-            {
-                dxr += r0[i]*Nr[i];
-                dxs += r0[i]*Ns[i];
+        vector<bool> boundary(ps->Nodes(), false);
+        for (int i=0; i<ps->Elements(); ++i) {
+            FESurfaceElement& el = ps->Element(i);
+            for (int j=0; j<el.facet_edges(); ++j) {
+                FEElement* nel = EEL.Neighbor(i, j);
+                if (nel == nullptr) {
+                    int en[3] = {-1,-1,-1};
+                    el.facet_edge(j, en);
+                    boundary[en[0]] = true;
+                    boundary[en[1]] = true;
+                    if (en[2] > -1) boundary[en[2]] = true;
+                }
             }
-            
-            sn[iel] = dxr ^ dxs;
-            sn[iel].unit();
         }
         
-        // evaluate nodal normals by averaging surface normals
-        for (int i=0; i<neln; ++i)
-            m_nu[el.m_lnode[i]] += sn[iel];
+        // count number of non-boundary nodes
+        m_rim.reserve(ps->Nodes());
+        for (int i=0; i<ps->Nodes(); ++i)
+            if (boundary[i]) m_rim.push_back(i);
+        
+        if (m_rim.size() == ps->Nodes())
+        {
+            feLogError("Unable to set rim pressure\n");
+            return false;
+        }
     }
-    
-    for (int i=0; i<ps->Nodes(); ++i) {
-        m_nu[i].unit();
-        m_VN[i] /= nf[i];
-    }
-    
-    // Set parabolic velocity profile if requested.
-    // This will override velocity boundary cards in m_VC
-    // and nodal cards in m_VN
-    if (m_bpar) return SetParabolicVelocity();
-    
+
     return true;
 }
 
@@ -210,15 +159,86 @@ bool FEFluidNormalVelocity::Init()
 //! Activate the degrees of freedom for this BC
 void FEFluidNormalVelocity::Activate()
 {
-    FESurface* ps = &GetSurface();
+	FESurface* ps = &GetSurface();
+	FEMesh* mesh = ps->GetMesh();
+
+	m_VC.Create(ps->GetFacetSet(), 1.0);
+
+	// evaluate surface normals
+	vector<vec3d> sn(ps->Elements(), vec3d(0, 0, 0));
+	m_nu.resize(ps->Nodes(), vec3d(0, 0, 0));
+	m_VN.resize(ps->Nodes(), 0);
+	vector<int> nf(ps->Nodes(), 0);
+	vec3d r0[FEElement::MAX_NODES];
+	for (int iel = 0; iel<ps->Elements(); ++iel)
+	{
+		FESurfaceElement& el = m_psurf->Element(iel);
+
+		// nr integration points
+		int nint = el.GaussPoints();
+
+		// nr of element nodes
+		int neln = el.Nodes();
+
+		// nodal coordinates
+		for (int i = 0; i<neln; ++i) {
+			r0[i] = mesh->Node(el.m_node[i]).m_r0;
+			m_VN[el.m_lnode[i]] += m_VC.value<double>(iel, i);
+			++nf[el.m_lnode[i]];
+		}
+
+		double* Nr, *Ns;
+
+		vec3d dxr, dxs;
+
+		// repeat over integration points
+		for (int n = 0; n<nint; ++n)
+		{
+			Nr = el.Gr(n);
+			Ns = el.Gs(n);
+
+			// calculate the tangent vectors at integration point
+			dxr = dxs = vec3d(0, 0, 0);
+			for (int i = 0; i<neln; ++i)
+			{
+				dxr += r0[i] * Nr[i];
+				dxs += r0[i] * Ns[i];
+			}
+
+			sn[iel] = dxr ^ dxs;
+			sn[iel].unit();
+		}
+
+		// evaluate nodal normals by averaging surface normals
+		for (int i = 0; i<neln; ++i)
+			m_nu[el.m_lnode[i]] += sn[iel];
+	}
+
+	for (int i = 0; i<ps->Nodes(); ++i) {
+		m_nu[i].unit();
+		m_VN[i] /= nf[i];
+	}
+
+	// Set parabolic velocity profile if requested.
+	// This will override velocity boundary cards in m_VC
+	// and nodal cards in m_VN
+	if (m_bpar) SetParabolicVelocity();
     
     for (int i=0; i<ps->Nodes(); ++i)
     {
         FENode& node = ps->Node(i);
         // mark node as having prescribed DOF
-        node.m_BC[m_dofWX] = DOF_PRESCRIBED;
-        node.m_BC[m_dofWY] = DOF_PRESCRIBED;
-        node.m_BC[m_dofWZ] = DOF_PRESCRIBED;
+        if (node.get_bc(m_dofW[0]) != DOF_FIXED) node.set_bc(m_dofW[0], DOF_PRESCRIBED);
+        if (node.get_bc(m_dofW[1]) != DOF_FIXED) node.set_bc(m_dofW[1], DOF_PRESCRIBED);
+        if (node.get_bc(m_dofW[2]) != DOF_FIXED) node.set_bc(m_dofW[2], DOF_PRESCRIBED);
+    }
+    
+    if (m_brim) {
+        for (int i=0; i<m_rim.size(); ++i) {
+            FENode& node = ps->Node(m_rim[i]);
+            // mark node as having prescribed DOF
+            if (node.get_bc(m_dofEF) != DOF_FIXED) node.set_bc(m_dofEF, DOF_PRESCRIBED);
+        }
     }
 }
 
@@ -234,10 +254,14 @@ void FEFluidNormalVelocity::Update()
         // evaluate the velocity
         vec3d v = m_nu[i]*(m_velocity*m_VN[i]);
         FENode& node = ps->Node(i);
-        if (node.m_ID[m_dofWX] < -1) node.set(m_dofWX, v.x);
-        if (node.m_ID[m_dofWY] < -1) node.set(m_dofWY, v.y);
-        if (node.m_ID[m_dofWZ] < -1) node.set(m_dofWZ, v.z);
+        if (node.get_bc(m_dofW[0]) == DOF_PRESCRIBED) node.set(m_dofW[0], v.x);
+        if (node.get_bc(m_dofW[1]) == DOF_PRESCRIBED) node.set(m_dofW[1], v.y);
+        if (node.get_bc(m_dofW[2]) == DOF_PRESCRIBED) node.set(m_dofW[2], v.z);
     }
+    
+    if (m_brim) SetRimPressure();
+    
+    GetFEModel()->SetMeshUpdateFlag(true);
 }
 
 //-----------------------------------------------------------------------------
@@ -271,18 +295,17 @@ bool FEFluidNormalVelocity::SetParabolicVelocity()
         if (!boundary[i]) glm[i] = neq++;
     if (neq == 0)
     {
-        felog.printbox("FATAL ERROR","Unable to set parabolic fluid normal velocity\n");
+        feLogError("Unable to set parabolic fluid normal velocity\n");
         return false;
     }
     
     // create a linear solver
     LinearSolver*		plinsolve;	//!< the linear solver
     FEGlobalMatrix*		pK;			//!< stiffness matrix
-    FECoreKernel& fecore = FECoreKernel::GetInstance();
-    plinsolve = fecore.CreateLinearSolver(SKYLINE_SOLVER);
+    plinsolve = fecore_new<LinearSolver>("skyline", nullptr);
     if (plinsolve == 0)
     {
-        felog.printbox("FATAL ERROR","Unknown solver type selected\n");
+		feLogError("Unknown solver type selected\n");
         return false;
     }
     
@@ -290,7 +313,7 @@ bool FEFluidNormalVelocity::SetParabolicVelocity()
     pK = new FEGlobalMatrix(pS);
     if (pK == 0)
     {
-        felog.printbox("FATAL ERROR", "Failed allocating stiffness matrix\n\n");
+		feLogError("Failed allocating stiffness matrix\n\n");
         return false;
     }
     // build matrix profile for normal velocity at non-boundary nodes
@@ -316,7 +339,7 @@ bool FEFluidNormalVelocity::SetParabolicVelocity()
     FEGlobalVector pR(pfem, rhs, Fr);
     
     // calculate the global matrix and vector
-    matrix ke;
+    FEElementMatrix ke;
     vector<double> fe;
     vector<int> lm;
     
@@ -378,7 +401,8 @@ bool FEFluidNormalVelocity::SetParabolicVelocity()
             lm[j] = glm[el.m_lnode[j]];
         
         // assemble element matrix in global stiffness matrix
-        pK->Assemble(ke, lm);
+		ke.SetIndices(lm);
+        pK->Assemble(ke);
         pR.Assemble(lm, fe);
     }
 
@@ -387,7 +411,7 @@ bool FEFluidNormalVelocity::SetParabolicVelocity()
     plinsolve->Factor();
     if (plinsolve->BackSolve(v, rhs) == false)
     {
-        felog.printbox("FATAL ERROR","Unable to solve for parabolic fluid normal velocity\n");
+		feLogError("Unable to solve for parabolic fluid normal velocity\n");
         return false;
     }
     plinsolve->Destroy();
@@ -444,4 +468,40 @@ bool FEFluidNormalVelocity::SetParabolicVelocity()
     for (int i=0; i<ps->Nodes(); ++i) m_VN[i] /= vbar;
     
     return true;
+}
+
+//-----------------------------------------------------------------------------
+//! Evaluate normal velocities by solving Poiseuille flow across the surface
+bool FEFluidNormalVelocity::SetRimPressure()
+{
+    FESurface* ps = &GetSurface();
+    
+    // evaluate dilatation everywhere but rim
+    double es = 0;
+    int neq = 0;
+    for (int i=0; i<ps->Nodes(); ++i) {
+        FENode& node = ps->Node(i);
+        if (node.get_bc(m_dofEF) == DOF_OPEN) {
+            es += node.get(m_dofEF);
+            ++neq;
+        }
+    }
+    es /= neq;
+
+    // set the rim pressure (dilatation)
+    for (int i=0; i<m_rim.size(); ++i) {
+        FENode& node = ps->Node(m_rim[i]);
+        node.set(m_dofEF,es);
+    }
+    
+    return true;
+}
+
+//-----------------------------------------------------------------------------
+//! serializatsion
+void FEFluidNormalVelocity::Serialize(DumpStream& ar)
+{
+	FESurfaceLoad::Serialize(ar);
+	ar & m_VN;
+	ar & m_nu;
 }

@@ -1,15 +1,43 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEMindlinElastic2O.h"
 
-BEGIN_PARAMETER_LIST(FEMindlinElastic2O, FEElasticMaterial2O)
-	ADD_PARAMETER(m_lam, FE_PARAM_DOUBLE, "lam");
-	ADD_PARAMETER(m_mu , FE_PARAM_DOUBLE, "mu" );
-	ADD_PARAMETER(m_a1 , FE_PARAM_DOUBLE, "a1" );
-	ADD_PARAMETER(m_a2 , FE_PARAM_DOUBLE, "a2" );
-	ADD_PARAMETER(m_a3 , FE_PARAM_DOUBLE, "a3" );
-	ADD_PARAMETER(m_a4 , FE_PARAM_DOUBLE, "a4" );
-	ADD_PARAMETER(m_a5 , FE_PARAM_DOUBLE, "a5" );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEMindlinElastic2O, FEElasticMaterial2O)
+	ADD_PARAMETER(m_lam, "lam");
+	ADD_PARAMETER(m_mu , "mu" );
+	ADD_PARAMETER(m_a1 , "a1" );
+	ADD_PARAMETER(m_a2 , "a2" );
+	ADD_PARAMETER(m_a3 , "a3" );
+	ADD_PARAMETER(m_a4 , "a4" );
+	ADD_PARAMETER(m_a5 , "a5" );
+END_FECORE_CLASS();
 
 FEMindlinElastic2O::FEMindlinElastic2O(FEModel* pfem) : FEElasticMaterial2O(pfem)
 {

@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "PlotFile.h"
 #include "PltArchive.h"
@@ -10,39 +38,25 @@
 using namespace std;
 
 //-----------------------------------------------------------------------------
-// VERSION INFO
-//==============
-// -0.5: added support for variable array plot variables.
-// -0.4: fixed bug with the PLT_MAX_FACET_NODES: Previous version was writing the 
-//       surface facets using a buffer of with PLT_MAX_FACET_NODES+2, but was only
-//       writing PLT_MAX_FACET_NODES entries, essentially cutting of two nodes for 
-//       eight node facets.
-// -0.3: added PLT_HDR_COMPRESSION flag and compression for state data
-// -0.2: increased max surface nodes to 8 to accomodate tri6 and quad8 facets.
-//       facets store nr of nodes for each face PLT_FACE
-// -0.1: initial design
-
-//-----------------------------------------------------------------------------
 //! This class implements the facilities to export FE data in the FEBio
-//! plot file format.
+//! plot file format (version 3).
 //!
 class FEBioPlotFile : public PlotFile
 {
 public:
 	// file version
-	enum { PLT_VERSION = 0x0005 };
-
-	// max nodes per facet
-	enum { PLT_MAX_FACET_NODES = 10 };
+	enum { PLT_VERSION = 0x0031 };
 
 	// file tags
 	enum { 
 		PLT_ROOT						= 0x01000000,
 		PLT_HEADER						= 0x01010000,
 			PLT_HDR_VERSION				= 0x01010001,
-			PLT_HDR_NODES				= 0x01010002,
-			PLT_HDR_MAX_FACET_NODES		= 0x01010003,
-			PLT_HDR_COMPRESSION			= 0x01010004,	// added in version 0x03
+//			PLT_HDR_NODES				= 0x01010002,
+//			PLT_HDR_MAX_FACET_NODES		= 0x01010003,	// removed (redefined in seach SURFACE section)
+			PLT_HDR_COMPRESSION			= 0x01010004,
+			PLT_HDR_AUTHOR				= 0x01010005,	// new in 2.0
+			PLT_HDR_SOFTWARE			= 0x01010006,	// new in 2.0
 		PLT_DICTIONARY					= 0x01020000,
 			PLT_DIC_ITEM				= 0x01020001,
 			PLT_DIC_ITEM_TYPE			= 0x01020002,
@@ -51,24 +65,28 @@ public:
 			PLT_DIC_ITEM_ARRAYSIZE		= 0x01020005,	// added in version 0x05
 			PLT_DIC_ITEM_ARRAYNAME		= 0x01020006,	// added in version 0x05
 			PLT_DIC_GLOBAL				= 0x01021000,
-			PLT_DIC_MATERIAL			= 0x01022000,
+//			PLT_DIC_MATERIAL			= 0x01022000,	// this was removed
 			PLT_DIC_NODAL				= 0x01023000,
 			PLT_DIC_DOMAIN				= 0x01024000,
 			PLT_DIC_SURFACE				= 0x01025000,
-		PLT_MATERIALS					= 0x01030000,
-			PLT_MATERIAL				= 0x01030001,
-			PLT_MAT_ID					= 0x01030002,
-			PLT_MAT_NAME				= 0x01030003,
-		PLT_GEOMETRY					= 0x01040000,
+//		PLT_MATERIALS					= 0x01030000,		// This was removed
+//			PLT_MATERIAL				= 0x01030001,
+//			PLT_MAT_ID					= 0x01030002,
+//			PLT_MAT_NAME				= 0x01030003,
+		PLT_MESH						= 0x01040000,		// this was PLT_GEOMETRY
 			PLT_NODE_SECTION			= 0x01041000,
-				PLT_NODE_COORDS			= 0x01041001,
+				PLT_NODE_HEADER			= 0x01041100,		// new in 2.0
+					PLT_NODE_SIZE		= 0x01041101,		// new in 2.0
+					PLT_NODE_DIM		= 0x01041102,		// new in 2.0
+					PLT_NODE_NAME		= 0x01041103,		// new in 2.0
+				PLT_NODE_COORDS			= 0x01041200,		// new in 2.0
 			PLT_DOMAIN_SECTION			= 0x01042000,
 				PLT_DOMAIN				= 0x01042100,
 				PLT_DOMAIN_HDR			= 0x01042101,
 					PLT_DOM_ELEM_TYPE	= 0x01042102,
-					PLT_DOM_MAT_ID		= 0x01042103,
+					PLT_DOM_PART_ID		= 0x01042103,		// this was PLT_DOM_MAT_ID
 					PLT_DOM_ELEMS		= 0x01032104,
-					PLT_DOM_NAME		= 0x01032105,	// added in version 0x03
+					PLT_DOM_NAME		= 0x01032105,
 				PLT_DOM_ELEM_LIST		= 0x01042200,
 					PLT_ELEMENT			= 0x01042201,
 			PLT_SURFACE_SECTION			= 0x01043000,
@@ -76,36 +94,59 @@ public:
 				PLT_SURFACE_HDR			= 0x01043101,
 					PLT_SURFACE_ID		= 0x01043102,
 					PLT_SURFACE_FACES	= 0x01043103,
-					PLT_SURFACE_NAME	= 0x01043104,	// added in version 0x03
+					PLT_SURFACE_NAME	= 0x01043104,
+					PLT_SURFACE_MAX_FACET_NODES = 0x01043105,	// new in 2.0 (max number of nodes per facet)
 				PLT_FACE_LIST			= 0x01043200,
-					PLT_FACE			= 0x01043201, 
-			PLT_NODESET_SECTION			= 0x01044000,	// added in version 0x03
-				PLT_NODESET				= 0x01044100,	// added in version 0x03
-				PLT_NODESET_HDR			= 0x01044101,	// added in version 0x03
-					PLT_NODESET_ID		= 0x01044102,	// added in version 0x03
-					PLT_NODESET_NAME	= 0x01044103,	// added in version 0x03
-					PLT_NODESET_SIZE	= 0x01044104,	// added in version 0x03
-				PLT_NODESET_LIST		= 0x01044200,	// added in version 0x03
+					PLT_FACE			= 0x01043201,
+			PLT_NODESET_SECTION			= 0x01044000,
+				PLT_NODESET				= 0x01044100,
+				PLT_NODESET_HDR			= 0x01044101,
+					PLT_NODESET_ID		= 0x01044102,
+					PLT_NODESET_NAME	= 0x01044103,
+					PLT_NODESET_SIZE	= 0x01044104,
+				PLT_NODESET_LIST		= 0x01044200,
+			PLT_PARTS_SECTION			= 0x01045000,		// new in 2.0
+				PLT_PART				= 0x01045100,
+				PLT_PART_ID				= 0x01045101,
+				PLT_PART_NAME			= 0x01045102,
+
+			// plot objects were added in 3.0
+
+			PLT_OBJECTS_SECTION			= 0x01050000,
+					PLT_OBJECT_ID		= 0x01050001,
+					PLT_OBJECT_NAME		= 0x01050002,
+					PLT_OBJECT_TAG		= 0x01050003,
+					PLT_OBJECT_POS		= 0x01050004,
+					PLT_OBJECT_ROT		= 0x01050005,
+					PLT_OBJECT_DATA		= 0x01050006,
+				PLT_POINT_OBJECT		= 0x01051000,
+					PLT_POINT_COORD		= 0x01051001,
+				PLT_LINE_OBJECT			= 0x01052000,
+					PLT_LINE_COORDS		= 0x01052001,
+
 		PLT_STATE						= 0x02000000,
 			PLT_STATE_HEADER			= 0x02010000,
 				PLT_STATE_HDR_ID		= 0x02010001,
 				PLT_STATE_HDR_TIME		= 0x02010002,
+				PLT_STATE_STATUS        = 0x02010003,	// new in 3.1
 			PLT_STATE_DATA				= 0x02020000,
 				PLT_STATE_VARIABLE		= 0x02020001,
 				PLT_STATE_VAR_ID		= 0x02020002,
 				PLT_STATE_VAR_DATA		= 0x02020003,
 				PLT_GLOBAL_DATA			= 0x02020100,
-				PLT_MATERIAL_DATA		= 0x02020200,
+//				PLT_MATERIAL_DATA		= 0x02020200,		// this was removed
 				PLT_NODE_DATA			= 0x02020300,
 				PLT_ELEMENT_DATA		= 0x02020400,
-				PLT_FACE_DATA			= 0x02020500
+				PLT_FACE_DATA			= 0x02020500,
+			PLT_MESH_STATE				= 0x02030000,
+				PLT_ELEMENT_STATE		= 0x02030001,
+			PLT_OBJECTS_STATE			= 0x02040000
 	};
-
 	// --- element types ---
 	enum Elem_Type { 
 		PLT_ELEM_HEX, 
 		PLT_ELEM_PENTA, 
-		PLT_ELEM_TET, 
+		PLT_ELEM_TET4, 
 		PLT_ELEM_QUAD, 
 		PLT_ELEM_TRI, 
 		PLT_ELEM_TRUSS, 
@@ -119,11 +160,14 @@ public:
         PLT_ELEM_PENTA15,
 		PLT_ELEM_TET20,
 		PLT_ELEM_TRI10,
-		PLT_ELEM_PYRA5
-	};
+		PLT_ELEM_PYRA5,
+		PLT_ELEM_TET5,
+        PLT_ELEM_PYRA13
+    };
 
 	// size of name variables
 	enum { STR_SIZE = 64 };
+
 
 public:
 	// Dictionary entry
@@ -179,6 +223,50 @@ public:
 		friend class FEBioPlotFile;
 	};
 
+	struct Surface
+	{
+		int			maxNodes;
+		FESurface*	surf;
+	};
+
+	class PlotObject
+	{
+	public:
+		PlotObject() {}
+
+		void AddData(const char* szname, Var_Type type, FEPlotData* psave = nullptr);
+
+	public:
+		int		m_id;	// object ID
+		int		m_tag;	// user tag
+
+		vec3d	m_pos;	// object's position
+		quatd	m_rot;	// object's orientation
+
+		std::string	m_name;	// object's name
+
+		list<DICTIONARY_ITEM>	m_data;
+	};
+
+	class PointObject : public PlotObject
+	{
+	public:
+		PointObject() {}
+
+	public:
+		vec3d	m_r;	// point position
+	};
+
+	class LineObject : public PlotObject
+	{
+	public:
+		LineObject() {}
+
+	public:
+		vec3d	m_r1;	// point 1
+		vec3d	m_r2;	// point 2
+	};
+
 public:
 	FEBioPlotFile(FEModel& fem);
 	~FEBioPlotFile(void);
@@ -193,7 +281,7 @@ public:
 	bool Append(FEModel& fem, const char* szfile);
 
 	//! Write current FE state to plot database
-	bool Write(FEModel& fem, float ftime);
+	bool Write(FEModel& fem, float ftime, int flag = 0);
 
 	//! Add a variable to the dictionary
 	bool AddVariable(FEPlotData* ps, const char* szname);
@@ -206,6 +294,21 @@ public:
 	//! see if the plot file is valid
 	virtual bool IsValid() const;
 
+	// Write a mesh section
+	bool WriteMeshSection(FEModel& fem);
+
+	//! set the software variable
+	void SetSoftwareString(const std::string& softwareString);
+
+public:
+	int PointObjects();
+	PointObject* GetPointObject(int i);
+	PointObject* AddPointObject(const std::string& name);
+
+	int LineObjects();
+	LineObject* GetLineObject(int i);
+	LineObject* AddLineObject(const std::string& name);
+
 public:
 	const Dictionary& GetDictionary() const { return m_dic; }
 
@@ -213,15 +316,17 @@ protected:
 	bool WriteRoot      (FEModel& fem);
 	bool WriteHeader    (FEModel& fem);
 	bool WriteDictionary(FEModel& fem);
-	bool WriteMaterials (FEModel& fem);
-	bool WriteGeometry  (FEModel& fem);
 
 	void WriteDicList(list<DICTIONARY_ITEM>& dic);
+	void WriteDictionaryItem(DICTIONARY_ITEM& it);
 
 	void WriteNodeSection   (FEMesh& m);
 	void WriteDomainSection (FEMesh& m);
 	void WriteSurfaceSection(FEMesh& m);
 	void WriteNodeSetSection(FEMesh& m);
+	void WritePartsSection  (FEModel& fem);
+	void WriteObjectsSection();
+	void WriteObject(PlotObject* po);
 
 	void WriteSolidDomain   (FESolidDomain&    dom);
 	void WriteShellDomain   (FEShellDomain&    dom);
@@ -230,18 +335,42 @@ protected:
     void WriteDomain2D      (FEDomain2D&       dom);
 
 	void WriteGlobalData  (FEModel& fem);
-	void WriteMaterialData(FEModel& fem);
 	void WriteNodeData    (FEModel& fem);
 	void WriteDomainData  (FEModel& fem);
 	void WriteSurfaceData (FEModel& fem);
+	void WriteObjectsState();
+	void WriteObjectData(PlotObject* po);
+
+	void WriteNodeDataField(FEModel& fem, FEPlotData* pd);
+	void WriteDomainDataField(FEModel& fem, FEPlotData* pd);
+	void WriteSurfaceDataField(FEModel& fem, FEPlotData* pd);
+
+	void WriteMeshState(FEMesh& mesh);
 
 protected:
 	bool ReadDictionary();
 	bool ReadDicList();
+	void BuildSurfaceTable();
 
 protected:
 	Dictionary	m_dic;	// dictionary
 	PltArchive	m_ar;	// the data archive
 	FEModel&	m_fem;
 	int			m_ncompress;	// compression level
+	int			m_meshesWritten;	// nr of meshes written
+	string		m_softwareString;	// the software string
+
+	vector<Surface>	m_Surf;
+
+	vector<PointObject*>	m_Points;
+	vector<LineObject*>		m_Lines;
+};
+
+//-----------------------------------------------------------------------------
+class FEPlotObjectData : public FEPlotData
+{
+public:
+	FEPlotObjectData(FEModel* fem) : FEPlotData(fem) {}
+
+	virtual bool Save(FEBioPlotFile::PlotObject* po, FEDataStream& ar) = 0;
 };

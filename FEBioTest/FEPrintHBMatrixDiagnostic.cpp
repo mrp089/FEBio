@@ -1,34 +1,37 @@
-// Implementation of the Harwell-Boeing Matrix Print Diagnostic
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEPrintHBMatrixDiagnostic.h"
 #include "FEBioMech/FESolidSolver2.h"
-#include "NumCore/CompactMatrix.h"
-#include "FECore/FEGlobalMatrix.h"
-
-//-----------------------------------------------------------------------------
-bool write_hb(CompactMatrix& K, const char* szfile)
-{
-	FILE* fp = fopen(szfile, "wb");
-	if (fp == 0) return false;
-
-	int	symmFlag = K.isSymmetric();
-	int offset = K.Offset();
-	int rowFlag = K.isRowBased();
-	int neq = K.Rows();
-	int nnz = K.NonZeroes();
-	fwrite(&symmFlag, sizeof(symmFlag), 1, fp);
-	fwrite(&offset, sizeof(offset), 1, fp);
-	fwrite(&rowFlag, sizeof(rowFlag), 1, fp);
-	fwrite(&neq, sizeof(neq), 1, fp);
-	fwrite(&nnz, sizeof(nnz), 1, fp);
-	fwrite(K.Pointers(), sizeof(int), neq + 1, fp);
-	fwrite(K.Indices(), sizeof(int), nnz, fp);
-	fwrite(K.Values(), sizeof(double), nnz, fp);
-
-	fclose(fp);
-
-	return true;
-}
+#include <FECore/CompactMatrix.h>
+#include <FECore/FEGlobalMatrix.h>
+#include <NumCore/MatrixTools.h>
 
 //-----------------------------------------------------------------------------
 FEPrintHBMatrixDiagnostic::FEPrintHBMatrixDiagnostic(FEModel& fem) : FEDiagnostic(fem)
@@ -43,7 +46,7 @@ FEPrintHBMatrixDiagnostic::~FEPrintHBMatrixDiagnostic(void)
 //-----------------------------------------------------------------------------
 bool FEPrintHBMatrixDiagnostic::ParseSection(XMLTag &tag)
 {
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
 	if (tag == "input")
 	{
 		// get the input file name
@@ -70,7 +73,7 @@ bool FEPrintHBMatrixDiagnostic::ParseSection(XMLTag &tag)
 bool FEPrintHBMatrixDiagnostic::Run()
 {
 	// Get the current step
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
 	FEAnalysis* pstep = fem.GetCurrentStep();
 
 	// initialize the step
@@ -91,12 +94,12 @@ bool FEPrintHBMatrixDiagnostic::Run()
 	if (!solver->ReformStiffness()) return false;
 
 	// get the matrix
-	SparseMatrix* psm = solver->GetStiffnessMatrix().GetSparseMatrixPtr();
+	SparseMatrix* psm = solver->GetStiffnessMatrix()->GetSparseMatrixPtr();
 	CompactMatrix* pcm = dynamic_cast<CompactMatrix*>(psm);
 	if (pcm == 0) return false;
 
 	// print the matrix to file
-	if (write_hb(*pcm, "hb_matrix.out") == false)
+	if (NumCore::write_hb(*pcm, "hb_matrix.out") == false)
 	{
 		fprintf(stderr, "Failed writing sparse matrix.\n\n");
 	}

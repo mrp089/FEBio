@@ -1,20 +1,40 @@
-// XMLReader.h: interface for the XMLReader class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_XMLREADER_H__667494D8_4C95_4342_BC31_6C1C097A4C81__INCLUDED_)
-#define AFX_XMLREADER_H__667494D8_4C95_4342_BC31_6C1C097A4C81__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <string>
 #include <vector>
-#include <FEBioLib/febiolib_api.h>
+#include <stdexcept>
+#include "febioxml_api.h"
 using namespace std;
 
 //-------------------------------------------------------------------------
@@ -23,7 +43,7 @@ class XMLReader;
 
 //-------------------------------------------------------------------------
 //! This class represents a xml-attribute
-class FEBIOLIB_API XMLAtt
+class FEBIOXML_API XMLAtt
 {
 	//! max buffer size for attribute name and value
 	enum { MAX_TAG = 128 };
@@ -44,6 +64,7 @@ public:
 public:
 	char	m_szatt[MAX_TAG];	//!< attribute name
 	char	m_szatv[MAX_TAG];	//!< attribute value
+	bool	m_bvisited;			//!< was the attribute processed or not?
 };
 
 //-------------------------------------------------------------------------
@@ -52,7 +73,7 @@ public:
 //! \todo I would like to get rid of the m_szroot element and replace it with a 
 //!       parent tag. The root element can then be identified by the tag that 
 //!       does not have a parent
-class FEBIOLIB_API XMLTag
+class FEBIOXML_API XMLTag
 {
 public:
 	enum {MAX_TAG   = 128};
@@ -69,8 +90,8 @@ public:
 	int		m_nlevel;						// depth level
 	char	m_szroot[MAX_LEVEL][MAX_TAG];	// name tag of parent's
 
-	XMLReader*	m_preader;		// pointer to reader
-	fpos_t	m_fpos;				// file position of next tag
+	XMLReader*	m_preader;			// pointer to reader
+    int64_t		m_fpos;				// file position of next tag
 	int		m_nstart_line;		// line number at beginning of tag
 	int		m_ncurrent_line;	// current line number
 
@@ -111,8 +132,10 @@ public:
 	int value(double* pf, int n);
 	int value(float* pf, int n);
 	int value(int* pi, int n);
+	int value(std::vector<string>& stringList, int n);
 	void value(bool& val);
 	void value(char* szstr);
+	void value(std::string& val);
 	void value(vector<int>& l);
 
 	const char* szvalue() { return m_szval.c_str(); }
@@ -120,83 +143,78 @@ public:
 
 //-----------------------------------------------------------------------------
 //! This class implements a reader for XML files
-class FEBIOLIB_API XMLReader
+class FEBIOXML_API XMLReader
 {
 public:
 	enum {MAX_TAG   = 128};
 
+	enum {BUF_SIZE = 32768};
+
 public:
 	// Base class for Exceptions
-	class FEBIOLIB_API Error
+	class FEBIOXML_API Error : public std::runtime_error
 	{
 	public:
-		enum { MAX_ERROR_STRING = 128 };
-
-	public:
-		Error() { m_szerr[0] = 0; }
-		virtual ~Error(){}
-
-		// retrieve the error string
-		const char* GetErrorString() const { return m_szerr; }
-
-	protected:
-		// derived classes use this function to set the error string
-		void SetErrorString(const char* sz, ...);
-
-	protected:
-		char	m_szerr[MAX_ERROR_STRING];
+		Error(const std::string& err) : std::runtime_error(err) {}
+		Error(XMLTag& tag, const std::string& err);
 	};
 
 	// End of file was discovered 
-	class EndOfFile : public Error {};
+	class FEBIOXML_API EndOfFile : public Error {
+	public: 
+		EndOfFile() : Error("End of file") {}
+	};
 
 	// the end of file was detected unexpectedly.
-	class UnexpectedEOF : public Error {};
+	class FEBIOXML_API UnexpectedEOF : public Error {
+	public:
+		UnexpectedEOF() : Error("Unexpected end of file") {}
+	};
 
 	// A syntax error was found
-	class XMLSyntaxError : public Error
+	class FEBIOXML_API XMLSyntaxError : public Error
 	{
 	public:
-		XMLSyntaxError();
+		XMLSyntaxError(int line_number = -1);
 	};
 
 	// an end tag was not matched
-	class UnmatchedEndTag : public Error
+	class FEBIOXML_API UnmatchedEndTag : public Error
 	{
 	public:
 		UnmatchedEndTag(XMLTag& t);
 	};
 
 	// an unknown tag was encountered 
-	class FEBIOLIB_API InvalidTag : public Error
+	class FEBIOXML_API InvalidTag : public Error
 	{
 	public:
 		InvalidTag(XMLTag& t);
 	};
 
 	// The value of a tag was invald 
-	class InvalidValue : public Error
+	class FEBIOXML_API InvalidValue : public Error
 	{
 	public:
 		InvalidValue(XMLTag& t);
 	};
 
 	// the value of an attribute was invalid 
-	class InvalidAttributeValue : public Error
+	class FEBIOXML_API InvalidAttributeValue : public Error
 	{
 	public:
 		InvalidAttributeValue(XMLTag& t, const char* sza, const char* szv = 0);
 	};
 
 	// an attribute is invalid
-	class InvalidAttribute : public Error
+	class FEBIOXML_API InvalidAttribute : public Error
 	{
 	public:
 		InvalidAttribute(XMLTag& t, const char* sza);
 	};
 
 	// an attribute was missing
-	class MissingAttribute : public Error
+	class FEBIOXML_API MissingAttribute : public Error
 	{
 	public:
 		MissingAttribute(XMLTag& t, const char* sza);
@@ -240,14 +258,25 @@ protected: // helper functions
 	//! process end tag
 	void ReadEndTag(XMLTag& tag);
 
+	//! read the next character of the buffer
+	char readNextChar();
+
+	//! get the current position
+    int64_t currentPos();
+
+	//! move the file pointer
+    void rewind(int64_t nstep);
+
 protected:
-	FILE*	m_fp;		//!< the file pointer
-	int		m_nline;	//!< current line (used only as temp storage)
-	fpos_t	m_currentPos;	//!< current file position
+	FILE*	m_fp;			//!< the file pointer
+	int		m_nline;		//!< current line (used only as temp storage)
+    int64_t	m_currentPos;	//!< current file position
+
+	char	m_buf[BUF_SIZE];
+    int64_t    m_bufIndex, m_bufSize;
+	bool	m_eof;
 };
 
 //-----------------------------------------------------------------------------
 // some inline functions
 inline void XMLTag::operator ++ () { m_preader->NextTag(*this); }
-
-#endif // !defined(AFX_XMLREADER_H__667494D8_4C95_4342_BC31_6C1C097A4C81__INCLUDED_)

@@ -1,6 +1,33 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FESolidDomainFactory.h"
-#include "FELinearSolidDomain.h"
 #include "FERigidMaterial.h"
 #include "FEUncoupledMaterial.h"
 #include "FEElasticSolidDomain.h"
@@ -11,11 +38,11 @@
 #include "FERemodelingElasticDomain.h"
 #include "FEUDGHexDomain.h"
 #include "FEUT4Domain.h"
-#include "FELinearElastic.h"
 #include "FE3FieldElasticSolidDomain.h"
-#include "FEDiscreteSpringDomain.h"
+#include "FEDiscreteElasticDomain.h"
 #include "FERemodelingElasticMaterial.h"
 #include "FECore/FEDiscreteMaterial.h"
+#include "FEDiscreteElementMaterial.h"
 #include "FEMicroMaterial.h"
 #include "FEMicroMaterial2O.h"
 #include "FEElasticMultiscaleDomain1O.h"
@@ -51,7 +78,7 @@ FEDomain* FESolidDomainFactory::CreateDomain(const FE_Element_Spec& spec, FEMesh
 		if (eshape == ET_HEX8)
 		{
 			// three-field implementation for uncoupled materials
-			if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field_hex)) sztype = "three-field-solid";
+			if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field)) sztype = "three-field-solid";
 			else
 			{
 				if (etype == FE_HEX8G1) sztype = "udg-hex";
@@ -66,11 +93,11 @@ FEDomain* FESolidDomainFactory::CreateDomain(const FE_Element_Spec& spec, FEMesh
 			}
 			else
 			{
-				if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field_tet)) sztype = "three-field-solid";
+				if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field)) sztype = "three-field-solid";
 				else sztype = "elastic-solid";
 			}
 		}
-		else if ((eshape == ET_HEX20) || (eshape == ET_HEX27))
+		else if ((eshape == ET_HEX20) || (eshape == ET_HEX27) || (eshape == ET_PYRA13))
 		{
 //			if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field_hex)) sztype = "three-field-solid";
 			sztype = "elastic-solid";
@@ -80,10 +107,14 @@ FEDomain* FESolidDomainFactory::CreateDomain(const FE_Element_Spec& spec, FEMesh
 			if (spec.m_but4) sztype = "ut4-solid";
 			else sztype = "elastic-solid";
 		}
-		else if (eshape == ET_PENTA6) 
+		else if (eshape == ET_TET5)
+		{
+			sztype = "elastic-solid";
+		}
+		else if (eshape == ET_PENTA6)
 		{
 			// three-field implementation for uncoupled materials
-			if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field_hex)) sztype = "three-field-solid";
+			if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field)) sztype = "three-field-solid";
 			else sztype = "elastic-solid";
 		}
         else if (eshape == ET_PENTA15)
@@ -95,7 +126,7 @@ FEDomain* FESolidDomainFactory::CreateDomain(const FE_Element_Spec& spec, FEMesh
 		else if (eshape == ET_PYRA5)
 		{
 			// three-field implementation for uncoupled materials
-			if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field_hex)) sztype = "three-field-solid";
+			if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field)) sztype = "three-field-solid";
 			else sztype = "elastic-solid";
 		}
 		else if ((eshape == ET_QUAD4) || (eshape == ET_TRI3) || (eshape == ET_QUAD8) || (eshape == ET_TRI6))
@@ -104,8 +135,12 @@ FEDomain* FESolidDomainFactory::CreateDomain(const FE_Element_Spec& spec, FEMesh
 			{
 			case NEW_SHELL:
                     // three-field implementation for uncoupled materials
-                    if (dynamic_cast<FEUncoupledMaterial*>(pmat) && (spec.m_bthree_field_shell))
-                        sztype = "three-field-shell";
+                    if (dynamic_cast<FEUncoupledMaterial*>(pmat)) {
+                        if (spec.m_bthree_field) sztype = "three-field-shell";
+                        else if ((eshape == ET_QUAD4) && spec.m_bthree_field) sztype = "three-field-shell";
+                        else if ((eshape == ET_TRI3) && spec.m_bthree_field) sztype = "three-field-shell";
+                        else sztype = "elastic-shell";
+                    }
                     else
                         sztype = "elastic-shell";
                     break;
@@ -123,13 +158,16 @@ FEDomain* FESolidDomainFactory::CreateDomain(const FE_Element_Spec& spec, FEMesh
 	{
 //		if      (eclass == FE_ELEM_WIRE    ) sztype = "deformable-spring";
 		if      (eclass == FE_ELEM_WIRE    ) sztype = "deformable-spring2";
-		else if (eclass == FE_ELEM_DISCRETE) sztype = "discrete-spring";
+		else if (eclass == FE_ELEM_DISCRETE)
+		{
+			if (dynamic_cast<FEDiscreteElasticMaterial*>(pmat)) sztype = "discrete";
+		}
 		else return 0;
 	}
 
 	if (sztype)
 	{
-		FEDomain* pd = fecore_new<FEDomain>(FEDOMAIN_ID, sztype, pfem);
+		FEDomain* pd = fecore_new<FEDomain>(sztype, pfem);
 		if (pd) pd->SetMaterial(pmat);
 		return pd;
 	}

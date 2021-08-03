@@ -1,17 +1,65 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEElasticTrussDomain.h"
 #include <FECore/FEModel.h>
+#include <FECore/FELinearSystem.h>
+#include "FEBioMech.h"
 
 //-----------------------------------------------------------------------------
 //! Constructor
-FEElasticTrussDomain::FEElasticTrussDomain(FEModel* pfem) : FETrussDomain(&pfem->GetMesh()), FEElasticDomain(pfem)
+FEElasticTrussDomain::FEElasticTrussDomain(FEModel* pfem) : FETrussDomain(pfem), FEElasticDomain(pfem), m_dofU(pfem)
 {
 	m_pMat = 0;
+	m_dofU.AddVariable(FEBioMech::GetVariableName(FEBioMech::DISPLACEMENT));
+}
+
+//-----------------------------------------------------------------------------
+//! copy operator
+FEElasticTrussDomain& FEElasticTrussDomain::operator = (FEElasticTrussDomain& d)
+{ 
+	m_Elem = d.m_Elem; 
+	m_pMesh = d.m_pMesh; 
+	return (*this); 
+}
+
+//-----------------------------------------------------------------------------
+//! get the dof list
+const FEDofList& FEElasticTrussDomain::GetDOFList() const
+{
+	return m_dofU;
 }
 
 //-----------------------------------------------------------------------------
 void FEElasticTrussDomain::SetMaterial(FEMaterial* pmat)
 {
+	FETrussDomain::SetMaterial(pmat);
 	m_pMat = dynamic_cast<FETrussMaterial*>(pmat);
 	assert(m_pMat);
 }
@@ -19,12 +67,9 @@ void FEElasticTrussDomain::SetMaterial(FEMaterial* pmat)
 //-----------------------------------------------------------------------------
 void FEElasticTrussDomain::Reset()
 {
-	for (int i=0; i<(int) m_Elem.size(); ++i)
-	{
-		FETrussElement& el = m_Elem[i];
-		int nint = el.GaussPoints();
-		for (int j=0; j<nint; ++j) el.GetMaterialPoint(j)->Init();
-	}
+	ForEachMaterialPoint([](FEMaterialPoint& mp) {
+		mp.Init();
+	});
 }
 
 //-----------------------------------------------------------------------------
@@ -33,12 +78,12 @@ void FEElasticTrussDomain::UnpackLM(FEElement &el, vector<int>& lm)
 	lm.resize(6);
 	FENode& n1 = m_pMesh->Node(el.m_node[0]);
 	FENode& n2 = m_pMesh->Node(el.m_node[1]);
-	lm[0] = n1.m_ID[m_dofX];
-	lm[1] = n1.m_ID[m_dofY];
-	lm[2] = n1.m_ID[m_dofZ];
-	lm[3] = n2.m_ID[m_dofX];
-	lm[4] = n2.m_ID[m_dofY];
-	lm[5] = n2.m_ID[m_dofZ];
+	lm[0] = n1.m_ID[m_dofU[0]];
+	lm[1] = n1.m_ID[m_dofU[1]];
+	lm[2] = n1.m_ID[m_dofU[2]];
+	lm[3] = n2.m_ID[m_dofU[0]];
+	lm[4] = n2.m_ID[m_dofU[1]];
+	lm[5] = n2.m_ID[m_dofU[2]];
 }
 
 //-----------------------------------------------------------------------------
@@ -51,9 +96,9 @@ void FEElasticTrussDomain::Activate()
 		{
 			if (node.m_rid < 0)
 			{
-				node.m_ID[m_dofX] = DOF_ACTIVE;
-				node.m_ID[m_dofY] = DOF_ACTIVE;
-				node.m_ID[m_dofZ] = DOF_ACTIVE;
+				node.set_active(m_dofU[0]);
+				node.set_active(m_dofU[1]);
+				node.set_active(m_dofU[2]);
 			}
 		}
 	}
@@ -62,26 +107,25 @@ void FEElasticTrussDomain::Activate()
 //-----------------------------------------------------------------------------
 void FEElasticTrussDomain::PreSolveUpdate(const FETimeInfo& timeInfo)
 {
-	for (size_t i=0; i<m_Elem.size(); ++i)
-	{
-		FETrussElement& el = m_Elem[i];
-		el.GetMaterialPoint(0)->Update(timeInfo);
-	}
+	ForEachMaterialPoint([&](FEMaterialPoint& mp) {
+		mp.Update(timeInfo);
+	});
 }
 
 //-----------------------------------------------------------------------------
 
-void FEElasticTrussDomain::StiffnessMatrix(FESolver* psolver)
+void FEElasticTrussDomain::StiffnessMatrix(FELinearSystem& LS)
 {
-	matrix ke;
-	int NT = m_Elem.size();
+	int NT = (int)m_Elem.size();
 	vector<int> lm;
 	for (int iel =0; iel<NT; ++iel)
 	{
 		FETrussElement& el = m_Elem[iel];
+		FEElementMatrix ke(el);
 		ElementStiffness(iel, ke);
 		UnpackLM(el, lm);
-		psolver->AssembleStiffness(el.m_node, lm, ke);
+		ke.SetIndices(lm);
+		LS.Assemble(ke);
 	}
 }
 
@@ -146,7 +190,7 @@ void FEElasticTrussDomain::InternalForces(FEGlobalVector& R)
 	// element force vector
 	vector<double> fe;
 	vector<int> lm;
-	int NT = m_Elem.size();
+	int NT = (int)m_Elem.size();
 	for (int i=0; i<NT; ++i)
 	{
 		FETrussElement& el = m_Elem[i];

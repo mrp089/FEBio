@@ -1,56 +1,61 @@
-//
-//  FEFluidDomain2D.cpp
-//  FEBioFluid
-//
-//  Created by Gerard Ateshian on 12/15/15.
-//  Copyright © 2015 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEFluidDomain2D.h"
 #include "FECore/log.h"
 #include "FECore/DOFS.h"
-#include "NumCore/LUSolver.h"
 #include <FECore/FEModel.h>
 #include <FECore/FEAnalysis.h>
 #include <FECore/sys.h>
+#include <FECore/FELinearSystem.h>
+#include "FEBioFluid.h"
 
 //-----------------------------------------------------------------------------
 //! constructor
 //! Some derived classes will pass 0 to the pmat, since the pmat variable will be
 //! to initialize another material. These derived classes will set the m_pMat variable as well.
-FEFluidDomain2D::FEFluidDomain2D(FEModel* pfem) : FEDomain2D(&pfem->GetMesh()), FEFluidDomain(pfem)
+FEFluidDomain2D::FEFluidDomain2D(FEModel* pfem) : FEDomain2D(pfem), FEFluidDomain(pfem), m_dofW(pfem), m_dofAW(pfem), m_dof(pfem)
 {
     m_pMat = 0;
     m_btrans = true;
 
-    m_dofWX = pfem->GetDOFIndex("wx");
-    m_dofWY = pfem->GetDOFIndex("wy");
-    m_dofWZ = pfem->GetDOFIndex("wz");
-    m_dofEF  = pfem->GetDOFIndex("ef");
-    
-    m_dofWXP = pfem->GetDOFIndex("wxp");
-    m_dofWYP = pfem->GetDOFIndex("wyp");
-    m_dofWZP = pfem->GetDOFIndex("wzp");
-    m_dofEFP  = pfem->GetDOFIndex("efp");
-    
-    m_dofAWX = pfem->GetDOFIndex("awx");
-    m_dofAWY = pfem->GetDOFIndex("awy");
-    m_dofAWZ = pfem->GetDOFIndex("awz");
-    m_dofAEF = pfem->GetDOFIndex("aef");
-    
-    m_dofAWXP = pfem->GetDOFIndex("awxp");
-    m_dofAWYP = pfem->GetDOFIndex("awyp");
-    m_dofAWZP = pfem->GetDOFIndex("awzp");
-    m_dofAEFP = pfem->GetDOFIndex("aefp");
+	m_dofW.AddVariable(FEBioFluid::GetVariableName(FEBioFluid::RELATIVE_FLUID_VELOCITY));
+    m_dofEF  = pfem->GetDOFIndex(FEBioFluid::GetVariableName(FEBioFluid::FLUID_DILATATION), 0);
 
+	m_dofAW.AddVariable(FEBioFluid::GetVariableName(FEBioFluid::RELATIVE_FLUID_ACCELERATION));
+    m_dofAEF = pfem->GetDOFIndex(FEBioFluid::GetVariableName(FEBioFluid::FLUID_DILATATION_TDERIV), 0);
+    
 	// list the degrees of freedom
 	// (This allows the FEBomain base class to handle several tasks such as UnpackLM)
-	vector<int> dof;
-	dof.push_back(m_dofWX);
-	dof.push_back(m_dofWY);
-	dof.push_back(m_dofEF);
-	SetDOFList(dof);
+	m_dof.AddDof(m_dofW[0]);
+	m_dof.AddDof(m_dofW[1]);
+	m_dof.AddDof(m_dofEF);
 }
 
 //-----------------------------------------------------------------------------
@@ -63,9 +68,17 @@ FEFluidDomain2D& FEFluidDomain2D::operator = (FEFluidDomain2D& d)
 }
 
 //-----------------------------------------------------------------------------
+//! get the total dof
+const FEDofList& FEFluidDomain2D::GetDOFList() const
+{
+	return m_dof;
+}
+
+//-----------------------------------------------------------------------------
 //! Assign material
 void FEFluidDomain2D::SetMaterial(FEMaterial* pmat)
 {
+	FEDomain::SetMaterial(pmat);
     if (pmat)
     {
         m_pMat = dynamic_cast<FEFluid*>(pmat);
@@ -81,16 +94,6 @@ bool FEFluidDomain2D::Init()
     // initialize base class
 	FEDomain2D::Init();
     
-    // get the elements material
-    FEFluid* pme = m_pMat;
-    
-    // assign local coordinate system to each integration point
-    for (size_t i=0; i<m_Elem.size(); ++i)
-    {
-        FEElement2D& el = m_Elem[i];
-        for (int n=0; n<el.GaussPoints(); ++n) pme->SetLocalCoordinateSystem(el, n, *(el.GetMaterialPoint(n)));
-    }
-    
     // check for initially inverted elements
     int ninverted = 0;
     for (int i=0; i<Elements(); ++i)
@@ -103,17 +106,17 @@ bool FEFluidDomain2D::Init()
             double J0 = detJ0(el, n);
             if (J0 <= 0)
             {
-                felog.printf("**************************** E R R O R ****************************\n");
-                felog.printf("Negative jacobian detected at integration point %d of element %d\n", n+1, el.GetID());
-                felog.printf("Jacobian = %lg\n", J0);
-                felog.printf("Did you use the right node numbering?\n");
-                felog.printf("Nodes:");
+                feLog("**************************** E R R O R ****************************\n");
+                feLog("Negative jacobian detected at integration point %d of element %d\n", n+1, el.GetID());
+                feLog("Jacobian = %lg\n", J0);
+                feLog("Did you use the right node numbering?\n");
+                feLog("Nodes:");
                 for (int l=0; l<el.Nodes(); ++l)
                 {
-                    felog.printf("%d", el.m_node[l]+1);
-                    if (l+1 != el.Nodes()) felog.printf(","); else felog.printf("\n");
+                    feLog("%d", el.m_node[l]+1);
+                    if (l+1 != el.Nodes()) feLog(","); else feLog("\n");
                 }
-                felog.printf("*******************************************************************\n\n");
+                feLog("*******************************************************************\n\n");
                 ++ninverted;
             }
         }
@@ -146,7 +149,7 @@ void FEFluidDomain2D::PreSolveUpdate(const FETimeInfo& timeInfo)
             pt.m_r0 = el.Evaluate(x0, j);
             
             if (pt.m_Jf <= 0) {
-                felog.printbox("ERROR", "Negative jacobian was detected.");
+                feLogError("Negative jacobian was detected.");
                 throw DoRunningRestart();
             }
             
@@ -180,7 +183,6 @@ void FEFluidDomain2D::InternalForces(FEGlobalVector& R, const FETimeInfo& tp)
         UnpackLM(el, lm);
         
         // assemble element 'fe'-vector into global R vector
-        //#pragma omp critical
         R.Assemble(el.m_node, lm, fe);
     }
 }
@@ -450,7 +452,7 @@ void FEFluidDomain2D::ElementMaterialStiffness(FEElement2D &el, matrix &ke)
 }
 
 //-----------------------------------------------------------------------------
-void FEFluidDomain2D::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEFluidDomain2D::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
@@ -458,12 +460,11 @@ void FEFluidDomain2D::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 #pragma omp parallel for shared (NE)
     for (int iel=0; iel<NE; ++iel)
     {
+		FEElement2D& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FEElement2D& el = m_Elem[iel];
-        
+		FEElementMatrix ke(el);
+
         // create the element's stiffness matrix
         int ndof = 3*el.Nodes();
         ke.resize(ndof, ndof);
@@ -473,16 +474,17 @@ void FEFluidDomain2D::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
         ElementMaterialStiffness(el, ke);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
 //-----------------------------------------------------------------------------
-void FEFluidDomain2D::MassMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEFluidDomain2D::MassMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
     // repeat over all solid elements
     int NE = (int)m_Elem.size();
@@ -490,11 +492,10 @@ void FEFluidDomain2D::MassMatrix(FESolver* psolver, const FETimeInfo& tp)
 #pragma omp parallel for shared (NE)
     for (int iel=0; iel<NE; ++iel)
     {
+		FEElement2D& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FEElement2D& el = m_Elem[iel];
+        FEElementMatrix ke(el);
         
         // create the element's stiffness matrix
         int ndof = 3*el.Nodes();
@@ -505,16 +506,17 @@ void FEFluidDomain2D::MassMatrix(FESolver* psolver, const FETimeInfo& tp)
         ElementMassMatrix(el, ke);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+        LS.Assemble(ke);
     }
 }
 
 //-----------------------------------------------------------------------------
-void FEFluidDomain2D::BodyForceStiffness(FESolver* psolver, const FETimeInfo& tp, FEBodyForce& bf)
+void FEFluidDomain2D::BodyForceStiffness(FELinearSystem& LS, const FETimeInfo& tp, FEBodyForce& bf)
 {
     FEFluid* pme = dynamic_cast<FEFluid*>(GetMaterial()); assert(pme);
     
@@ -524,11 +526,10 @@ void FEFluidDomain2D::BodyForceStiffness(FESolver* psolver, const FETimeInfo& tp
 #pragma omp parallel for shared (NE)
     for (int iel=0; iel<NE; ++iel)
     {
+		FEElement2D& el = m_Elem[iel];
+
         // element stiffness matrix
-        matrix ke;
-        vector<int> lm;
-        
-        FEElement2D& el = m_Elem[iel];
+        FEElementMatrix ke(el);
         
         // create the element's stiffness matrix
         int ndof = 3*el.Nodes();
@@ -539,11 +540,12 @@ void FEFluidDomain2D::BodyForceStiffness(FESolver* psolver, const FETimeInfo& tp
         ElementBodyForceStiffness(bf, el, ke);
         
         // get the element's LM vector
-        UnpackLM(el, lm);
+		vector<int> lm;
+		UnpackLM(el, lm);
+		ke.SetIndices(lm);
         
         // assemble element matrix in global stiffness matrix
-#pragma omp critical
-        psolver->AssembleStiffness(el.m_node, lm, ke);
+		LS.Assemble(ke);
     }
 }
 
@@ -631,16 +633,6 @@ void FEFluidDomain2D::ElementMassMatrix(FEElement2D& el, matrix& ke)
 //-----------------------------------------------------------------------------
 void FEFluidDomain2D::Update(const FETimeInfo& tp)
 {
-    // TODO: This is temporary hack for running micro-materials in parallel.
-    //	     Evaluating the stress for a micro-material will make FEBio solve
-    //       a new FE problem. We don't want to see the output of that problem.
-    //       The logfile is a shared resource between the master FEM and the RVE
-    //       in order not to corrupt the logfile we don't print anything for
-    //       the RVE problem.
-    // TODO: Maybe I need to create a new domain class for micro-material.
-    Logfile::MODE nmode = felog.GetMode();
-	felog.SetMode(Logfile::LOG_NEVER);
-    
     bool berr = false;
     int NE = (int) m_Elem.size();
 #pragma omp parallel for shared(NE, berr)
@@ -655,20 +647,16 @@ void FEFluidDomain2D::Update(const FETimeInfo& tp)
 #pragma omp critical
             {
                 // reset the logfile mode
-                felog.SetMode(nmode);
                 berr = true;
-                if (NegativeJacobian::m_boutput) e.print();
+                if (e.DoOutput()) feLogError(e.what());
             }
         }
     }
     
-    // reset the logfile mode
-    felog.SetMode(nmode);
-    
     // if we encountered an error, we request a running restart
     if (berr)
     {
-        if (NegativeJacobian::m_boutput == false) felog.printbox("ERROR", "Negative jacobian was detected.");
+        if (NegativeJacobian::DoOutput() == false) feLogError("Negative jacobian was detected.");
         throw DoRunningRestart();
     }
 }
@@ -696,14 +684,14 @@ void FEFluidDomain2D::UpdateElementStress(int iel, const FETimeInfo& tp)
     double aet[FEElement::MAX_NODES], aep[FEElement::MAX_NODES];
     for (int j=0; j<neln; ++j) {
         FENode& node = m_pMesh->Node(el.m_node[j]);
-        vt[j] = node.get_vec3d(m_dofWX, m_dofWY, m_dofWZ);
-        vp[j] = node.get_vec3d(m_dofWXP, m_dofWYP, m_dofWZP);
-        at[j] = node.get_vec3d(m_dofAWX, m_dofAWY, m_dofAWZ);
-        ap[j] = node.get_vec3d(m_dofAWXP, m_dofAWYP, m_dofAWZP);
+        vt[j] = node.get_vec3d(m_dofW[0], m_dofW[1], m_dofW[2]);
+        vp[j] = node.get_vec3d_prev(m_dofW[0], m_dofW[1], m_dofW[2]);
+        at[j] = node.get_vec3d(m_dofAW[0], m_dofAW[1], m_dofAW[2]);
+        ap[j] = node.get_vec3d_prev(m_dofAW[0], m_dofAW[1], m_dofAW[2]);
         et[j] = node.get(m_dofEF);
-        ep[j] = node.get(m_dofEFP);
+        ep[j] = node.get_prev(m_dofEF);
         aet[j] = node.get(m_dofAEF);
-        aep[j] = node.get(m_dofAEFP);
+        aep[j] = node.get_prev(m_dofAEF);
     }
     
     // loop over the integration points and update
@@ -757,7 +745,6 @@ void FEFluidDomain2D::InertialForces(FEGlobalVector& R, const FETimeInfo& tp)
         UnpackLM(el, lm);
         
         // assemble element 'fe'-vector into global R vector
-        //#pragma omp critical
         R.Assemble(el.m_node, lm, fe);
     }
 }

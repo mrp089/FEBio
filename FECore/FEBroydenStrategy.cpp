@@ -1,19 +1,54 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBroydenStrategy.h"
 #include "LinearSolver.h"
 #include "FEException.h"
+#include "FENewtonSolver.h"
 
 //-----------------------------------------------------------------------------
 //! constructor
-FEBroydenStrategy::FEBroydenStrategy(FENewtonSolver* pns) : FENewtonStrategy(pns)
+FEBroydenStrategy::FEBroydenStrategy(FEModel* fem) : FENewtonStrategy(fem)
 {
+	m_neq = 0;
+	m_plinsolve = nullptr;
 }
 
 //-----------------------------------------------------------------------------
 //! Initialization
-void FEBroydenStrategy::Init(int neq, LinearSolver* pls)
+bool FEBroydenStrategy::Init()
 {
+	if (m_pns == nullptr) return false;
+
 	if (m_max_buf_size <= 0) m_max_buf_size = m_maxups;
+
+	int neq = m_pns->m_neq;
 
 	// allocate storage for Broyden update vectors
 	m_R.resize(m_max_buf_size, neq);
@@ -24,9 +59,11 @@ void FEBroydenStrategy::Init(int neq, LinearSolver* pls)
 	m_neq = neq;
 	m_nups = 0;
 
-	m_plinsolve = pls;
+	m_plinsolve = m_pns->GetLinearSolver();
 
 	m_bnewStep = true;
+
+	return true;
 }
 
 //! Presolve update
@@ -113,7 +150,7 @@ void FEBroydenStrategy::SolveEquations(vector<double>& x, vector<double>& b)
 
 		if (m_bnewStep)
 		{
-			m_q.assign(m_neq, 0.0);
+			m_q = x;
 			if (m_plinsolve->BackSolve(m_q, b) == false)
 				throw LinearSolverFailed();
 

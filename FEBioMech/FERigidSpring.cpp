@@ -1,18 +1,47 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FERigidSpring.h"
-#include "FECore/FERigidBody.h"
+#include "FERigidBody.h"
 #include "FECore/log.h"
 #include "FECore/FEModel.h"
-#include "FECore/FERigidBody.h"
+#include "FERigidBody.h"
 #include "FECore/FEMaterial.h"
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FERigidSpring, FERigidConnector);
-    ADD_PARAMETER(m_k   , FE_PARAM_DOUBLE, "k"          );
-    ADD_PARAMETER(m_a0  , FE_PARAM_VEC3D , "insertion_a");
-    ADD_PARAMETER(m_b0  , FE_PARAM_VEC3D , "insertion_b");
-    ADD_PARAMETER(m_L0  , FE_PARAM_DOUBLE, "free_length");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidSpring, FERigidConnector);
+    ADD_PARAMETER(m_k   , "k"          );
+    ADD_PARAMETER(m_a0  , "insertion_a");
+    ADD_PARAMETER(m_b0  , "insertion_b");
+    ADD_PARAMETER(m_L0  , "free_length");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FERigidSpring::FERigidSpring(FEModel* pfem) : FERigidConnector(pfem)
@@ -38,6 +67,9 @@ bool FERigidSpring::Init()
     // set spring insertions relative to rigid body center of mass
     m_qa0 = m_a0 - m_rbA->m_r0;
     m_qb0 = m_b0 - m_rbB->m_r0;
+
+	m_at = m_a0;
+	m_bt = m_b0;
     
     return true;
 }
@@ -46,21 +78,13 @@ bool FERigidSpring::Init()
 void FERigidSpring::Serialize(DumpStream& ar)
 {
 	FERigidConnector::Serialize(ar);
-    if (ar.IsSaving())
-    {
-        ar << m_qa0 << m_qb0;
-        ar << m_L0 << m_k;
-    }
-    else
-    {
-        ar >> m_qa0 >> m_qb0;
-        ar >> m_L0 >> m_k;
-    }
+    ar & m_qa0 & m_qb0;
+    ar & m_L0 & m_k;
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidSpring::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FERigidSpring::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
     vector<double> fa(6);
     vector<double> fb(6);
@@ -68,7 +92,7 @@ void FERigidSpring::Residual(FEGlobalVector& R, const FETimeInfo& tp)
     FERigidBody& RBa = *m_rbA;
     FERigidBody& RBb = *m_rbB;
 
-	double alpha = tp.alpha;
+	double alpha = tp.alphaf;
 
     // body A
     vec3d ra = RBa.m_rt*alpha + RBa.m_rp*(1-alpha);
@@ -105,22 +129,20 @@ void FERigidSpring::Residual(FEGlobalVector& R, const FETimeInfo& tp)
     for (int i=0; i<6; ++i) if (RBa.m_LM[i] >= 0) R[RBa.m_LM[i]] += fa[i];
     for (int i=0; i<6; ++i) if (RBb.m_LM[i] >= 0) R[RBb.m_LM[i]] += fb[i];
     
-    RBa.m_Fr += vec3d(fa[0],fa[1],fa[2]);
-    RBa.m_Mr += vec3d(fa[3],fa[4],fa[5]);
-    RBb.m_Fr += vec3d(fb[0],fb[1],fb[2]);
-    RBb.m_Mr += vec3d(fb[3],fb[4],fb[5]);
+    RBa.m_Fr -= vec3d(fa[0],fa[1],fa[2]);
+    RBa.m_Mr -= vec3d(fa[3],fa[4],fa[5]);
+    RBb.m_Fr -= vec3d(fb[0],fb[1],fb[2]);
+    RBb.m_Mr -= vec3d(fb[3],fb[4],fb[5]);
 }
 
 //-----------------------------------------------------------------------------
 //! \todo Why is this class not using the FESolver for assembly?
-void FERigidSpring::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FERigidSpring::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
-	double alpha = tp.alpha;
-    
-    int j;
+	double alpha = tp.alphaf;
     
     vector<int> LM(12);
-    matrix ke(12,12);
+    FEElementMatrix ke(12,12);
     ke.zero();
     
 	FERigidBody& RBa = *m_rbA;
@@ -250,13 +272,14 @@ void FERigidSpring::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
     ke[10][9] = K[1][0]; ke[10][10] = K[1][1]; ke[10][11] = K[1][2];
     ke[11][9] = K[2][0]; ke[11][10] = K[2][1]; ke[11][11] = K[2][2];
     
-    for (j=0; j<6; ++j)
+    for (int j=0; j<6; ++j)
     {
         LM[j  ] = RBa.m_LM[j];
         LM[j+6] = RBb.m_LM[j];
     }
     
-    psolver->AssembleStiffness(LM, ke);
+	ke.SetIndices(LM);
+	LS.Assemble(ke);
 }
 
 //-----------------------------------------------------------------------------
@@ -266,7 +289,7 @@ bool FERigidSpring::Augment(int naug, const FETimeInfo& tp)
 }
 
 //-----------------------------------------------------------------------------
-void FERigidSpring::Update(int niter, const FETimeInfo& tp)
+void FERigidSpring::Update()
 {
     vec3d ra, rb, c;
     vec3d za, zb;
@@ -274,7 +297,8 @@ void FERigidSpring::Update(int niter, const FETimeInfo& tp)
 	FERigidBody& RBa = *m_rbA;
 	FERigidBody& RBb = *m_rbB;
 
-	double alpha = tp.alpha;
+	FETimeInfo& tp = GetFEModel()->GetTime();
+	double alpha = tp.alphaf;
 
     ra = RBa.m_rt*alpha + RBa.m_rp*(1-alpha);
     rb = RBb.m_rt*alpha + RBb.m_rp*(1-alpha);
@@ -286,7 +310,10 @@ void FERigidSpring::Update(int niter, const FETimeInfo& tp)
 	vec3d zbt = m_qb0; RBb.GetRotation().RotateVector(zbt);
     vec3d zbp = m_qb0; RBb.m_qp.RotateVector(zbp);
     zb = zbt*alpha + zbp*(1-alpha);
-    
+
+	m_at = RBa.m_rt + zat;
+	m_bt = RBb.m_rt + zbt;
+
     c = rb + zb - ra - za;
     double L = c.norm();
     m_F = (L > 0) ? c*((1 - m_L0/L)*m_k) : c*m_k;
@@ -302,4 +329,43 @@ void FERigidSpring::Reset()
 
     m_qa0 = m_a0 - RBa.m_r0;
     m_qb0 = m_b0 - RBb.m_r0;
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidSpring::RelativeTranslation(const bool global)
+{
+    FERigidBody& RBa = *m_rbA;
+    FERigidBody& RBb = *m_rbB;
+    
+    // body A
+    vec3d ra = RBa.m_rt;
+    vec3d za = m_qa0; RBa.GetRotation().RotateVector(za);
+    
+    // body B
+    vec3d rb = RBb.m_rt;
+    vec3d zb = m_qb0; RBb.GetRotation().RotateVector(zb);
+
+    // relative translation in global coordinate system
+    vec3d x = rb + zb - ra - za;
+    
+    if (global) return x;
+    
+    vec3d y = vec3d(1,0,0)*x.norm();
+
+    return y;
+}
+
+//-----------------------------------------------------------------------------
+vec3d FERigidSpring::RelativeRotation(const bool global)
+{
+    FERigidBody& RBa = *m_rbA;
+    FERigidBody& RBb = *m_rbB;
+    
+    // get relative rotation
+    quatd Q = RBb.GetRotation()*RBa.GetRotation().Inverse(); Q.MakeUnit();
+    
+    // relative rotation vector
+    vec3d q = Q.GetRotationVector();
+    
+    return q;
 }

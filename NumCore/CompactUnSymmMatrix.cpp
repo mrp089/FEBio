@@ -1,13 +1,107 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "CompactUnSymmMatrix.h"
+#include <FECore/log.h>
 
+// We must undef PARDISO since it is defined as a function in mkl_solver.h
+#ifdef MKL_ISS
 #ifdef PARDISO
-#include "mkl_spblas.h"
+#undef PARDISO
 #endif
+#include "mkl_rci.h"
+#include "mkl_blas.h"
+#include "mkl_spblas.h"
+#endif // MKL_ISS
 
 //-----------------------------------------------------------------------------
 // this sort function is defined in qsort.cpp
-void qsort(int n, int* arr, int* indx);
+void qsort(int n, const int* arr, int* indx);
+
+//=================================================================================================
+CRSSparseMatrix::Iterator::Iterator(CRSSparseMatrix* A) : m_A(A)
+{
+	reset();
+}
+
+bool CRSSparseMatrix::Iterator::valid()
+{
+	return (n != -1);
+}
+
+void CRSSparseMatrix::Iterator::next()
+{
+	if (valid())
+	{
+		int* pr = m_A->Pointers();
+		int l = pr[r+1] - pr[r];
+		if (n < l-1) n++;
+		else
+		{
+			r++;
+			if (r >= m_A->Rows()) n = -1;
+			else n = 0;
+		}
+	}
+	else assert(false);
+}
+
+void CRSSparseMatrix::Iterator::reset()
+{
+	r = 0;
+	n = 0;
+	if (m_A == nullptr) n = -1;
+}
+
+MatrixItem CRSSparseMatrix::Iterator::get()
+{
+	assert(valid());
+	int* pr = m_A->Pointers();
+	int* pi = m_A->Indices() + (pr[r] - m_A->Offset());
+	double* pv = m_A->Values() + (pr[r] - m_A->Offset());
+
+	MatrixItem m;
+	m.row = r;
+	m.col = pi[n] - m_A->Offset();
+	m.val = pv[n];
+
+	return m;
+}
+
+void CRSSparseMatrix::Iterator::set(double v)
+{
+	assert(valid());
+	int* pr = m_A->Pointers();
+	double* pv = m_A->Values() + (pr[r] - m_A->Offset());
+	pv[n] = v;
+}
+
 
 //=================================================================================================
 // CRSSparseMatrix
@@ -95,16 +189,19 @@ void CRSSparseMatrix::Create(SparseMatrixProfile& mp)
 
 	// create the stiffness matrix
 	CompactMatrix::alloc(nr, nc, nsize, pvalues, pindices, pointers);
+
+	// calculate and print matrix bandwidth
+//	feLog("\tMatrix bandwidth .......................... : %d\n", bandWidth());
 }
 
-void CRSSparseMatrix::Assemble(matrix& ke, vector<int>& LM)
+void CRSSparseMatrix::Assemble(const matrix& ke, const vector<int>& LM)
 {
 	// get the number of degrees of freedom
 	const int N = ke.rows();
 
 	// find the permutation array that sorts LM in ascending order
 	// we can use this to speed up the row search (i.e. loop over n below)
-	static vector<int> P; P.resize(N);
+	P.resize(N);
 	qsort(N, &LM[0], &P[0]);
 
 	// get the data pointers 
@@ -132,10 +229,12 @@ void CRSSparseMatrix::Assemble(matrix& ke, vector<int>& LM)
 		{
 			int j = P[m];
 			int J = LM[j] + offset;
+			double kij = ke[i][j];
 			for (; n<l; ++n)
 				if (pi[n] == J)
 				{
-					pm[n] += ke[i][j];
+#pragma omp atomic
+					pm[n] += kij;
 					break;
 				}
 		}
@@ -143,7 +242,7 @@ void CRSSparseMatrix::Assemble(matrix& ke, vector<int>& LM)
 }
 
 //-----------------------------------------------------------------------------
-void CRSSparseMatrix::Assemble(matrix& ke, vector<int>& LMi, vector<int>& LMj)
+void CRSSparseMatrix::Assemble(const matrix& ke, const vector<int>& LMi, const vector<int>& LMj)
 {
 	int I, J;
 
@@ -181,6 +280,7 @@ void CRSSparseMatrix::add(int i, int j, double v)
 		int m = pi[n];
 		if (m == j)
 		{
+#pragma omp atomic
 			pd[n] += v;
 			return;
 		}
@@ -208,6 +308,7 @@ void CRSSparseMatrix::set(int i, int j, double v)
 	{
 		if (pi[n] == j + m_offset)
 		{
+#pragma omp critical
 			m_pd[m_ppointers[i] + n - m_offset] = v;
 			return;
 		}
@@ -256,47 +357,39 @@ double CRSSparseMatrix::diag(int i)
 }
 
 //-----------------------------------------------------------------------------
-void CRSSparseMatrix::mult_vector(double* x, double* r)
+bool CRSSparseMatrix::mult_vector(double* x, double* r)
 {
+#ifdef MKL_ISS
+
 	// get the matrix size
 	const int N = Rows();
 
-	// loop over all columns
-#ifdef PARDISO
-	// This assumes one-based indexing!!!
-	if (m_offset == 1)
+	if (Offset() == 1)
 	{
-		char cvar = 'N'; // don't transpose
-		double* pa = Values();
-		int* ia = Pointers();
-		int* ja = Indices();
-		int ivar = Rows();
-		mkl_dcsrgemv(&cvar, &ivar, pa, ia, ja, x, r);
+		const char transa = 'N';
+		mkl_dcsrgemv(&transa, &N, m_pd, m_ppointers, m_pindices, x, r);
 	}
 	else
 	{
+		assert(m_offset == 0);
 		// loop over all rows
-		for (int i = 0; i<N; ++i)
+	#pragma omp parallel for schedule(guided)
+		for (int i = 0; i < N; ++i)
 		{
-			double ri = 0.0;
-			double* pv = m_pd + m_ppointers[i] - m_offset;
-			int* pi = m_pindices + m_ppointers[i] - m_offset;
-			int n = m_ppointers[i + 1] - m_ppointers[i];
-			for (int j = 0; j<n; ++j) ri += pv[j] * x[pi[j] - m_offset];
-			r[i] = ri;
+			const double* pv = m_pd + (m_ppointers[i] - m_offset);
+			const int* pi = m_pindices + (m_ppointers[i] - m_offset);
+			const int n = m_ppointers[i + 1] - m_ppointers[i];
+			r[i] = 0.0;
+			for (int j = 0; j < n; j ++)
+			{
+				r[i] += (*pv++) * x[*pi++ - m_offset];
+			}
 		}
 	}
+
+	return true;
 #else
-	// loop over all rows
-	for (int i = 0; i<N; ++i)
-	{
-		double ri = 0.0;
-		double* pv = m_pd + m_ppointers[i] - m_offset;
-		int* pi = m_pindices + m_ppointers[i] - m_offset;
-		int n = m_ppointers[i + 1] - m_ppointers[i];
-		for (int j = 0; j<n; ++j) ri += pv[j] * x[pi[j] - m_offset];
-		r[i] = ri;
-	}
+	return false;
 #endif
 }
 
@@ -322,9 +415,64 @@ double CRSSparseMatrix::infNorm() const
 	return norm;
 }
 
+//! calculate the one norm
+double CRSSparseMatrix::oneNorm() const
+{
+	// get the matrix size
+	const int NR = Rows();
+	const int NC = Columns();
+
+	vector<double> colNorms(NC, 0.0);
+
+	// loop over all rows
+	for (int i = 0; i<NR; ++i)
+	{
+		double ri = 0.0;
+		double* pv = m_pd + m_ppointers[i] - m_offset;
+		int* pi = m_pindices + m_ppointers[i] - m_offset;
+		int n = m_ppointers[i + 1] - m_ppointers[i];
+		for (int j = 0; j<n; ++j) colNorms[pi[j]-m_offset] += fabs(pv[j]);
+	}
+
+	// find max value
+	double rmax = 0;
+	for (int i = 0; i < NC; ++i)
+	{
+		if (colNorms[i] > rmax) rmax = colNorms[i];
+	}
+
+	return rmax;
+}
+
+//! make the matrix a unit matrix (retains sparsity pattern)
+void CRSSparseMatrix::makeUnit()
+{
+	// loop over all rows
+	const int N = Rows();
+	for (int i = 0; i<N; ++i)
+	{
+		double* pv = m_pd + m_ppointers[i] - m_offset;
+		int* pi = m_pindices + m_ppointers[i] - m_offset;
+		int n = m_ppointers[i + 1] - m_ppointers[i];
+		for (int j = 0; j < n; ++j)
+		{
+			if (pi[j] - m_offset == i) pv[j] = 1.0;
+			else pv[j] = 0.0;
+		}
+	}
+}
+
+void CRSSparseMatrix::scale(double s)
+{
+	int N = NonZeroes();
+	for (int i = 0; i < N; ++i) m_pd[i] *= s;
+}
+
 void CRSSparseMatrix::scale(const vector<double>& L, const vector<double>& R)
 {
 	const int N = Rows();
+	assert(L.size() == Rows());
+	assert(R.size() == Columns());
 	for (int i = 0; i<N; ++i)
 	{
 		double* pv = m_pd + m_ppointers[i] - m_offset;
@@ -474,14 +622,14 @@ void CCSSparseMatrix::Create(SparseMatrixProfile& mp)
 }
 
 //-----------------------------------------------------------------------------
-void CCSSparseMatrix::Assemble(matrix& ke, vector<int>& LM)
+void CCSSparseMatrix::Assemble(const matrix& ke, const vector<int>& LM)
 {
 	// get the number of degrees of freedom
 	const int N = ke.rows();
 
 	// find the permutation array that sorts LM in ascending order
 	// we can use this to speed up the row search (i.e. loop over n below)
-	static vector<int> P; P.resize(N);
+	P.resize(N);
 	qsort(N, &LM[0], &P[0]);
 
 	// get the data pointers 
@@ -509,6 +657,7 @@ void CCSSparseMatrix::Assemble(matrix& ke, vector<int>& LM)
 			for (; n<l; ++n)
 				if (pi[n] == I)
 				{
+#pragma omp atomic
 					pm[n] += ke[i][j];
 					break;
 				}
@@ -517,7 +666,7 @@ void CCSSparseMatrix::Assemble(matrix& ke, vector<int>& LM)
 }
 
 //-----------------------------------------------------------------------------
-void CCSSparseMatrix::Assemble(matrix& ke, vector<int>& LMi, vector<int>& LMj)
+void CCSSparseMatrix::Assemble(const matrix& ke, const vector<int>& LMi, const vector<int>& LMj)
 {
 	int I, J;
 
@@ -555,6 +704,7 @@ void CCSSparseMatrix::add(int i, int j, double v)
 		int m = pi[n];
 		if (m == i)
 		{
+#pragma omp atomic
 			pd[n] += v;
 			return;
 		}
@@ -581,6 +731,7 @@ void CCSSparseMatrix::set(int i, int j, double v)
 	{
 		if (pi[n] == i + m_offset)
 		{
+#pragma omp critical
 			m_pd[m_ppointers[j] + n - m_offset] = v;
 			return;
 		}
@@ -629,7 +780,7 @@ double CCSSparseMatrix::diag(int i)
 }
 
 //-----------------------------------------------------------------------------
-void CCSSparseMatrix::mult_vector(double* x, double* r)
+bool CCSSparseMatrix::mult_vector(double* x, double* r)
 {
 	// get the matrix size
 	const int N = Rows();
@@ -646,4 +797,155 @@ void CCSSparseMatrix::mult_vector(double* x, double* r)
 		int n = m_ppointers[i + 1] - m_ppointers[i];
 		for (int j = 0; j<n; j++)  r[pi[j] - m_offset] += pv[j] * x[i];
 	}
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+//! calculate the inf norm
+double CCSSparseMatrix::infNorm() const
+{
+	// get the matrix size
+	const int NR = Rows();
+	const int NC = Columns();
+
+	// keep track of row sums
+	vector<double> rowSums(NR, 0.0);
+
+	// loop over all columns
+	for (int j = 0; j<NC; ++j)
+	{
+		double* pv = m_pd + m_ppointers[j] - m_offset;
+		int* pr = m_pindices + m_ppointers[j] - m_offset;
+		int n = m_ppointers[j + 1] - m_ppointers[j];
+
+		for (int i = 0; i < n; ++i)
+		{
+			int irow = pr[i] - m_offset;
+			double vij = fabs(pv[i]);
+			rowSums[irow] += vij;
+		}
+	}
+
+	// find the largest row sum
+	double rmax = rowSums[0];
+	for (int i = 1; i < NR; ++i)
+	{
+		if (rowSums[i] > rmax) rmax = rowSums[i];
+	}
+
+	return rmax;
+}
+
+//-----------------------------------------------------------------------------
+//! calculate the one norm
+double CCSSparseMatrix::oneNorm() const
+{
+	// get the matrix size
+	const int NR = Rows();
+	const int NC = Columns();
+
+	// max col sum
+	double cmax = 0.0;
+
+	// loop over all columns
+	for (int j = 0; j<NC; ++j)
+	{
+		double* pv = m_pd + m_ppointers[j] - m_offset;
+		int* pr = m_pindices + m_ppointers[j] - m_offset;
+		int n = m_ppointers[j + 1] - m_ppointers[j];
+
+		double cj = 0.0;
+		for (int i = 0; i < n; ++i)
+		{
+			double vij = fabs(pv[i]);
+			cj += vij;
+		}
+
+		if (cj > cmax) cmax = cj;
+	}
+
+	return cmax;
+}
+
+//-----------------------------------------------------------------------------
+void CCSSparseMatrix::scale(const vector<double>& L, const vector<double>& R)
+{
+	// get the matrix size
+	const int N = Columns();
+
+	// loop over all columns
+	for (int j = 0; j < N; ++j)
+	{
+		double* pv = m_pd + m_ppointers[j] - m_offset;
+		int* pr = m_pindices + m_ppointers[j] - m_offset;
+		int n = m_ppointers[j + 1] - m_ppointers[j];
+
+		for (int i = 0; i < n; ++i)
+		{
+			pv[i] *= L[pr[i] - m_offset] * R[j];
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+//! Create a copy of the matrix (does not copy values)
+CRSSparseMatrix* CRSSparseMatrix::Copy(int offset)
+{
+	CRSSparseMatrix* A = new CRSSparseMatrix(offset);
+
+	int nnz = NonZeroes();
+	int nrow = Rows();
+	int ncol = Columns();
+
+	int nn = (isRowBased() ? nrow : ncol);
+
+	// allocate memory for copy
+	double* vd = new double[nnz];
+	int* id = new int[nnz];
+	int* pd = new int[nn + 1];
+	A->alloc(nrow, ncol, nnz, vd, id, pd);
+
+	int offs = Offset();
+
+	// copy indices
+	int* is = Indices();
+	for (int i = 0; i < nnz; ++i) id[i] = (is[i] - offs) + offset;
+
+	// copy pointers
+	int* ps = Pointers();
+	for (int i = 0; i < nn + 1; ++i) pd[i] = (ps[i] - offs) + offset;
+
+	return A;
+}
+
+//-----------------------------------------------------------------------------
+//! Copy the values from another matrix
+void CRSSparseMatrix::CopyValues(CompactMatrix* A)
+{
+	assert(NonZeroes() == A->NonZeroes());
+	memcpy(Values(), A->Values(), sizeof(double)*NonZeroes());
+}
+
+//-----------------------------------------------------------------------------
+//! convert to another format (currently only offset can be changed)
+bool CRSSparseMatrix::Convert(int newOffset)
+{
+	if (newOffset == m_offset) return true;
+
+	int d_off = newOffset - m_offset;
+
+	int nn = Rows();
+	int nnz = NonZeroes();
+	m_offset = newOffset;
+
+	// copy indices
+	int* is = Indices();
+	for (int i = 0; i < nnz; ++i) is[i] += d_off;
+
+	// copy pointers
+	int* ps = Pointers();
+	for (int i = 0; i < nn + 1; ++i) ps[i] += d_off;
+
+	return true;
 }

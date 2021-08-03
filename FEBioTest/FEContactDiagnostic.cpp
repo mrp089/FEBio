@@ -1,7 +1,32 @@
-// FEContactDiagnostic.cpp: implementation of the FEContactDiagnostic class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEContactDiagnostic.h"
 #include "FEBioMech/FENeoHookean.h"
 #include "FEBioMech/FESolidSolver2.h"
@@ -9,27 +34,28 @@
 #include "FEBioMech/FEElasticSolidDomain.h"
 #include "FEBioMech/FEResidualVector.h"
 #include "FECore/log.h"
+using namespace FECore;
 
-void print_matrix(Logfile& log, DenseMatrix& m)
+void FEContactDiagnostic::print_matrix(DenseMatrix& m)
 {
 	int i, j;
 	int N = m.Rows();
 	int M = m.Columns();
 
-	log.printf("\n    ");
-	for (i=0; i<N; ++i) log.printf("%15d ", i);
-	log.printf("\n----");
-	for (i=0; i<N; ++i) log.printf("----------------", i);
+	feLog("\n    ");
+	for (i=0; i<N; ++i) feLog("%15d ", i);
+	feLog("\n----");
+	for (i=0; i<N; ++i) feLog("----------------", i);
 
 	for (i=0; i<N; ++i)
 	{
-		log.printf("\n%2d: ", i);
+		feLog("\n%2d: ", i);
 		for (j=0; j<M; ++j)
 		{
-			log.printf("%15lg ", m(i,j));
+			feLog("%15lg ", m(i,j));
 		}
 	}
-	log.printf("\n");
+	feLog("\n");
 }
 
 
@@ -52,34 +78,40 @@ FEContactDiagnostic::~FEContactDiagnostic()
 bool FEContactDiagnostic::Run()
 {
 	// get the solver
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
 	FEAnalysis* pstep = fem.GetCurrentStep();
 	FESolidSolver2& solver = static_cast<FESolidSolver2&>(*pstep->GetFESolver());
 	solver.Init();
 
 	// make sure contact data is up to data
-	solver.UpdateContact();
+	fem.Update();
 
 	// create the stiffness matrix
 	solver.CreateStiffness(true);
 
 	// get the stiffness matrix
-	FEGlobalMatrix& K = solver.GetStiffnessMatrix();
+	FEGlobalMatrix& K = *solver.GetStiffnessMatrix();
 	SparseMatrix *pA = (SparseMatrix*)(&K);
 	DenseMatrix& K0 = static_cast<DenseMatrix&>(*pA);
 
+	// we need a linear system to evaluate contact
+	int neq = solver.m_neq;
+	vector<double> Fd(neq, 0.0);
+	vector<double> ui(neq, 0.0);
+	FELinearSystem LS(&solver, K, Fd, ui, true);
+
 	// build the stiffness matrix
 	K0.Zero();
-	solver.ContactStiffness();
+	solver.ContactStiffness(LS);
 //	solver.StiffnessMatrix();
 
-	print_matrix(felog, K0);
+	print_matrix(K0);
 
 	// calculate the derivative of the residual
 	DenseMatrix K1;
 	deriv_residual(K1);
 
-	print_matrix(felog, K1);
+	print_matrix(K1);
 
 	// calculate difference matrix
 	const int N = 48;
@@ -101,9 +133,9 @@ bool FEContactDiagnostic::Run()
 			}
 		}
 
-	print_matrix(felog, Kd);
+	print_matrix(Kd);
 
-	felog.printf("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
+	feLog("\nMaximum difference: %lg%% (at (%d,%d))\n", kmax, i0, j0);
 
 	return (kmax < 1e-3);
 }
@@ -111,7 +143,7 @@ bool FEContactDiagnostic::Run()
 //-----------------------------------------------------------------------------
 bool FEContactDiagnostic::Init()
 {
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
 	FEMesh& mesh = fem.GetMesh();
 
 	// --- create the geometry ---
@@ -147,14 +179,14 @@ bool FEContactDiagnostic::Init()
 
 	// --- create a material ---
 	FENeoHookean* pm = new FENeoHookean(&fem);
-	pm->m_E = 1;
+	pm->m_E = 1.0;
 	pm->m_v = 0.45;
 	fem.AddMaterial(pm);
 
 	// get the one-and-only domain
 	FEElasticSolidDomain* pbd = new FEElasticSolidDomain(&fem);
 	pbd->SetMaterial(pm);
-	pbd->Create(2, FE_HEX8G8);
+	pbd->Create(2, FEElementLibrary::GetElementSpecFromType(FE_HEX8G8));
 	pbd->SetMatID(0);
 	mesh.AddDomain(pbd);
 
@@ -202,7 +234,8 @@ bool FEContactDiagnostic::Init()
 	fem.AddSurfacePairConstraint(ps);
 
 	// --- set fem data ---
-	fem.SetLinearSolverType(LU_SOLVER);	// make sure we have the LU solver
+	// Make sure we are using the LU solver
+	FECoreKernel::GetInstance().SetDefaultSolverType("LU");
 
 	return FEDiagnostic::Init();
 }
@@ -211,14 +244,14 @@ bool FEContactDiagnostic::Init()
 void FEContactDiagnostic::deriv_residual(DenseMatrix& K)
 {
 	// get the solver
-	FEModel& fem = GetFEModel();
+	FEModel& fem = *GetFEModel();
 	FEAnalysis* pstep = fem.GetCurrentStep();
 	FESolidSolver2& solver = static_cast<FESolidSolver2&>(*pstep->GetFESolver());
 
 	// get the mesh
 	FEMesh& mesh = fem.GetMesh();
 
-	solver.UpdateContact();
+	fem.Update();
 
 	// first calculate the initial residual
 	vector<double> R0; R0.assign(48, 0);
@@ -245,8 +278,7 @@ void FEContactDiagnostic::deriv_residual(DenseMatrix& K)
 		case 2: node.m_rt.z += dx; break;
 		}
 
-		solver.UpdateModel();
-		solver.UpdateContact();
+		fem.Update();
 
 		zero(R1);
 		FEResidualVector RHS1(fem, R1, dummy);
@@ -260,8 +292,7 @@ void FEContactDiagnostic::deriv_residual(DenseMatrix& K)
 		case 2: node.m_rt.z -= dx; break;
 		}
 
-		solver.UpdateModel();
-		solver.UpdateContact();
+		fem.Update();
 
 		for (i=0; i<3*N; ++i) K(i,j) = (1-(R1[i] - R0[i])/dx)-1;
 	}

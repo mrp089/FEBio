@@ -1,6 +1,30 @@
-// FERigidWallInterface.cpp: implementation of the FERigidWallInterface class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FERigidWallInterface.h"
@@ -9,23 +33,23 @@
 #include "FECore/FEGlobalMatrix.h"
 #include "FECore/log.h"
 #include <FEBioMech/FEElasticShellDomainOld.h>
+#include <FECore/FELinearSystem.h>
 
 //-----------------------------------------------------------------------------
 // Define sliding interface parameters
-BEGIN_PARAMETER_LIST(FERigidWallInterface, FEContactInterface)
-	ADD_PARAMETER(m_blaugon , FE_PARAM_BOOL  , "laugon"      ); 
-	ADD_PARAMETER(m_atol    , FE_PARAM_DOUBLE, "tolerance"   );
-	ADD_PARAMETER(m_eps     , FE_PARAM_DOUBLE, "penalty"     );
-	ADD_PARAMETER(m_d	    , FE_PARAM_DOUBLE, "offset"      );
-	ADD_PARAMETERV(m_plane.a, FE_PARAM_DOUBLE, 4, "plane"   );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERigidWallInterface, FEContactInterface)
+	ADD_PARAMETER(m_atol   , "tolerance"   );
+	ADD_PARAMETER(m_eps    , "penalty"     );
+	ADD_PARAMETER(m_d	   , "offset"      );
+	ADD_PARAMETER(m_plane.a, 4, "plane"   );
+END_FECORE_CLASS();
 
 ///////////////////////////////////////////////////////////////////////////////
 // FERigidWallSurface
 ///////////////////////////////////////////////////////////////////////////////
 
 
-FERigidWallSurface::FERigidWallSurface(FEModel* pfem) : FESurface(&pfem->GetMesh()) 
+FERigidWallSurface::FERigidWallSurface(FEModel* pfem) : FESurface(pfem) 
 { 
 	m_NQ.Attach(this); 
 
@@ -53,8 +77,8 @@ bool FERigidWallSurface::Init()
 	// allocate other surface data
 	m_gap.assign(nn, 0);		// gap funtion
 	m_nu.resize(nn);		// node normal 
-	m_pme.assign(nn, static_cast<FESurfaceElement*>(0));		// penetrated master element
-	m_rs.resize(nn);		// natural coords of projected slave node on master element
+	m_pme.assign(nn, static_cast<FESurfaceElement*>(0));		// penetrated secondary surface element
+	m_rs.resize(nn);		// natural coords of projected primary node on secondary element
 	m_rsp.resize(nn);
 	m_Lm.assign(nn, 0);
 	m_M.resize(nn);
@@ -148,31 +172,15 @@ void FERigidWallSurface::UpdateNormals()
 void FERigidWallSurface::Serialize(DumpStream &ar)
 {
 	FESurface::Serialize(ar);
-	if (ar.IsSaving())
-	{
-		ar << m_gap;
-		ar << m_nu;
-		ar << m_rs;
-		ar << m_rsp;
-		ar << m_Lm;
-		ar << m_M;
-		ar << m_Lt;
-		ar << m_off;
-		ar << m_eps;
-	}
-	else
-	{
-		ar >> m_gap;
-		ar >> m_nu;
-		ar >> m_rs;
-		ar >> m_rsp;
-		ar >> m_Lm;
-		ar >> m_M;
-		ar >> m_Lt;
-		ar >> m_off;
-		ar >> m_eps;
-		zero(m_pme);
-	}
+	ar & m_gap;
+	ar & m_nu;
+	ar & m_rs;
+	ar & m_rsp;
+	ar & m_Lm;
+	ar & m_M;
+	ar & m_Lt;
+	ar & m_off;
+	ar & m_eps;
 }
 
 //-----------------------------------------------------------------------------
@@ -259,36 +267,31 @@ void FERigidWallInterface::Activate()
 	// don't forget to call the base class
 	FEContactInterface::Activate();
 
-	// project slave surface onto master surface
+	// project primary surface onto secondary surface
 	ProjectSurface(m_ss);
 }
 
 //-----------------------------------------------------------------------------
-//!  Projects the slave surface onto the master plane
+//!  Projects the primary surface onto the plane
 
 void FERigidWallInterface::ProjectSurface(FERigidWallSurface& ss)
 {
-	vec3d r, q;
-
-	// surface normal
-	vec3d np;
-
-	// loop over all slave nodes
+	// loop over all primary surface nodes
 	for (int i=0; i<m_ss.Nodes(); ++i)
 	{
 		// get the nodal position
-		r = m_ss.Node(i).m_rt;
+		vec3d r = m_ss.Node(i).m_rt;
 
 		// project this node onto the plane
-		q = m_plane.Project(r);
+		vec3d q = m_plane.Project(r);
 
 		// get the local surface normal
-		np = m_plane.Normal(q);
+		vec3d np = m_plane.Normal(q);
 
 		// calculate offset
 		q += np*m_d;
 
-		// the slave normal is set to the master element normal
+		// the normal is set to the secondary surface element normal
 		m_ss.m_nu[i] = np;
 	
 		// calculate initial gap
@@ -299,15 +302,15 @@ void FERigidWallInterface::ProjectSurface(FERigidWallSurface& ss)
 //-----------------------------------------------------------------------------
 //!  Updates rigid wall data
 
-void FERigidWallInterface::Update(int niter, const FETimeInfo& tp)
+void FERigidWallInterface::Update()
 {
-	// project slave surface onto master surface
+	// project primary surface onto secondary surface
 	ProjectSurface(m_ss);
 }
 
 //-----------------------------------------------------------------------------
 
-void FERigidWallInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FERigidWallInterface::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	int j, k, m, n;
 	int nseln;
@@ -340,11 +343,11 @@ void FERigidWallInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	// penalty value
 	double pen = m_eps, eps;
 	
-	// loop over all slave facets
+	// loop over all primary surface facets
 	int ne = m_ss.Elements();
 	for (j=0; j<ne; ++j)
 	{
-		// get the slave element
+		// get the next element
 		FESurfaceElement& sel = m_ss.Element(j);
 
 		// get the element's LM vector
@@ -359,7 +362,7 @@ void FERigidWallInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 		}
 		w = sel.GaussWeights();
 
-		// loop over slave element nodes (which are the integration points as well)
+		// loop over element nodes (which are the integration points as well)
 		for (n=0; n<nseln; ++n)
 		{
 			Gr = sel.Gr(n);
@@ -368,7 +371,7 @@ void FERigidWallInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 			m = sel.m_lnode[n];
 
 			// see if this node's constraint is active
-			// that is, if it has a master element associated with it
+			// that is, if it has a secondary surface element associated with it
 //			if (ss.Lm[m] >= 0)
 			{
 				// calculate jacobian
@@ -386,12 +389,12 @@ void FERigidWallInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 				detJ = (dxr ^ dxs).norm();
 
-				// get slave node normal force
+				// get node normal force
 				eps = pen*m_ss.m_eps[m];
 				tn = m_ss.m_Lm[m] + eps*m_ss.m_gap[m];
 				tn = MBRACKET(tn);
 
-				// get the slave node normal
+				// get the node normal
 				vec3d& nu = m_ss.m_nu[m];
 
 				// calculate force vector
@@ -420,12 +423,12 @@ void FERigidWallInterface::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 //! interface.
 //! \todo I think there are a couple of stiffness terms missing in this formulation
 
-void FERigidWallInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FERigidWallInterface::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	int j, k, l, n, m;
 	int nseln, ndof;
 
-	matrix ke;
+	FEElementMatrix ke;
 
 	vector<int> lm(3);
 	vector<int> en(1);
@@ -444,7 +447,7 @@ void FERigidWallInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 	// penalty value
 	double pen = m_eps, eps;
 
-	// loop over all slave elements
+	// loop over all primary surface elements
 	int ne = m_ss.Elements();
 	for (j=0; j<ne; ++j)
 	{
@@ -472,7 +475,7 @@ void FERigidWallInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 			m = se.m_lnode[n];
 
 			// see if this node's constraint is active
-			// that is, if it has a master element associated with it
+			// that is, if it has a secondary surface element associated with it
 //			if (ss.Lm[m] >= 0)
 			{
 				// calculate jacobian
@@ -490,19 +493,19 @@ void FERigidWallInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 
 				detJ = (dxr ^ dxs).norm();
 
-				// slave gap
+				// gap
 				gap = m_ss.m_gap[m];
 
 				// lagrange multiplier
 				Lm = m_ss.m_Lm[m];
 
-				// get slave node normal force
+				// get node normal force
 				eps = pen*m_ss.m_eps[m];
 
 				tn = m_ss.m_Lm[m] + eps*m_ss.m_gap[m];
 				tn = MBRACKET(tn);
 
-				// get the slave node normal
+				// get the node normal
 				vec3d& nu = m_ss.m_nu[m];
 
 				// set up the N vector
@@ -530,7 +533,9 @@ void FERigidWallInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 				en[0] = se.m_node[n];
 						
 				// assemble stiffness matrix
-				psolver->AssembleStiffness(en, lm, ke);
+				ke.SetNodes(en);
+				ke.SetIndices(lm);
+				LS.Assemble(ke);
 			}
 		}
 	}
@@ -541,7 +546,7 @@ void FERigidWallInterface::StiffnessMatrix(FESolver* psolver, const FETimeInfo& 
 bool FERigidWallInterface::Augment(int naug, const FETimeInfo& tp)
 {
 	// make sure we need to augment
-	if (!m_blaugon) return true;
+	if (m_laugon != 1) return true;
 
 	int i;
 	double Lm;
@@ -579,12 +584,12 @@ bool FERigidWallInterface::Augment(int naug, const FETimeInfo& tp)
 	normgc = sqrt(normgc / N);
 
 	// check convergence of constraints
-	felog.printf(" rigid wall interface # %d\n", GetID());
-	felog.printf("                        CURRENT        REQUIRED\n");
+	feLog(" rigid wall interface # %d\n", GetID());
+	feLog("                        CURRENT        REQUIRED\n");
 	double pctn = 0;
 	if (fabs(normL1) > 1e-10) pctn = fabs((normL1 - normL0)/normL1);
-	felog.printf("    normal force : %15le %15le\n", pctn, m_atol);
-	felog.printf("    gap function : %15le       ***\n", normgc);
+	feLog("    normal force : %15le %15le\n", pctn, m_atol);
+	feLog("    gap function : %15le       ***\n", normgc);
 		
 	if (pctn >= m_atol)
 	{

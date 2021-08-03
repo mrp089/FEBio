@@ -1,10 +1,36 @@
-// FETriphasic.cpp: implementation of the FETriphasic class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FETriphasic.h"
 #include "FECore/FEModel.h"
 #include "FECore/FECoreKernel.h"
+#include <FECore/log.h>
 
 #ifndef SQR
 #define SQR(x) ((x)*(x))
@@ -12,12 +38,19 @@
 
 //-----------------------------------------------------------------------------
 // Material parameters for the FETriphasic material
-BEGIN_PARAMETER_LIST(FETriphasic, FEMaterial)
-	ADD_PARAMETER2(m_phi0   , FE_PARAM_DOUBLE, FE_RANGE_CLOSED     (0.0, 1.0), "phi0");
-	ADD_PARAMETER2(m_rhoTw  , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "fluid_density");
-	ADD_PARAMETER2(m_penalty, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "penalty");
-	ADD_PARAMETER(m_cFr, FE_PARAM_DOUBLE, "fixed_charge_density");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FETriphasic, FEMaterial)
+	ADD_PARAMETER(m_phi0   , FE_RANGE_CLOSED     (0.0, 1.0), "phi0");
+	ADD_PARAMETER(m_rhoTw  , FE_RANGE_GREATER_OR_EQUAL(0.0), "fluid_density");
+	ADD_PARAMETER(m_penalty, FE_RANGE_GREATER_OR_EQUAL(0.0), "penalty");
+	ADD_PARAMETER(m_cFr    , "fixed_charge_density");
+
+	// set material properties
+	ADD_PROPERTY(m_pSolid , "solid"              );
+	ADD_PROPERTY(m_pPerm  , "permeability"       );
+	ADD_PROPERTY(m_pOsmC  , "osmotic_coefficient");
+	ADD_PROPERTY(m_pSolute, "solute"             );
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! FETriphasic constructor
@@ -30,24 +63,25 @@ FETriphasic::FETriphasic(FEModel* pfem) : FEMaterial(pfem)
 	m_rhoTw = 0;
 	m_penalty = 1;
 
-	// set material properties
-	AddProperty(&m_pSolid , "solid"              );
-	AddProperty(&m_pPerm  , "permeability"       );
-	AddProperty(&m_pOsmC  , "osmotic_coefficient");
-	AddProperty(&m_pSolute, "solute"             );
+	m_pSolid = 0;
+	m_pPerm = 0;
+	m_pOsmC = 0;
 }
 
 //-----------------------------------------------------------------------------
 void FETriphasic::AddSolute(FESolute* ps)
 {
-	m_pSolute.SetProperty(ps);
+	m_pSolute.push_back(ps);
 }
 
 //-----------------------------------------------------------------------------
 bool FETriphasic::Init()
 {
 	// make sure there are exactly two solutes
-	if (m_pSolute.size() != 2) return MaterialError("Exactly two solutes must be specified");
+	if (m_pSolute.size() != 2) {
+		feLogError("Exactly two solutes must be specified");
+		return false;
+	}
 	
 	// Set the solute IDs since they are referenced in the FESolute::Init() function
 	m_pSolute[0]->SetSoluteLocalID(0);
@@ -57,20 +91,26 @@ bool FETriphasic::Init()
 	if (FEMaterial::Init() == false) return false;
 
 	// parameter checking
-	if ((m_pSolute[0]->ChargeNumber() != 1) && (m_pSolute[0]->ChargeNumber() != -1))
-		return MaterialError("charge_number for first solute must be +1 or -1");
-	if ((m_pSolute[1]->ChargeNumber() != 1) && (m_pSolute[1]->ChargeNumber() != -1))
-		return MaterialError("charge_number for second solute must be +1 or -1");
-	if (m_pSolute[0]->ChargeNumber() != -m_pSolute[1]->ChargeNumber())
-		return MaterialError("charge_number of solutes must have opposite signs");
+	if ((m_pSolute[0]->ChargeNumber() != 1) && (m_pSolute[0]->ChargeNumber() != -1)) {
+		feLogError("charge_number for first solute must be +1 or -1");
+		return false;
+	}
+	if ((m_pSolute[1]->ChargeNumber() != 1) && (m_pSolute[1]->ChargeNumber() != -1)) {
+		feLogError("charge_number for second solute must be +1 or -1");
+		return false;
+	}
+	if (m_pSolute[0]->ChargeNumber() != -m_pSolute[1]->ChargeNumber()) {
+		feLogError("charge_number of solutes must have opposite signs");
+		return false;
+	}
 	
 	m_Rgas = GetFEModel()->GetGlobalConstant("R");
 	m_Tabs = GetFEModel()->GetGlobalConstant("T");
 	m_Fc   = GetFEModel()->GetGlobalConstant("Fc");
 	
-	if (m_Rgas <= 0) return MaterialError("A positive universal gas constant R must be defined in Globals section");
-	if (m_Tabs <= 0) return MaterialError("A positive absolute temperature T must be defined in Globals section");
-	if (m_Fc   <= 0) return MaterialError("A positive Faraday constant Fc must be defined in Globals section");
+	if (m_Rgas <= 0) { feLogError("A positive universal gas constant R must be defined in Globals section"); return false; }
+	if (m_Tabs <= 0) { feLogError("A positive absolute temperature T must be defined in Globals section"  ); return false; }
+	if (m_Fc   <= 0) { feLogError("A positive Faraday constant Fc must be defined in Globals section"     ); return false; }
 
 	return true;
 }
@@ -79,18 +119,8 @@ bool FETriphasic::Init()
 void FETriphasic::Serialize(DumpStream& ar)
 {
 	FEMaterial::Serialize(ar);
-
-	if (ar.IsShallow() == false)
-	{
-		if (ar.IsSaving())
-		{
-			ar << m_Rgas << m_Tabs << m_Fc;
-		}
-		else
-		{
-			ar >> m_Rgas >> m_Tabs >> m_Fc;
-		}
-	}
+	if (ar.IsShallow()) return;
+	ar & m_Rgas & m_Tabs & m_Fc;
 }
 
 //-----------------------------------------------------------------------------
@@ -123,7 +153,7 @@ double FETriphasic::FixedChargeDensity(FEMaterialPoint& pt)
 	// relative volume
 	double J = et.m_J;
 	double phi0 = pet.m_phi0;
-	double cF = m_cFr*(1-phi0)/(J-phi0);
+	double cF = m_cFr(pt)*(1-phi0)/(J-phi0);
 	
 	return cF;
 }

@@ -1,10 +1,30 @@
-//
-//  FEMembraneReaction.cpp
-//  FEBioMix
-//
-//  Created by Gerard Ateshian on 3/4/18.
-//  Copyright © 2018 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEMembraneReaction.h"
@@ -13,29 +33,33 @@
 #include "FECore/FEModel.h"
 #include "FECore/FECoreKernel.h"
 #include "FEMultiphasic.h"
+#include <FECore/log.h>
 #include <stdlib.h>
 
 
 //-----------------------------------------------------------------------------
-BEGIN_PARAMETER_LIST(FEMembraneReaction, FEReaction)
-ADD_PARAMETER(m_Vbar , FE_PARAM_DOUBLE, "Vbar");
-ADD_PARAMETER(m_vRtmp, FE_PARAM_INT   , "vR"  );
-ADD_PARAMETER(m_vPtmp, FE_PARAM_INT   , "vP"  );
-ADD_PARAMETER(m_vRitmp, FE_PARAM_INT   , "vRi");
-ADD_PARAMETER(m_vPitmp, FE_PARAM_INT   , "vPi");
-ADD_PARAMETER(m_vRetmp, FE_PARAM_INT   , "vRe");
-ADD_PARAMETER(m_vPetmp, FE_PARAM_INT   , "vPe");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEMembraneReaction, FEReaction)
+	ADD_PARAMETER(m_Vbar  , "Vbar");
+	ADD_PARAMETER(m_vRtmp , "vR"  );
+	ADD_PARAMETER(m_vPtmp , "vP"  );
+	ADD_PARAMETER(m_vRitmp, "vRi");
+	ADD_PARAMETER(m_vPitmp, "vPi");
+	ADD_PARAMETER(m_vRetmp, "vRe");
+	ADD_PARAMETER(m_vPetmp, "vPe");
+
+	// set material properties
+	ADD_PROPERTY(m_pFwd, "forward_rate", FEProperty::Optional);
+	ADD_PROPERTY(m_pRev, "reverse_rate", FEProperty::Optional);
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEMembraneReaction::FEMembraneReaction(FEModel* pfem) : FEReaction(pfem)
 {
-    // set material properties
-    AddProperty(&m_pFwd ,"forward_rate", 0);
-    AddProperty(&m_pRev ,"reverse_rate", 0);
-    
     // additional initializations
     m_Vovr = false;
+
+	m_pFwd = m_pRev = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -46,7 +70,7 @@ FESoluteData* FEMembraneReaction::FindSoluteData(int nid)
     for (int i=0; i<N; ++i)
     {
         FESoluteData* psd = dynamic_cast<FESoluteData*>(fem.GetGlobalData(i));
-        if (psd && (psd->GetID() == nid)) return psd;
+        if (psd && (psd->GetID() - 1 == nid)) return psd;
     }
     return 0;
 }
@@ -80,7 +104,7 @@ bool FEMembraneReaction::Init()
     intmap solR = m_solR;
     intmap solP = m_solP;
     for (int isol = 0; isol<nsol; ++isol) {
-        int sid = m_pMP->GetSolute(isol)->GetSoluteID();
+        int sid = m_pMP->GetSolute(isol)->GetSoluteID() - 1;
         it = solR.find(sid);
         if (it != solR.end()) m_vR[isol] = it->second;
         it = solP.find(sid);
@@ -92,7 +116,7 @@ bool FEMembraneReaction::Init()
     intmap sbmR = m_sbmR;
     intmap sbmP = m_sbmP;
     for (int isbm = 0; isbm<nsbm; ++isbm) {
-        int sid = m_pMP->GetSBM(isbm)->GetSBMID();
+        int sid = m_pMP->GetSBM(isbm)->GetSBMID() - 1;
         it = sbmR.find(sid);
         if (it != sbmR.end()) m_vR[nsol + isbm] = it->second;
         it = sbmP.find(sid);
@@ -107,17 +131,17 @@ bool FEMembraneReaction::Init()
     //********* reactants and products on either side of membrane **********
     // count total number of solutes in model
     DOFS& fedofs = GetFEModel()->GetDOFS();
-    int MAX_CDOFS = fedofs.GetVariableSize("concentration");
-    m_NSOL = MAX_CDOFS;
+    int MAX_DDOFS = fedofs.GetVariableSize("shell concentration");
+    m_NSOL = MAX_DDOFS;
 
     // initialize the stoichiometric coefficients to zero
-    m_vRi.assign(MAX_CDOFS, 0); m_vRe.assign(MAX_CDOFS, 0);
-    m_vPi.assign(MAX_CDOFS, 0); m_vPe.assign(MAX_CDOFS, 0);
-    m_vi.assign(MAX_CDOFS, 0); m_ve.assign(MAX_CDOFS, 0);
+    m_vRi.assign(MAX_DDOFS, 0); m_vRe.assign(MAX_DDOFS, 0);
+    m_vPi.assign(MAX_DDOFS, 0); m_vPe.assign(MAX_DDOFS, 0);
+    m_vi.assign(MAX_DDOFS, 0); m_ve.assign(MAX_DDOFS, 0);
     
     // cycle through all the solutes in the mixture and determine
     // if they participate in this reaction
-    for (int ISOL = 0; ISOL<MAX_CDOFS; ++ISOL) {
+    for (int ISOL = 0; ISOL<MAX_DDOFS; ++ISOL) {
         it = m_solRi.find(ISOL);
         if (it != m_solRi.end()) m_vRi[ISOL] = it->second;
         it = m_solPi.find(ISOL);
@@ -129,7 +153,7 @@ bool FEMembraneReaction::Init()
     }
 
     // evaluate the net stoichiometric coefficient
-    for (int ISOL = 0; ISOL<MAX_CDOFS; ++ISOL) {
+    for (int ISOL = 0; ISOL<MAX_DDOFS; ++ISOL) {
         m_vi[ISOL] = m_vPi[ISOL] - m_vRi[ISOL];
         m_ve[ISOL] = m_vPe[ISOL] - m_vRe[ISOL];
     }
@@ -143,7 +167,7 @@ bool FEMembraneReaction::Init()
             m_Vbar += m_v[isol] * m_pMP->GetSolute(isol)->MolarMass() / m_pMP->GetSolute(isol)->Density();
         for (int isbm = 0; isbm<nsbm; ++isbm)
             m_Vbar += m_v[nsol + isbm] * m_pMP->GetSBM(isbm)->MolarMass() / m_pMP->GetSBM(isbm)->Density();
-        for (int ISOL = 0; ISOL<MAX_CDOFS; ++ISOL) {
+        for (int ISOL = 0; ISOL<MAX_DDOFS; ++ISOL) {
             FESoluteData* sd = FindSoluteData(ISOL);
             m_Vbar += m_vi[ISOL] * sd->m_M / sd->m_rhoT;
             m_Vbar += m_ve[ISOL] * sd->m_M / sd->m_rhoT;
@@ -156,12 +180,15 @@ bool FEMembraneReaction::Init()
         znet += m_v[isol] * m_pMP->GetSolute(isol)->ChargeNumber();
     for (int isbm = 0; isbm<nsbm; ++isbm)
         znet += m_v[nsol + isbm] * m_pMP->GetSBM(isbm)->ChargeNumber();
-    for (int ISOL = 0; ISOL<MAX_CDOFS; ++ISOL) {
+    for (int ISOL = 0; ISOL<MAX_DDOFS; ++ISOL) {
         FESoluteData* sd = FindSoluteData(ISOL);
         znet += m_vi[ISOL] * sd->m_z;
         znet += m_ve[ISOL] * sd->m_z;
     }
-    if (znet != 0) return MaterialError("membrane reaction must satisfy electroneutrality");
+	if (znet != 0) {
+		feLogError("membrane reaction must satisfy electroneutrality");
+		return false;
+	}
     
     return true;
 }

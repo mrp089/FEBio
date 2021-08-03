@@ -1,13 +1,49 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEBiphasic.h"
 #include "FECore/FECoreKernel.h"
 
 //-----------------------------------------------------------------------------
 // Material parameters for the FEBiphasic material
-BEGIN_PARAMETER_LIST(FEBiphasic, FEMaterial)
-	ADD_PARAMETER2(m_phi0 , FE_PARAM_DOUBLE, FE_RANGE_CLOSED(0.0, 1.0), "phi0");
-	ADD_PARAMETER2(m_rhoTw, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "fluid_density");
-    ADD_PARAMETER2(m_tau  , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "tau");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEBiphasic, FEMaterial)
+	ADD_PARAMETER(m_phi0 , FE_RANGE_CLOSED(0.0, 1.0), "phi0");
+	ADD_PARAMETER(m_rhoTw, FE_RANGE_GREATER_OR_EQUAL(0.0), "fluid_density");
+    ADD_PARAMETER(m_tau  , FE_RANGE_GREATER_OR_EQUAL(0.0), "tau");
+
+	// set material properties
+	ADD_PROPERTY(m_pSolid, "solid");
+	ADD_PROPERTY(m_pPerm, "permeability");
+	ADD_PROPERTY(m_pSupp, "solvent_supply", FEProperty::Optional);
+	ADD_PROPERTY(m_pAmom, "active_supply", FEProperty::Optional);
+
+END_FECORE_CLASS();
 
 //============================================================================
 // FEBiphasicMaterialPoint
@@ -25,16 +61,10 @@ FEMaterialPoint* FEBiphasicMaterialPoint::Copy()
 //-----------------------------------------------------------------------------
 void FEBiphasicMaterialPoint::Serialize(DumpStream& ar)
 {
-	if (ar.IsSaving())
-	{
-		ar << m_p << m_gradp << m_gradpp << m_w << m_pa << m_phi0 << m_phi0p << m_phi0hat << m_Jp;
-	}
-	else
-	{
-		ar >> m_p >> m_gradp >> m_gradpp >> m_w >> m_pa >> m_phi0 >> m_phi0p >> m_phi0hat >> m_Jp;
-	}
-
 	FEMaterialPoint::Serialize(ar);
+	ar & m_p & m_gradp & m_gradpp;
+	ar & m_w & m_pa & m_phi0 & m_phi0p & m_phi0hat & m_Jp;
+    ar & m_ss;
 }
 
 //-----------------------------------------------------------------------------
@@ -46,6 +76,7 @@ void FEBiphasicMaterialPoint::Init()
 	m_phi0 = m_phi0p = 0;
 	m_phi0hat = 0;
 	m_Jp = 1;
+    m_ss.zero();
 
 	FEMaterialPoint::Init();
 }
@@ -63,19 +94,31 @@ FEBiphasic::FEBiphasic(FEModel* pfem) : FEMaterial(pfem)
 	m_phi0 = 0;
     m_tau = 0;
 
-	// set material properties
-	AddProperty(&m_pSolid, "solid"         );
-	AddProperty(&m_pPerm , "permeability"  );
-	AddProperty(&m_pSupp , "solvent_supply", 0);
-    AddProperty(&m_pAmom , "active_supply" , 0);
+	m_pSolid = 0;
+	m_pPerm = 0;
+	m_pSupp = 0;
+	m_pAmom = 0;
 }
 
 //-----------------------------------------------------------------------------
 // returns a pointer to a new material point object
 FEMaterialPoint* FEBiphasic::CreateMaterialPointData() 
 {
-	FEBiphasicMaterialPoint* pt = new FEBiphasicMaterialPoint(m_pSolid->CreateMaterialPointData());
-	pt->m_phi0 = m_phi0;
+	// create biphasic material point
+	FEBiphasicMaterialPoint* pt = new FEBiphasicMaterialPoint(nullptr);
+
+	// create the solid material point
+	FEMaterialPoint* ep = m_pSolid->CreateMaterialPointData();
+
+	// create the permeability
+	FEMaterialPoint* pm = m_pPerm->CreateMaterialPointData();
+	if (pm)
+	{
+		pm->SetNext(ep);
+		pt->SetNext(pm);
+	}
+	else pt->SetNext(ep);
+
 	return pt;
 }
 

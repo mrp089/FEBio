@@ -1,14 +1,32 @@
-// MatrixProfile.h: interface for the MatrixProfile class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_MATRIXPROFILE_H__F83C6F4F_AB5B_445F_AD8C_9C0CBAD26D09__INCLUDED_)
-#define AFX_MATRIXPROFILE_H__F83C6F4F_AB5B_445F_AD8C_9C0CBAD26D09__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "vector.h"
 
 //-----------------------------------------------------------------------------
@@ -75,6 +93,9 @@ public:
 	//! Constructor. Takes the nr of equations as the input argument
 	SparseMatrixProfile(int nrow = 0, int ncol = 0);
 
+	//! allocate storage for profile
+	void Create(int nrow, int ncol);
+
 	//! copy constructor
 	SparseMatrixProfile(const SparseMatrixProfile& mp);
 
@@ -89,6 +110,9 @@ public:
 
 	//! updates the profile for an array of elements
 	void UpdateProfile(vector< vector<int> >& LM, int N);
+
+	//! inserts an entry into the profile (This is an expensive operation!)
+	void Insert(int i, int j);
 
 	//! returns the number of rows
 	int Rows() const { return m_nrow; }
@@ -106,5 +130,3 @@ private:
 	int	m_nrow, m_ncol;				//!< dimensions of matrix
 	vector<ColumnProfile>	m_prof;	//!< the actual profile in condensed format
 };
-
-#endif // !defined(AFX_MATRIXPROFILE_H__F83C6F4F_AB5B_445F_AD8C_9C0CBAD26D09__INCLUDED_)

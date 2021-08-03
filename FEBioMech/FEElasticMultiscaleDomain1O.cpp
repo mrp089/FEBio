@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEElasticMultiscaleDomain1O.h"
 #include "FEMicroMaterial.h"
@@ -22,7 +50,7 @@ bool FEElasticMultiscaleDomain1O::Init()
 	FEMicroMaterial* pmat = dynamic_cast<FEMicroMaterial*>(m_pMat);
 	if (m_pMat == 0) return false;
 
-	// get the master RVE
+	// get the parent RVE
 	FERVEModel& rve = pmat->m_mrve;
 
 	// loop over all elements
@@ -39,7 +67,7 @@ bool FEElasticMultiscaleDomain1O::Init()
 			// create the material point RVEs
 			mmpt.m_F_prev = pt.m_F;	// TODO: I think I can remove this line
 			mmpt.m_rve.CopyFrom(rve);
-			mmpt.m_rve.Init();
+			if (mmpt.m_rve.Init() == false) return false;
 		}
 	}
 
@@ -57,12 +85,20 @@ bool FEElasticMultiscaleDomain1O::Init()
 			{
 				FEMaterialPoint& mp = *pel->GetMaterialPoint(ngp);
 				FEMicroMaterialPoint& mmpt = *mp.ExtractData<FEMicroMaterialPoint>();
-				FERVEProbe* prve = new FERVEProbe(fem, mmpt.m_rve, p.m_szfile);
+				FERVEProbe* prve = new FERVEProbe(fem, mmpt.m_rve, p.m_szfile.c_str());
 				prve->SetDebugFlag(p.m_bdebug);
 			}
-			else return fecore_error("Invalid gausspt number for micro-probe %d in material %d (%s)", i+1, m_pMat->GetID(), m_pMat->GetName().c_str());
+			else
+			{
+				feLogError("Invalid gausspt number for micro-probe %d in material %d (%s)", i + 1, m_pMat->GetID(), m_pMat->GetName().c_str());
+				return false;
+			}
 		}
-		else return fecore_error("Invalid Element ID for micro probe %d in material %d (%s)", i+1, m_pMat->GetID(), m_pMat->GetName().c_str());
+		else
+		{
+			feLogError("Invalid Element ID for micro probe %d in material %d (%s)", i + 1, m_pMat->GetID(), m_pMat->GetName().c_str());
+			return false;
+		}
 	}
 
 	return true;

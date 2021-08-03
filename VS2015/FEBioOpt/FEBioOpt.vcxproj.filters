@@ -24,13 +24,25 @@
     <ClInclude Include="..\..\FEBioOpt\FEConstrainedLMOptimizeMethod.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioOpt\FEDataSource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\FEBioOpt\FELMOptimizeMethod.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioOpt\FEObjectiveFunction.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioOpt\FEOptimize.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\FEBioOpt\FEOptimizer.h">
+    <ClInclude Include="..\..\FEBioOpt\FEOptimizeData.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioOpt\FEOptimizeInput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FEBioOpt\FEOptimizeMethod.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\..\FEBioOpt\FEPowellOptimizeMethod.h">
@@ -45,6 +57,9 @@
     <ClInclude Include="..\..\FEBioOpt\targetver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\FEBioOpt\FEParameterSweep.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\FEBioOpt\FEBioOpt.cpp">
@@ -53,16 +68,31 @@
     <ClCompile Include="..\..\FEBioOpt\FEConstrainedLMOptimizeMethod.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioOpt\FEDataSource.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioOpt\FELMOptimizeMethod.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\FEBioOpt\FEObjectiveFunction.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\FEBioOpt\FEOptimize.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioOpt\FEOptimizeData.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioOpt\FEOptimizeInput.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioOpt\FEPowellOptimizeMethod.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="..\..\FEBioOpt\FEScanOptimizeMethod.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FEBioOpt\FEParameterSweep.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

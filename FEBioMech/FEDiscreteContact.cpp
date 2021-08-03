@@ -1,9 +1,38 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEDiscreteContact.h"
 #include <FECore/FEModel.h>
 #include <FECore/FEGlobalMatrix.h>
 #include "FEContactInterface.h"
 #include <FECore/FEClosestPointProjection.h>
+#include <FECore/FELinearSystem.h>
 #include <FECore/log.h>
 
 FEDiscreteContactSurface::FEDiscreteContactSurface(FEModel* fem) : FEContactSurface(fem)
@@ -16,15 +45,15 @@ bool FEDiscreteContactSurface::Init()
 	return FEContactSurface::Init();
 }
 
-BEGIN_PARAMETER_LIST(FEDiscreteContact, FESurfaceConstraint)
-	ADD_PARAMETER(m_blaugon , FE_PARAM_BOOL, "laugon");
-	ADD_PARAMETER2(m_altol  , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "altol");
-	ADD_PARAMETER2(m_gaptol , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "gaptol");
-	ADD_PARAMETER2(m_penalty, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "penalty");
-	ADD_PARAMETER(m_naugmin, FE_PARAM_INT   , "minaug");
-	ADD_PARAMETER(m_naugmax, FE_PARAM_INT   , "maxaug");
-	ADD_PARAMETER(m_nsegup , FE_PARAM_INT   , "segup");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEDiscreteContact, FESurfaceConstraint)
+	ADD_PARAMETER(m_blaugon, "laugon");
+	ADD_PARAMETER(m_altol  , FE_RANGE_GREATER_OR_EQUAL(0.0), "altol");
+	ADD_PARAMETER(m_gaptol , FE_RANGE_GREATER_OR_EQUAL(0.0), "gaptol");
+	ADD_PARAMETER(m_penalty, FE_RANGE_GREATER_OR_EQUAL(0.0), "penalty");
+	ADD_PARAMETER(m_naugmin, "minaug");
+	ADD_PARAMETER(m_naugmax, "maxaug");
+	ADD_PARAMETER(m_nsegup , "segup");
+END_FECORE_CLASS();
 
 FEDiscreteContact::FEDiscreteContact(FEModel* pfem) : FESurfaceConstraint(pfem), m_surf(pfem)
 {
@@ -94,7 +123,7 @@ void FEDiscreteContact::ProjectSurface(bool bsegup)
 	cpp.HandleSpecialCases(true);
 	cpp.Init();
 
-	// loop over all slave nodes
+	// loop over all primary nodes
 	FEMesh& mesh = *m_surf.GetMesh();
 	for (int i=0; i<(int)m_Node.size(); ++i)
 	{
@@ -107,7 +136,7 @@ void FEDiscreteContact::ProjectSurface(bool bsegup)
 		vec3d x = node.m_rt;
 
 		// If the node is in contact, let's see if the node still is 
-		// on the same master element
+		// on the same secondary element
 		if (nodeData.pe != 0)
 		{
 			FESurfaceElement& mel = *nodeData.pe;
@@ -122,7 +151,7 @@ void FEDiscreteContact::ProjectSurface(bool bsegup)
 
 			if (bsegup && (!m_surf.IsInsideElement(mel, r, s, 0.01)))
 			{
-				// see if the node might have moved to another master element
+				// see if the node might have moved to another secondary element
 				vec2d rs(0,0);
 				nodeData.pe = cpp.Project(x, q, rs);
 				nodeData.proj[0] = rs.x();
@@ -139,7 +168,7 @@ void FEDiscreteContact::ProjectSurface(bool bsegup)
 			nodeData.q = q;
 		}
 
-		// if we found a master element, update the gap and normal data
+		// if we found a secondary element, update the gap and normal data
 		if (nodeData.pe != 0)
 		{
 			FESurfaceElement& mel =  *nodeData.pe;
@@ -147,7 +176,7 @@ void FEDiscreteContact::ProjectSurface(bool bsegup)
 			double r = nodeData.proj[0];
 			double s = nodeData.proj[1];
 
-			// the slave normal is set to the master element normal
+			// the primary normal is set to the secondary element normal
 			nodeData.nu = m_surf.SurfaceNormal(mel, r, s);
 
 			// calculate gap
@@ -165,7 +194,7 @@ void FEDiscreteContact::ProjectSurface(bool bsegup)
 	}
 }
 
-void FEDiscreteContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEDiscreteContact::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	// element contact force vector
 	vector<double> fe;
@@ -179,7 +208,7 @@ void FEDiscreteContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	// the elements LM vectors
 	vector<int> mLM;
 
-	// loop over all slave nodes
+	// loop over all primary nodes
 	FEMesh& mesh = *m_surf.GetMesh();
 	int nodes = (int) m_Node.size();
 	for (int i=0; i<nodes; ++i)
@@ -192,14 +221,14 @@ void FEDiscreteContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 		FESurfaceElement* pe = nodeData.pe;
 
 		// see if this node's constraint is active
-		// that is, if it has a master element associated with it
+		// that is, if it has a secondary element associated with it
 		// TODO: is this a good way to test for an active constraint
 		// The rigid wall criteria seems to work much better.
 		if (pe != 0)
 		{
 			// This node is active and could lead to a non-zero
 			// contact force.
-			// get the master element
+			// get the secondary element
 			FESurfaceElement& mel = *pe;
 			m_surf.UnpackLM(mel, mLM);
 
@@ -237,13 +266,13 @@ void FEDiscreteContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 void FEDiscreteContact::ContactNodalForce(FEDiscreteContact::NODE& nodeData, FESurfaceElement& mel, vector<double>& fe)
 {
-	// max nr of master element nodes
+	// max nr of secondary element nodes
 	const int MAXMN = FEElement::MAX_NODES;
 
-	// master element nodes
+	// secondary element nodes
 	vec3d rtm[MAXMN];
 
-	// master shape function values at projection point
+	// secondary shape function values at projection point
 	double H[MAXMN];
 
 	// contact forces
@@ -258,26 +287,26 @@ void FEDiscreteContact::ContactNodalForce(FEDiscreteContact::NODE& nodeData, FES
 	// penalty
 	double eps = m_penalty;
 
-	// get slave node normal force
+	// get primary node normal force
 	double Ln = nodeData.Lm;
 	double tn = Ln + eps*gap;
 	tn = MBRACKET(tn);
 
-	// get the slave node normal
+	// get the primary node normal
 	vec3d nu = nodeData.nu;
 
 	int nmeln = mel.Nodes();
 	int ndof = 3*(1 + nmeln);
 
-	// get the master element node positions
+	// get the secondary element node positions
 	for (int k=0; k<nmeln; ++k) rtm[k] = mesh.Node(mel.m_node[k]).m_rt;
 
-	// isoparametric coordinates of the projected slave node
-	// onto the master element
+	// isoparametric coordinates of the projected primary node
+	// onto the secondary element
 	double r = nodeData.proj[0];
 	double s = nodeData.proj[1];
 
-	// get the master shape function values at this slave node
+	// get the secondary shape function values at this primary node
 	mel.shape_fnc(H, r, s);
 
 	// calculate contact vectors for normal traction
@@ -295,9 +324,9 @@ void FEDiscreteContact::ContactNodalForce(FEDiscreteContact::NODE& nodeData, FES
 	for (int l=0; l<ndof; ++l) fe[l] = tn*N[l];
 }
 
-void FEDiscreteContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEDiscreteContact::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
-	matrix ke;
+	FEElementMatrix ke;
 
 	const int MAXMN = FEElement::MAX_NODES;
 	vector<int> lm(3*(MAXMN + 1));
@@ -316,13 +345,13 @@ void FEDiscreteContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 		vector<int>& sLM = mesh.Node(nodeData.nid).m_ID;
 
 		// see if this node's constraint is active
-		// that is, if it has a master element associated with it
+		// that is, if it has a secondary element associated with it
 		if (nodeData.pe != 0)
 		{
-			// get the master element
+			// get the secondary element
 			FESurfaceElement& me = *nodeData.pe;
 
-			// get the masters element's LM array
+			// get the secondary surface element's LM array
 			m_surf.UnpackLM(me, mLM);
 
 			int nmeln = me.Nodes();
@@ -349,7 +378,9 @@ void FEDiscreteContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
 			for (int k=0; k<nmeln; ++k) en[k+1] = me.m_node[k];
 						
 			// assemble stiffness matrix
-			psolver->AssembleStiffness(en, lm, ke);
+			ke.SetNodes(en);
+			ke.SetIndices(lm);
+			LS.Assemble(ke);
 		}
 	}
 }
@@ -380,24 +411,24 @@ void FEDiscreteContact::ContactNodalStiffness(FEDiscreteContact::NODE& nodeData,
 	vec3d rt[MAXMN];
 	for (int j=0; j<nmeln; ++j) rt[j] = mesh.Node(mel.m_node[j]).m_rt;
 
-	// slave node natural coordinates in master element
+	// primary node natural coordinates in secondary element
 	double r = nodeData.proj[0];
 	double s = nodeData.proj[1];
 
-	// slave gap
+	// primary gap
 	double gap = nodeData.gap;
 
 	// lagrange multiplier
 	double Lm = nodeData.Lm;
 
-	// get slave node normal force
+	// get primary node normal force
 	double tn = Lm + eps*gap;
 	tn = MBRACKET(tn);
 
-	// get the slave node normal
+	// get the primary node normal
 	vec3d nu = nodeData.nu;
 
-	// get the master shape function values and the derivatives at this slave node
+	// get the secondary shape function values and the derivatives at this primary node
 	mel.shape_fnc(H, r, s);
 	mel.shape_deriv(Hr, Hs, r, s);
 
@@ -561,12 +592,12 @@ bool FEDiscreteContact::Augment(int naug, const FETimeInfo& tp)
 	if (normL1 != 0) lnorm = fabs(normL1 - normL0)/normL1; else lnorm = fabs(normL1 - normL0);
 	if (normg1 != 0) gnorm = fabs(normg1 - m_normg0)/normg1; else gnorm = fabs(normg1 - m_normg0);
 
-	felog.printf(" discrete contact # %d\n", GetID());
-	felog.printf("                        CURRENT        REQUIRED\n");
-	felog.printf("    normal force : %15le", lnorm);
-	if (m_altol > 0) felog.printf("%15le\n", m_altol); else felog.printf("       ***\n");
-	felog.printf("    gap function : %15le", gnorm);
-	if (m_gaptol > 0) felog.printf("%15le\n", m_gaptol); else felog.printf("       ***\n");
+	feLog(" discrete contact # %d\n", GetID());
+	feLog("                        CURRENT        REQUIRED\n");
+	feLog("    normal force : %15le", lnorm);
+	if (m_altol > 0) feLog("%15le\n", m_altol); else feLog("       ***\n");
+	feLog("    gap function : %15le", gnorm);
+	if (m_gaptol > 0) feLog("%15le\n", m_gaptol); else feLog("       ***\n");
 
 	// check convergence
 	bconv = true;
@@ -617,7 +648,7 @@ void FEDiscreteContact::BuildMatrixProfile(FEGlobalMatrix& K)
 		// get the FE node
 		FENode& node = mesh.Node(nodeData.nid);
 
-		// get the master surface element
+		// get the secondary surface element
 		FESurfaceElement* pe = nodeData.pe;
 
 		if (pe != 0)
@@ -704,7 +735,7 @@ void FEDiscreteContact2::Activate()
 	ProjectNodes();
 }
 
-void FEDiscreteContact2::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEDiscreteContact2::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	int NN = m_dom->Nodes();
 
@@ -754,7 +785,7 @@ void FEDiscreteContact2::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 	}
 }
 
-void FEDiscreteContact2::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEDiscreteContact2::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 }
 
@@ -906,5 +937,5 @@ void FEDiscreteContact2::ProjectNodes()
 	}
 
 //	assert(iter < maxIter);
-	felog.printf("iterations = %d\n", iter);
+	feLog("iterations = %d\n", iter);
 }

@@ -1,9 +1,38 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEMortarTiedContact.h"
 #include "FECore/FEModel.h"
 #include "FECore/mortar.h"
 #include "FECore/FEGlobalMatrix.h"
 #include "FECore/log.h"
+#include <FECore/FELinearSystem.h>
 
 //=============================================================================
 // FEMortarTiedSurface
@@ -33,13 +62,12 @@ bool FEMortarTiedSurface::Init()
 
 //-----------------------------------------------------------------------------
 // Define sliding interface parameters
-BEGIN_PARAMETER_LIST(FEMortarTiedContact, FEMortarInterface)
-	ADD_PARAMETER(m_blaugon      , FE_PARAM_BOOL  , "laugon"       ); 
-	ADD_PARAMETER(m_atol         , FE_PARAM_DOUBLE, "tolerance"    );
-	ADD_PARAMETER(m_eps          , FE_PARAM_DOUBLE, "penalty"      );
-	ADD_PARAMETER(m_naugmin      , FE_PARAM_INT   , "minaug"       );
-	ADD_PARAMETER(m_naugmax      , FE_PARAM_INT   , "maxaug"       );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEMortarTiedContact, FEMortarInterface)
+	ADD_PARAMETER(m_atol   , "tolerance"    );
+	ADD_PARAMETER(m_eps    , "penalty"      );
+	ADD_PARAMETER(m_naugmin, "minaug"       );
+	ADD_PARAMETER(m_naugmax, "maxaug"       );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEMortarTiedContact::FEMortarTiedContact(FEModel* pfem) : FEMortarInterface(pfem), m_ss(pfem), m_ms(pfem)
@@ -80,7 +108,7 @@ void FEMortarTiedContact::Activate()
 //! build the matrix profile for use in the stiffness matrix
 void FEMortarTiedContact::BuildMatrixProfile(FEGlobalMatrix& K)
 {
-	// For now we'll assume that each node on the slave side is connected to the master side
+	// For now we'll assume that each node on the primary side is connected to the secondary side
 	// This is obviously too much, but we'll worry about improving this later
 	int NS = m_ss.Nodes();
 	int NM = m_ms.Nodes();
@@ -104,19 +132,19 @@ void FEMortarTiedContact::BuildMatrixProfile(FEGlobalMatrix& K)
 
 //-----------------------------------------------------------------------------
 //! calculate contact forces
-void FEMortarTiedContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
+void FEMortarTiedContact::LoadVector(FEGlobalVector& R, const FETimeInfo& tp)
 {
 	int NS = m_ss.Nodes();
 	int NM = m_ms.Nodes();
 
-	// loop over all slave nodes
+	// loop over all primary nodes
 	for (int A=0; A<NS; ++A)
 	{
 		double eps = m_eps*m_ss.m_A[A];
 		vec3d gA = m_ss.m_gap[A];
 		vec3d tA = m_ss.m_L[A] + gA*eps;
 
-		// loop over all slave nodes
+		// loop over all primary nodes
 		vector<int> en(1);
 		vector<int> lm(3);
 		vector<double> fe(3);
@@ -139,7 +167,7 @@ void FEMortarTiedContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 			}
 		}
 
-		// loop over master side
+		// loop over secondary side
 		for (int C=0; C<NM; ++C)
 		{
 			FENode& nodeC = m_ms.Node(C);
@@ -163,19 +191,20 @@ void FEMortarTiedContact::Residual(FEGlobalVector& R, const FETimeInfo& tp)
 
 //-----------------------------------------------------------------------------
 //! calculate contact stiffness
-void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp)
+void FEMortarTiedContact::StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp)
 {
 	int NS = m_ss.Nodes();
 	int NM = m_ms.Nodes();
 
 	// A. Linearization of the gap function
 	vector<int> lmi(3), lmj(3);
-	matrix ke(3,3);
+	FEElementMatrix ke;
+	ke.resize(3, 3);
 	for (int A=0; A<NS; ++A)
 	{
 		double eps = m_eps*m_ss.m_A[A];
 
-		// loop over all slave nodes
+		// loop over all primary nodes
 		for (int B=0; B<NS; ++B)
 		{
 			FENode& nodeB = m_ss.Node(B);
@@ -186,7 +215,7 @@ void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 			double nAB = m_n1[A][B]*eps;
 			if (nAB != 0.0)
 			{
-				// loop over slave nodes
+				// loop over primary nodes
 				for (int C=0; C<NS; ++C)
 				{
 					FENode& nodeC = m_ss.Node(C);
@@ -201,11 +230,12 @@ void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 						ke[1][0] = 0.0; ke[1][1] = nAC; ke[1][2] = 0.0;
 						ke[2][0] = 0.0; ke[2][1] = 0.0; ke[2][2] = nAC;
 
-						psolver->AssembleStiffness2(lmi, lmj, ke);
+						ke.SetIndices(lmi, lmj);
+						LS.Assemble(ke);
 					}
 				}
 
-				// loop over master nodes
+				// loop over secondary nodes
 				for (int C=0; C<NM; ++C)
 				{
 					FENode& nodeC = m_ms.Node(C);
@@ -220,13 +250,14 @@ void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 						ke[1][0] = 0.0; ke[1][1] = nAC; ke[1][2] = 0.0;
 						ke[2][0] = 0.0; ke[2][1] = 0.0; ke[2][2] = nAC;
 
-						psolver->AssembleStiffness2(lmi, lmj, ke);
+						ke.SetIndices(lmi, lmj);
+						LS.Assemble(ke);
 					}
 				}
 			}
 		}
 
-		// loop over all master nodes
+		// loop over all secondary nodes
 		for (int B=0; B<NM; ++B)
 		{
 			FENode& nodeB = m_ms.Node(B);
@@ -237,7 +268,7 @@ void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 			double nAB = -m_n2[A][B]*eps;
 			if (nAB != 0.0)
 			{
-				// loop over slave nodes
+				// loop over primary nodes
 				for (int C=0; C<NS; ++C)
 				{
 					FENode& nodeC = m_ss.Node(C);
@@ -252,11 +283,12 @@ void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 						ke[1][0] = 0.0; ke[1][1] = nAC; ke[1][2] = 0.0;
 						ke[2][0] = 0.0; ke[2][1] = 0.0; ke[2][2] = nAC;
 
-						psolver->AssembleStiffness2(lmi, lmj, ke);
+						ke.SetIndices(lmi, lmj);
+						LS.Assemble(ke);
 					}
 				}
 
-				// loop over master nodes
+				// loop over secondary nodes
 				for (int C=0; C<NM; ++C)
 				{
 					FENode& nodeC = m_ms.Node(C);
@@ -271,7 +303,8 @@ void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 						ke[1][0] = 0.0; ke[1][1] = nAC; ke[1][2] = 0.0;
 						ke[2][0] = 0.0; ke[2][1] = 0.0; ke[2][2] = nAC;
 
-						psolver->AssembleStiffness2(lmi, lmj, ke);
+						ke.SetIndices(lmi, lmj);
+						LS.Assemble(ke);
 					}
 				}
 			}
@@ -283,11 +316,11 @@ void FEMortarTiedContact::StiffnessMatrix(FESolver* psolver, const FETimeInfo& t
 //! calculate Lagrangian augmentations
 bool FEMortarTiedContact::Augment(int naug, const FETimeInfo& tp)
 {
-	if (m_blaugon == false) return true;
+	if (m_laugon != 1) return true;
 
 	double max_err = 0.0;
 	int NS = m_ss.Nodes();
-	// loop over all slave nodes
+	// loop over all primary nodes
 	for (int A=0; A<NS; ++A)
 	{
 		double eps = m_eps*m_ss.m_A[A];
@@ -307,14 +340,14 @@ bool FEMortarTiedContact::Augment(int naug, const FETimeInfo& tp)
 	if (m_naugmin > naug) bconv = false;
 	if (m_naugmax <= naug) bconv = true;
 
-	felog.printf(" mortar interface # %d\n", GetID());
-	felog.printf("                        CURRENT        REQUIRED\n");
-	felog.printf("    normal force : %15le", max_err);
-	if (m_atol > 0) felog.printf("%15le\n", m_atol); else felog.printf("       ***\n");
+	feLog(" mortar interface # %d\n", GetID());
+	feLog("                        CURRENT        REQUIRED\n");
+	feLog("    normal force : %15le", max_err);
+	if (m_atol > 0) feLog("%15le\n", m_atol); else feLog("       ***\n");
 
 	if (bconv == false)
 	{
-		// loop over all slave nodes
+		// loop over all primary nodes
 		for (int A=0; A<NS; ++A)
 		{
 			double eps = m_eps*m_ss.m_A[A];
@@ -330,7 +363,7 @@ bool FEMortarTiedContact::Augment(int naug, const FETimeInfo& tp)
 
 //-----------------------------------------------------------------------------
 //! update interface data
-void FEMortarTiedContact::Update(int niter, const FETimeInfo& tp)
+void FEMortarTiedContact::Update()
 {
 	UpdateNodalGaps(m_ss, m_ms);
 }

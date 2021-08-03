@@ -1,10 +1,39 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 
 #include "mat3d.h"
-#include "FEParameterList.h"
 #include "FETimeInfo.h"
 #include <vector>
 using namespace std;
+
+class FEElement;
 
 //-----------------------------------------------------------------------------
 //! Material point class
@@ -15,20 +44,11 @@ using namespace std;
 //! it contains the state information that is associated with the current
 //! point.
 
-class FECORE_API FEMaterialPoint : public FEParamContainer
+class FECORE_API FEMaterialPoint
 {
 public:
 	FEMaterialPoint(FEMaterialPoint* ppt = 0);
 	virtual ~FEMaterialPoint();
-
-public:
-	// sets the name of material point
-	// (this string is not copied so must point to static string)
-	void SetName(const char* sz) { m_szname = sz; }
-
-	// get the name of this material point
-	// (can be null if name was not set)
-	const char* GetName() { return m_szname; }
 
 public:
 	//! The init function is used to intialize data
@@ -39,7 +59,7 @@ public:
 	virtual void Update(const FETimeInfo& timeInfo);
 
 	//! copy material point data (for running restarts) \todo Is this still used?
-	virtual FEMaterialPoint* Copy() = 0;
+	virtual FEMaterialPoint* Copy() { return 0; }
 
 	//! get the number of material point components
 	virtual int Components() { return 1; }
@@ -55,6 +75,7 @@ public:
     
 	//! Extract data (\todo Is it safe for a plugin to use this function?)
 	template <class T> T* ExtractData();
+	template <class T> const T* ExtractData() const;
 
 	// assign the previous pointer
 	void SetPrev(FEMaterialPoint* pt);
@@ -65,15 +86,22 @@ public:
 	void SetNext(FEMaterialPoint* pt);
 
 	// serialization
-	void Serialize(DumpStream& ar);
+	virtual void Serialize(DumpStream& ar);
 
-	// find a parameter with a given name
-	virtual FEParam* FindParameter(const std::string& paramName);
+public:
+	vec3d		m_r0;		//!< material point position
+	vec3d		m_rt;		//!< current point position
+	double		m_J0;		//!< reference Jacobian
+	double		m_Jt;		//!< current Jacobian
+	FEElement*	m_elem;		//!< Element where this material point is
+	int			m_index;	//!< local integration point index 
+
+	// pointer to element's shape function values
+	double*		m_shape;
 
 protected:
 	FEMaterialPoint*	m_pNext;	//<! next data in the list
 	FEMaterialPoint*	m_pPrev;	//<! previous data in the list
-	const char*			m_szname;	//<! optional name of material point
 };
 
 //-----------------------------------------------------------------------------
@@ -106,6 +134,36 @@ template <class T> inline T* FEMaterialPoint::ExtractData()
 }
 
 //-----------------------------------------------------------------------------
+template <class T> inline const T* FEMaterialPoint::ExtractData() const
+{
+	// first see if this is the correct type
+	const T* p = dynamic_cast<const T*>(this);
+	if (p) return p;
+
+	// check all the child classes 
+	const FEMaterialPoint* pt = this;
+	while (pt->m_pNext)
+	{
+		pt = pt->m_pNext;
+		p = dynamic_cast<const T*>(pt);
+		if (p) return p;
+	}
+
+	// search up
+	pt = this;
+	while (pt->m_pPrev)
+	{
+		pt = pt->m_pPrev;
+		p = dynamic_cast<const T*>(pt);
+		if (p) return p;
+	}
+
+	// Everything has failed. Material point data can not be found
+	return 0;
+}
+
+
+//-----------------------------------------------------------------------------
 // Material point base class for materials that define vector properties
 class FECORE_API FEMaterialPointArray : public FEMaterialPoint
 {
@@ -116,25 +174,19 @@ public:
 	void AddMaterialPoint(FEMaterialPoint* pt);
 
 	//! initialization
-	void Init();
+	void Init() override;
 
 	//! serialization
-	void Serialize(DumpStream& ar);
+	void Serialize(DumpStream& ar) override;
 
 	//! material point update
-	void Update(const FETimeInfo& timeInfo);
+	void Update(const FETimeInfo& timeInfo) override;
 
 	//! get the number of material point components
-	int Components() { return (int)m_mp.size(); }
+	int Components() override { return (int)m_mp.size(); }
 
 	//! retrieve point data
-	FEMaterialPoint* GetPointData(int i) { return m_mp[i]; }
-
-	// find a parameter with a given name
-	virtual FEParam* FindParameter(const char* szname);
-
-	// this is used to build the parameters of all the components
-	virtual void BuildParamList();
+	FEMaterialPoint* GetPointData(int i) override { return m_mp[i]; }
 
 protected:
 	vector<FEMaterialPoint*>	m_mp;	//!< material point data for indidivual properties

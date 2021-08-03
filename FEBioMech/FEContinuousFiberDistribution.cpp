@@ -1,14 +1,49 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEContinuousFiberDistribution.h"
+
+BEGIN_FECORE_CLASS(FEContinuousFiberDistribution, FEElasticMaterial)
+
+	// material properties
+	ADD_PROPERTY(m_pFmat, "fibers");
+	ADD_PROPERTY(m_pFDD, "distribution");
+	ADD_PROPERTY(m_pFint, "scheme");
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FEContinuousFiberDistribution::FEContinuousFiberDistribution(FEModel* pfem) : FEElasticMaterial(pfem)
 {
-	m_IFD = 0.0;
-
-	// set material properties
-	AddProperty(&m_pFmat, "fibers"      );
-	AddProperty(&m_pFDD , "distribution");
-	AddProperty(&m_pFint, "scheme"      );
+	m_pFmat = 0;
+	m_pFDD = 0;
+	m_pFint = 0;
 }
 
 //-----------------------------------------------------------------------------
@@ -20,19 +55,7 @@ bool FEContinuousFiberDistribution::Init()
     // initialize base class
 	if (FEElasticMaterial::Init() == false) return false;
 
-	// calculate the integrated fiber density
-	IntegrateFiberDensity();
-
 	return true;
-}
-
-//-----------------------------------------------------------------------------
-// returns a pointer to a new material point object
-FEMaterialPoint* FEContinuousFiberDistribution::CreateMaterialPointData()
-{
-	FEMaterialPoint* mp = m_pFmat->CreateMaterialPointData();
-	mp->SetName(m_pFmat.GetName());
-	return mp;
 }
 
 //-----------------------------------------------------------------------------
@@ -40,33 +63,22 @@ FEMaterialPoint* FEContinuousFiberDistribution::CreateMaterialPointData()
 void FEContinuousFiberDistribution::Serialize(DumpStream& ar)
 {	
 	FEElasticMaterial::Serialize(ar);
-
 	if (ar.IsShallow()) return;
-
-	if (ar.IsSaving())
-	{
-		ar << m_IFD;
-	}
-	else
-	{
-		ar >> m_IFD;
-	}
 }
 
 //-----------------------------------------------------------------------------
 //! calculate stress at material point
-//mat3ds FEContinuousFiberDistribution::Stress(FEMaterialPoint& pt) { return m_pFint->Stress(pt); }
-
 mat3ds FEContinuousFiberDistribution::Stress(FEMaterialPoint& mp)
 { 
 	FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
-	FEFiberMaterialPoint& fp = *mp.ExtractData<FEFiberMaterialPoint>();
 
 	// calculate stress
 	mat3ds s; s.zero();
 
-	// get the element's local coordinate system
-	mat3d QT = (pt.m_Q).transpose();
+	// get the local coordinate systems
+	mat3d Qt = GetLocalCS(mp).transpose();
+    
+    double IFD = IntegratedFiberDensity(mp);
 
 	// obtain an integration point iterator
 	FEFiberIntegrationSchemeIterator* it = m_pFint->GetIterator(&pt);
@@ -75,17 +87,17 @@ mat3ds FEContinuousFiberDistribution::Stress(FEMaterialPoint& mp)
 		do
 		{
 			// get the global fiber direction
-			vec3d& n0 = it->m_fiber;
+			vec3d& N = it->m_fiber;
 
 			// convert to local coordinates
-			fp.m_n0 = QT*n0;
+			vec3d n0 = Qt*N;
 
 			// rotate to local configuration to evaluate ellipsoidally distributed material coefficients
-			double R = m_pFDD->FiberDensity(fp.m_n0) / m_IFD;
-
+			double R = m_pFDD->FiberDensity(mp, n0);
+            
 			// calculate the stress
 			double wn = it->m_weight;
-			s += m_pFmat->Stress(pt)*(R*wn);
+			s += m_pFmat->FiberStress(pt, N)*(R*wn);
 		}
 		while (it->Next());
 	}
@@ -93,20 +105,20 @@ mat3ds FEContinuousFiberDistribution::Stress(FEMaterialPoint& mp)
 	// don't forget to delete the iterator
 	delete it;
 
-	return s;
+	// divide by IFD
+	return s / IFD;
 }
 
 //-----------------------------------------------------------------------------
 //! calculate tangent stiffness at material point
-//tens4ds FEContinuousFiberDistribution::Tangent(FEMaterialPoint& pt) { return m_pFint->Tangent(pt); }
-
 tens4dss FEContinuousFiberDistribution::Tangent(FEMaterialPoint& mp)
 {
 	FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
-	FEFiberMaterialPoint& fp = *mp.ExtractData<FEFiberMaterialPoint>();
 
-	// get the element's local coordinate system
-	mat3d QT = (pt.m_Q).transpose();
+	// get the local coordinate systems
+	mat3d Qt = GetLocalCS(mp).transpose();
+    
+    double IFD = IntegratedFiberDensity(mp);
 
 	// initialize stress tensor
 	tens4dss c;
@@ -118,25 +130,25 @@ tens4dss FEContinuousFiberDistribution::Tangent(FEMaterialPoint& mp)
 		do
 		{
 			// get the global fiber direction
-			vec3d& n0e = it->m_fiber;
+			vec3d& N = it->m_fiber;
 
 			// convert to local
-			fp.m_n0 = QT*n0e;
+			vec3d n0 = Qt*N;
 
 			// rotate to local configuration to evaluate ellipsoidally distributed material coefficients
-			double R = m_pFDD->FiberDensity(fp.m_n0) / m_IFD;
-
+			double R = m_pFDD->FiberDensity(mp, n0);
+            
 			// calculate the tangent
-			c += m_pFmat->Tangent(mp)*(R*it->m_weight);
+			c += m_pFmat->FiberTangent(mp, N)*(R*it->m_weight);
 		}
 		while (it->Next());
 	}
 
 	// don't forget to delete the iterator
 	delete it;
-
-	// we multiply by two to add contribution from other half-sphere
-	return c;
+    
+	// divide by IFD
+	return c / IFD;
 }
 
 //-----------------------------------------------------------------------------
@@ -145,10 +157,11 @@ tens4dss FEContinuousFiberDistribution::Tangent(FEMaterialPoint& mp)
 double FEContinuousFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 { 
 	FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
-	FEFiberMaterialPoint& fp = *mp.ExtractData<FEFiberMaterialPoint>();
 
-	// get the element's local coordinate system
-	mat3d QT = (pt.m_Q).transpose();
+	// get the local coordinate systems
+	mat3d Qt = GetLocalCS(mp).transpose();
+    
+    double IFD = IntegratedFiberDensity(mp);
 
 	double sed = 0.0;
 	FEFiberIntegrationSchemeIterator* it = m_pFint->GetIterator(&pt);
@@ -157,16 +170,16 @@ double FEContinuousFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 		do
 		{
 			// get fiber direction in global coordinate system
-			vec3d& n0e = it->m_fiber;
+			vec3d& N = it->m_fiber;
 
 			// convert to local coordinates
-			fp.m_n0 = QT*n0e;
+			vec3d n0 = Qt*N;
 
 			// rotate to local configuration to evaluate ellipsoidally distributed material coefficients
-			double R = m_pFDD->FiberDensity(fp.m_n0) / m_IFD;
-
+			double R = m_pFDD->FiberDensity(mp, n0);
+            
 			// calculate the stress
-			sed += m_pFmat->StrainEnergyDensity(mp)*(R*it->m_weight);
+			sed += m_pFmat->FiberStrainEnergyDensity(mp, N)*(R*it->m_weight);
 		}
 		while (it->Next());
 	}
@@ -174,32 +187,39 @@ double FEContinuousFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 	// don't forget to delete the iterator
 	delete it;
 
-	// we multiply by two to add contribution from other half-sphere
-	return sed;
+	// divide by IFD
+	return sed / IFD;
 }
 
-//-----------------------------------------------------------------------------
-void FEContinuousFiberDistribution::IntegrateFiberDensity()
+double FEContinuousFiberDistribution::IntegratedFiberDensity(FEMaterialPoint& mp)
 {
-	m_IFD = 0;
-	FEFiberIntegrationSchemeIterator* it = m_pFint->GetIterator(0);
+	// get the local coordinate systems
+	mat3d QT = GetLocalCS(mp).transpose();
+	double IFD = 0;
+	// NOTE: Pass nullptr to GetIterator to avoid issues with GK rule!
+	FEFiberIntegrationSchemeIterator* it = m_pFint->GetIterator(nullptr);
 	if (it->IsValid())
 	{
 		do
 		{
-			// get fiber direction
-			// BUG: why is this fiber not rotated to the local coordinates like in the other functions
-			vec3d& n0a = it->m_fiber;
+			// set fiber direction in global coordinate system
+			vec3d& n0e = it->m_fiber;
 
-			// evaluate local fiber distribution
-			double R = m_pFDD->FiberDensity(n0a);
+			// rotate to local configuration to evaluate ellipsoidally distributed material coefficients
+			vec3d n0a = QT * n0e;
+			double R = m_pFDD->FiberDensity(mp, n0a);
 
 			// integrate the fiber distribution
-			m_IFD += R*it->m_weight;
-		}
-		while (it->Next());
+			IFD += R * it->m_weight;
+
+		} while (it->Next());
 	}
 
 	// don't forget to delete the iterator
 	delete it;
+
+	// just in case
+	if (IFD == 0.0) IFD = 1.0;
+
+	return IFD;
 }

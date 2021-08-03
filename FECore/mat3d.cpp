@@ -1,14 +1,39 @@
-// mat3d.cpp: implementation of the mat3d class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "mat3d.h"
 #include "eig3.h"
+#include "sys.h"
 
 #define ROTATE(a, i, j, k, l) g=a[i][j]; h=a[k][l];a[i][j]=g-s*(h+g*tau); a[k][l] = h + s*(g - h*tau);
 
-void mat3ds::eigen(double l[3], vec3d r[3])
+void mat3ds::eigen(double l[3], vec3d r[3]) const
 {
 	const int NMAX = 50;
 	double sm, tresh, g, h, t, c, tau, s, th;
@@ -119,7 +144,7 @@ void mat3ds::eigen(double l[3], vec3d r[3])
 //-----------------------------------------------------------------------------
 // Calculate the eigenvalues of A using an analytical expression for the 
 // eigen values.
-void mat3ds::exact_eigen(double l[3])
+void mat3ds::exact_eigen(double l[3]) const
 {
 	const double PI = 4.0*atan(1.0);
 	const double S3 = sqrt(3.0);
@@ -127,26 +152,35 @@ void mat3ds::exact_eigen(double l[3])
 
 	mat3ds S = dev();
 	double nS = S.norm();
-	mat3ds T = (S*S).dev();
+	mat3ds T = (S.sqr()).dev();
 	double nT = T.norm();
 
-	double w = S.dotdot(T)/(nS*nT);	if (w > 1.0) w = 1.0; if (w < -1.0) w = -1.0;
-	double t = asin(w)/3.0;
-	double r = S.norm();
-	double z = tr()/S3;
+	double D = nS * nT;
+	if (D > 0.0)
+	{
+		double w = S.dotdot(T) / D;	if (w > 1.0) w = 1.0; if (w < -1.0) w = -1.0;
+		double t = asin(w) / 3.0;
+		double r = S.norm();
+		double z = tr() / S3;
 
-	l[0] = z/S3 + (r/S2)*(sin(t)/S3 + cos(t));
-	l[1] = z/S3 - (S2/S3)*r*sin(t);
-	l[2] = z/S3 + (r/S2)*(sin(t)/S3 - cos(t));
+		l[0] = z / S3 + (r / S2)*(sin(t) / S3 + cos(t));
+		l[1] = z / S3 - (S2 / S3)*r*sin(t);
+		l[2] = z / S3 + (r / S2)*(sin(t) / S3 - cos(t));
+	}
+	else
+	{
+		l[0] = l[1] = l[2] = 0.0;
+	}
 }
 
 //-----------------------------------------------------------------------------
 // Calculate the eigenvalues and eigenvectors of A using the method of
 // Connelly Barnes ( http://barnesc.blogspot.com/2007/02/eigenvectors-of-3x3-symmetric-matrix.html )
-void mat3ds::eigen2(double l[3], vec3d r[3])
+void mat3ds::eigen2(double l[3], vec3d r[3]) const
 {
     double A[3][3] = {xx(), xy(), xz(), xy(), yy(), yz(), xz(), yz(), zz()};
     double V[3][3];
+    if (ISNAN(tr())) return;
     eigen_decomposition(A, V, l);
     if (r) {
         r[0] = vec3d(V[0][0],V[1][0],V[2][0]);
@@ -185,3 +219,22 @@ void mat3d::left_polar(mat3ds& V, mat3d& R) const
 	R = V.inverse()*F;
 }
 
+//-----------------------------------------------------------------------------
+// the "max shear" value
+double mat3ds::max_shear() const
+{
+	double e[3];
+	exact_eigen(e);
+
+	double t1 = fabs(0.5f*(e[1] - e[2]));
+	double t2 = fabs(0.5f*(e[2] - e[0]));
+	double t3 = fabs(0.5f*(e[0] - e[1]));
+
+	// TODO: is this necessary? I think the values returned
+	//       by Principals are already ordered.
+	double tmax = t1;
+	if (t2 > tmax) tmax = t2;
+	if (t3 > tmax) tmax = t3;
+
+	return tmax;
+}

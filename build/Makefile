@@ -7,7 +7,9 @@
 # assume that the Intel MKL is installed and that the environment variable MKLROOT is defined
 # (running # the Intel script "compilervars" will set the necessary environment variables).
 # They also assume that you are linking with the Lourakis levmar routine, which can be
-# downloaded at http://users.ics.forth.gr/~lourakis/levmar/.
+# downloaded at http://users.ics.forth.gr/~lourakis/levmar/
+# and the GNU Scientific Library (GSL), which can be downloaded at
+# https://www.gnu.org/software/gsl/
 # The main configuration files are lnx64d, osxd, lnx32 and sky.  The other are derived from
 # those.
 # sky: Compiles using g++ and uses the default skyline linear solver.  You will need to
@@ -54,12 +56,13 @@ lnx64 lnx64d lnx64g lnx64s lnx64gs lnx32 gcc gcc64 gcc64g osx osxd osxs clang ll
 	( cd $(PLAT)/FEBioXML;		$(MAKE) -f ../../Makelibs.mk )
 	( cd $(PLAT)/NumCore;		$(MAKE) -f ../../Makelibs.mk )
 	( cd $(PLAT)/FECore;		$(MAKE) -f ../../Makelibs.mk )
+	( cd $(PLAT)/FEAMR;		$(MAKE) -f ../../Makelibs.mk )
 	( cd $(PLAT)/FEBioMix;		$(MAKE) -f ../../Makelibs.mk )
 	( cd $(PLAT)/FEBioMech;		$(MAKE) -f ../../Makelibs.mk )
 	( cd $(PLAT)/FEBioOpt;		$(MAKE) -f ../../Makelibs.mk )
 	( cd $(PLAT)/FEBioTest;		$(MAKE) -f ../../Makelibs.mk )
 	( cd $(PLAT)/FEBioFluid;	$(MAKE) -f ../../Makelibs.mk )
-	( cd $(PLAT)/FEBio2;		$(MAKE) -f ../../febio2.mk )
+	( cd $(PLAT)/FEBio3;		$(MAKE) -f ../../febio3.mk )
 
 lnx64clean lnx32clean osxclean lnx64dclean lnx64gclean lnx64sclean lnx64gsclean gccclean gcc64clean gcc64gclean osxdclean osxsclean clangclean llvmclean skyclean:
 	( cd $(PLAT)/FEBioLib;		$(MAKE) -f ../../Makelibs.mk clean )
@@ -67,12 +70,13 @@ lnx64clean lnx32clean osxclean lnx64dclean lnx64gclean lnx64sclean lnx64gsclean 
 	( cd $(PLAT)/FEBioXML;		$(MAKE) -f ../../Makelibs.mk clean )
 	( cd $(PLAT)/NumCore;		$(MAKE) -f ../../Makelibs.mk clean )
 	( cd $(PLAT)/FECore;		$(MAKE) -f ../../Makelibs.mk clean )
+	( cd $(PLAT)/FEAMR;		$(MAKE) -f ../../Makelibs.mk clean )
 	( cd $(PLAT)/FEBioMix;		$(MAKE) -f ../../Makelibs.mk clean )
 	( cd $(PLAT)/FEBioMech;		$(MAKE) -f ../../Makelibs.mk clean )
 	( cd $(PLAT)/FEBioOpt;		$(MAKE) -f ../../Makelibs.mk clean )
 	( cd $(PLAT)/FEBioTest;		$(MAKE) -f ../../Makelibs.mk clean )
 	( cd $(PLAT)/FEBioFluid;	$(MAKE) -f ../../Makelibs.mk clean )
-	( cd $(PLAT)/FEBio2;		$(MAKE) -f ../../febio2.mk clean )
+	( cd $(PLAT)/FEBio3;		$(MAKE) -f ../../febio3.mk clean )
 
 
 .PHONY: lnx64 lnx32 osx lnx64d lnx64g lnx64s lnx64gs gcc gcc64 gcc64g osxd osxs clang llvm sky

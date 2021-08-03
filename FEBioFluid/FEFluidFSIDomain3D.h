@@ -1,22 +1,40 @@
-//
-//  FEFluidFSIDomain3D.hpp
-//  FEBioFluid
-//
-//  Created by Gerard Ateshian on 8/13/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#ifndef FEFluidFSIDomain3D_hpp
-#define FEFluidFSIDomain3D_hpp
+See Copyright-FEBio.txt for details.
 
-#include "FECore/FESolidDomain.h"
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#pragma once
+#include <FECore/FESolidDomain.h>
 #include "FEFluidFSIDomain.h"
 #include "FEFluidFSI.h"
 
 //-----------------------------------------------------------------------------
 //! Fluid-FSI domain described by 3D volumetric elements
 //!
-class FEFluidFSIDomain3D : public FESolidDomain, public FEFluidFSIDomain
+class FEBIOFLUID_API FEFluidFSIDomain3D : public FESolidDomain, public FEFluidFSIDomain
 {
 public:
     //! constructor
@@ -26,9 +44,6 @@ public:
     //! assignment operator
     FEFluidFSIDomain3D& operator = (FEFluidFSIDomain3D& d);
     
-    //! initialize class
-	bool Init() override;
-    
     //! activate
     void Activate() override;
     
@@ -37,6 +52,12 @@ public:
     
     //! Unpack element data
     void UnpackLM(FEElement& el, vector<int>& lm) override;
+
+	//! Serialization
+	void Serialize(DumpStream& ar) override;
+
+	// get the total dof
+	const FEDofList& GetDOFList() const override;
     
 public: // overrides from FEDomain
     
@@ -64,13 +85,13 @@ public: // overrides from FEElasticDomain
     void InertialForces(FEGlobalVector& R, const FETimeInfo& tp) override;
     
     //! calculates the global stiffness matrix for this domain
-    void StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+    void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
     
     //! calculates inertial stiffness
-    void MassMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+    void MassMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
     
     //! body force stiffness
-    void BodyForceStiffness(FESolver* psolver, const FETimeInfo& tp, FEBodyForce& bf) override;
+    void BodyForceStiffness(FELinearSystem& LS, const FETimeInfo& tp, FEBodyForce& bf) override;
     
 public:
     // --- S T I F F N E S S ---
@@ -100,19 +121,9 @@ protected:
     double      m_sseps;
     
 protected:
-    int	m_dofX, m_dofY, m_dofZ;
-    int	m_dofVX, m_dofVY, m_dofVZ;
-    int	m_dofWX, m_dofWY, m_dofWZ;
-    int	m_dofWXP, m_dofWYP, m_dofWZP;
-    int	m_dofAWX, m_dofAWY, m_dofAWZ;
-    int	m_dofAWXP, m_dofAWYP, m_dofAWZP;
-    int	m_dofVFX, m_dofVFY, m_dofVFZ;
-    int	m_dofAFX, m_dofAFY, m_dofAFZ;
-    int m_dofSX, m_dofSY, m_dofSZ;
+	FEDofList	m_dofU, m_dofV, m_dofW, m_dofAW;
+	FEDofList	m_dofSU, m_dofR;
+	FEDofList	m_dof;
     int	m_dofEF;
-    int m_dofEFP;
     int m_dofAEF;
-    int m_dofAEFP;
 };
-
-#endif /* FEFluidFSIDomain3D_hpp */

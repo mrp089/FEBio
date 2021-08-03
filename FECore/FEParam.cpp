@@ -1,144 +1,86 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEParam.h"
 #include "FEParamValidator.h"
 #include "DumpStream.h"
-#include "FEFunction1D.h"
 #include "FEDataArray.h"
 #include "tens3d.h"
-#include "FEMathValue.h"
+#include "FEModelParam.h"
 
-void FEParamValue::Serialize(DumpStream& ar)
+FEParamValue FEParamValue::component(int n)
 {
-	if (ar.IsSaving())
+	switch (m_itype)
 	{
-		ar << (int) m_itype;
-		ar << m_ndim;
-		if (m_ndim == 1)
-		{
-			switch (m_itype)
-			{
-			case FE_PARAM_INT       : ar << value<int>(); break;
-			case FE_PARAM_BOOL      : ar << value<bool>(); break;
-			case FE_PARAM_DOUBLE    : ar << value<double>(); break;
-			case FE_PARAM_VEC3D     : ar << value<vec3d>(); break;
-			case FE_PARAM_MAT3D     : ar << value<mat3d>(); break;
-			case FE_PARAM_MAT3DS    : ar << value<mat3ds>(); break;
-			case FE_PARAM_TENS3DRS  : ar << value<tens3ds>(); break;
-			case FE_PARAM_DATA_ARRAY:
-			{
-				FEDataArray& m = value<FEDataArray>();
-				m.Serialize(ar);
-			}
-			break;
-			case FE_PARAM_STRING: ar << (const char*)data_ptr(); break;
-			case FE_PARAM_FUNC1D:
-			{
-				FEFunction1D& f = value<FEFunction1D>();
-				f.Serialize(ar);
-			}
-			break;
-			case FE_PARAM_MATH_DOUBLE:
-			{
-				FEMathDouble& p = value<FEMathDouble>();
-				p.Serialize(ar);
-			}
-			break;
-			default:
-				assert(false);
-			}
-		}
-		else
-		{
-			switch (m_itype)
-			{
-			case FE_PARAM_INT:
-			{
-				int* pi = (int*) m_pv;
-				for (int i = 0; i<m_ndim; ++i) ar << pi[i];
-			}
-			break;
-			case FE_PARAM_DOUBLE:
-			{
-				double* pv = (double*) m_pv;
-				for (int i = 0; i<m_ndim; ++i) ar << pv[i];
-			}
-			break;
-			default:
-				assert(false);
-			}
-		}
-	}
-	else
+	case FE_PARAM_VEC2D:
 	{
-		int ntype, ndim;
-		ar >> ntype;
-		ar >> ndim;
-		if (ndim != m_ndim) throw DumpStream::ReadError();
-		if (ntype != (int)m_itype) throw DumpStream::ReadError();
-		if (m_ndim == 1)
-		{
-			switch (m_itype)
-			{
-			case FE_PARAM_INT       : ar >> value<int         >(); break;
-			case FE_PARAM_BOOL      : ar >> value<bool        >(); break;
-			case FE_PARAM_DOUBLE    : ar >> value<double      >(); break;
-			case FE_PARAM_VEC3D     : ar >> value<vec3d       >(); break;
-			case FE_PARAM_MAT3D     : ar >> value<mat3d       >(); break;
-			case FE_PARAM_MAT3DS    : ar >> value<mat3ds      >(); break;
-			case FE_PARAM_TENS3DRS  : ar >> value<tens3drs>(); break;
-			case FE_PARAM_DATA_ARRAY:
-			{
-				FEDataArray& m = value<FEDataArray>();
-				m.Serialize(ar);
-			}
-			break;
-			case FE_PARAM_STRING: ar >> (char*)data_ptr(); break;
-			case FE_PARAM_FUNC1D:
-			{
-				FEFunction1D& f = value<FEFunction1D>();
-				f.Serialize(ar);
-			}
-			break;
-			case FE_PARAM_MATH_DOUBLE:
-			{
-				FEMathDouble& p = value<FEMathDouble>();
-				p.Serialize(ar);
-			}
-			break;
-			default:
-				assert(false);
-			}
-		}
-		else
-		{
-			switch (m_itype)
-			{
-			case FE_PARAM_INT:
-			{
-				int* pi = (int*)data_ptr();
-				for (int i = 0; i<m_ndim; ++i) ar >> pi[i];
-			}
-			break;
-			case FE_PARAM_DOUBLE:
-			{
-				double* pv = (double*)data_ptr();
-				for (int i = 0; i<m_ndim; ++i) ar >> pv[i];
-			}
-			break;
-			default:
-				assert(false);
-			}
-		}
+		vec2d& r = value<vec2d>();
+		if (n == 0) return FEParamValue(m_param, &r.x(), FE_PARAM_DOUBLE);
+		if (n == 1) return FEParamValue(m_param, &r.y(), FE_PARAM_DOUBLE);
 	}
+	break;
+	case FE_PARAM_VEC3D:
+	{
+		vec3d& r = value<vec3d>();
+		if (n == 0) return FEParamValue(m_param, &r.x, FE_PARAM_DOUBLE);
+		if (n == 1) return FEParamValue(m_param, &r.y, FE_PARAM_DOUBLE);
+		if (n == 2) return FEParamValue(m_param, &r.z, FE_PARAM_DOUBLE);
+	}
+	break;
+	case FE_PARAM_MAT3DS:
+	{
+		mat3ds& a = value<mat3ds>();
+		if (n == 0) return FEParamValue(m_param, &a.xx(), FE_PARAM_DOUBLE);
+		if (n == 1) return FEParamValue(m_param, &a.xy(), FE_PARAM_DOUBLE);
+		if (n == 2) return FEParamValue(m_param, &a.yy(), FE_PARAM_DOUBLE);
+		if (n == 3) return FEParamValue(m_param, &a.xz(), FE_PARAM_DOUBLE);
+		if (n == 4) return FEParamValue(m_param, &a.yz(), FE_PARAM_DOUBLE);
+		if (n == 5) return FEParamValue(m_param, &a.zz(), FE_PARAM_DOUBLE);
+	}
+	break;
+	}
+
+	assert(false);
+	return FEParamValue();
 }
 
 
 //-----------------------------------------------------------------------------
-FEParam::FEParam(void* pdata, FEParamType itype, int ndim, const char* szname) : m_val(pdata, itype, ndim)
+FEParam::FEParam(void* pdata, FEParamType itype, int ndim, const char* szname, bool* watch)
 {
-	m_nlc = -1;
-	m_scl = 1.0;
-	m_vscl = vec3d(0, 0, 0);
+	m_pv = pdata;
+	m_type = itype;
+	m_dim = ndim;
+	m_watch = watch;
+	if (m_watch) *m_watch = false;
+
+	m_flag = 0;
 
 	// set the name
 	// note that we just copy the pointer, not the actual string
@@ -149,29 +91,51 @@ FEParam::FEParam(void* pdata, FEParamType itype, int ndim, const char* szname) :
 	m_szenum = 0;
 
 	m_pvalid = 0;	// no default validator
+
+	m_parent = 0;
 }
 
 //-----------------------------------------------------------------------------
-FEParam::FEParam(const FEParam& p) : m_val(p.m_val) 
+FEParam::FEParam(const FEParam& p)
 {
-	m_nlc = p.m_nlc;
-	m_scl = p.m_scl;
-	m_vscl = p.m_vscl;
+	m_pv = p.m_pv;
+	m_type = p.m_type;
+	m_dim = p.m_dim;
+	m_watch = p.m_watch;
+
+	m_flag = p.m_flag;
+
 	m_szname = p.m_szname;
 	m_szenum = 0;
+	m_parent = p.m_parent;
 
 	m_pvalid = (p.m_pvalid ? p.m_pvalid->copy() : 0);
 }
 
 //-----------------------------------------------------------------------------
+FEParam::~FEParam()
+{
+	if (m_flag & FEParamFlag::FE_PARAM_USER)
+	{
+		free((void*)m_szname);
+		assert(m_type == FE_PARAM_DOUBLE);
+		delete (double*)m_pv;
+	}
+}
+
+//-----------------------------------------------------------------------------
 FEParam& FEParam::operator=(const FEParam& p)
 {
-	m_val = p.m_val;
-	m_nlc = p.m_nlc;
-	m_scl = p.m_scl;
-	m_vscl = p.m_vscl;
+	m_pv = p.m_pv;
+	m_type = p.m_type;
+	m_dim = p.m_dim;
+	m_watch = p.m_watch;
+
+	m_flag = p.m_flag;
+
 	m_szname = p.m_szname;
 	m_szenum = 0;
+	m_parent = p.m_parent;
 
 	if (m_pvalid) delete m_pvalid;
 	m_pvalid = (p.m_pvalid ? p.m_pvalid->copy() : 0);
@@ -184,6 +148,149 @@ bool FEParam::is_valid() const
 {
 	if (m_pvalid) return m_pvalid->is_valid(*this);
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+// return the name of the parameter
+const char* FEParam::name() const 
+{ 
+	return m_szname; 
+}
+
+//-----------------------------------------------------------------------------
+// return the enum values
+const char* FEParam::enums() const 
+{ 
+	return m_szenum; 
+}
+
+//-----------------------------------------------------------------------------
+// set the enum values (\0 separated. Make sure the end of the string has two \0's)
+void FEParam::SetEnums(const char* sz) { m_szenum = sz; }
+
+//-----------------------------------------------------------------------------
+// parameter dimension
+int FEParam::dim() const { return m_dim; }
+
+//-----------------------------------------------------------------------------
+// parameter type
+FEParamType FEParam::type() const { return m_type; }
+
+//-----------------------------------------------------------------------------
+// data pointer
+void* FEParam::data_ptr() const { return m_pv; }
+
+//-----------------------------------------------------------------------------
+//! override the template for char pointers
+char* FEParam::cvalue() { return (char*)data_ptr(); }
+
+//-----------------------------------------------------------------------------
+FEParamValue FEParam::paramValue(int i)
+{
+	switch (m_type)
+	{
+	case FE_PARAM_DOUBLE:
+	{
+		if (i == -1)
+		{
+			assert(m_dim == 1);
+			return FEParamValue(this, &value<double>(), FE_PARAM_DOUBLE);
+		}
+		else return FEParamValue(this, &value<double>(i), FE_PARAM_DOUBLE);
+	}
+	break;
+	case FE_PARAM_VEC3D:
+	{
+		if (i == -1)
+		{
+			assert(m_dim == 1);
+			return FEParamValue(this, &value<vec3d>(), FE_PARAM_VEC3D);
+		}
+		else return FEParamValue(this, &value<vec3d>(i), FE_PARAM_VEC3D);
+	}
+	break;
+	case FE_PARAM_DOUBLE_MAPPED:
+	{
+		if (i == -1)
+		{
+			assert(m_dim == 1);
+			FEParamDouble& p = value<FEParamDouble>();
+			if (p.isConst()) return FEParamValue(this, &p.constValue(), FE_PARAM_DOUBLE);
+			else return FEParamValue(this, m_pv, m_type);
+		}
+		else
+		{
+			FEParamDouble& data = value<FEParamDouble>(i);
+			return FEParamValue(this, &data, FE_PARAM_DOUBLE_MAPPED);
+		}
+	}
+	break;
+	case FE_PARAM_VEC3D_MAPPED:
+	{
+		if (i == -1)
+		{
+			assert(m_dim == 1);
+			FEParamVec3& p = value<FEParamVec3>();
+			if (p.isConst()) return FEParamValue(this, &p.constValue(), FE_PARAM_VEC3D);
+			else return FEParamValue(this, m_pv, m_type);
+		}
+		else
+		{
+			FEParamVec3& data = value<FEParamVec3>(i);
+			return FEParamValue(this, &data, FE_PARAM_VEC3D_MAPPED);
+		}
+	}
+	break;
+	case FE_PARAM_MAT3D_MAPPED:
+	{
+		if (i == -1)
+		{
+			assert(m_dim == 1);
+			FEParamMat3d& p = value<FEParamMat3d>();
+			if (p.isConst()) return FEParamValue(this, &p.constValue(), FE_PARAM_MAT3D);
+			else return FEParamValue(this, m_pv, m_type);
+		}
+		else
+		{
+			FEParamMat3d& data = value<FEParamMat3d>(i);
+			return FEParamValue(this, &data, FE_PARAM_MAT3D_MAPPED);
+		}
+	}
+	break;
+	case FE_PARAM_STD_VECTOR_DOUBLE:
+	{
+		vector<double>& data = value< vector<double> >();
+		if ((i >= 0) && (i < (int)data.size()))
+			return FEParamValue(this, &data[i], FE_PARAM_DOUBLE);
+		else assert(false);
+	}
+	break;
+	case FE_PARAM_STD_VECTOR_VEC2D:
+	{
+		vector<vec2d>& data = value< vector<vec2d> >();
+		if ((i >= 0) && (i < (int)data.size()))
+			return FEParamValue(this, &data[i], FE_PARAM_VEC2D);
+		else assert(false);
+	}
+	break;
+	case FE_PARAM_STD_VECTOR_STRING:
+	{
+		vector<string>& data = value< vector<string> >();
+		if ((i >= 0) && (i < (int)data.size()))
+			return FEParamValue(this, &data[i], FE_PARAM_STD_STRING);
+	}
+	break;
+	default:
+	{
+		if (i == -1)
+		{
+			assert(m_dim == 1);
+			return FEParamValue(this, m_pv, m_type);
+		}
+	}
+	}
+
+	return FEParamValue();
 }
 
 //-----------------------------------------------------------------------------
@@ -200,52 +307,224 @@ void FEParam::SetValidator(FEParamValidator* pvalid)
 }
 
 //-----------------------------------------------------------------------------
-//! Sets the load curve ID and scale factor
-void FEParam::SetLoadCurve(int lc)
-{
-	m_nlc = lc;
-}
-
-//-----------------------------------------------------------------------------
-//! Sets the load curve ID and scale factor
-void FEParam::SetLoadCurve(int lc, double s)
-{
-	assert(m_val.type() == FE_PARAM_DOUBLE);
-	m_nlc = lc;
-	m_scl = s;
-}
-
-//-----------------------------------------------------------------------------
-//! Sets the load curve ID and scale factor
-void FEParam::SetLoadCurve(int lc, const vec3d& v)
-{
-	assert(m_val.type() == FE_PARAM_VEC3D);
-	m_nlc = lc;
-	m_vscl = v;
-}
-
-//-----------------------------------------------------------------------------
 void FEParam::Serialize(DumpStream& ar)
 {
-	// serialize the value
-	m_val.Serialize(ar);
-
-	// serialize the parameter 
 	if (ar.IsSaving())
 	{
-		ar << m_nlc;
-		ar << m_scl;
-		ar << m_vscl;
+		ar << (int) m_type << m_flag;
+
+		bool b = (m_watch ? *m_watch : false);
+		ar << (b ? 1 : 0);
+
+		if ((ar.IsShallow() == false) && (m_flag & FEParamFlag::FE_PARAM_USER))
+		{
+			assert(m_type == FE_PARAM_DOUBLE);
+			ar << m_szname;
+		}
+
+		if (m_dim == 1)
+		{
+			switch (m_type)
+			{
+			case FE_PARAM_INT       : ar << value<int>(); break;
+			case FE_PARAM_BOOL      : ar << value<bool>(); break;
+			case FE_PARAM_DOUBLE    : ar << value<double>(); break;
+			case FE_PARAM_VEC3D     : ar << value<vec3d>(); break;
+			case FE_PARAM_MAT3D     : ar << value<mat3d>(); break;
+			case FE_PARAM_MAT3DS    : ar << value<mat3ds>(); break;
+			case FE_PARAM_TENS3DRS  : ar << value<tens3ds>(); break;
+			case FE_PARAM_DATA_ARRAY:
+			{
+				FEDataArray& m = value<FEDataArray>();
+				m.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_STRING: ar << (const char*)data_ptr(); break;
+			case FE_PARAM_STD_STRING: ar << value<string>(); break;
+			case FE_PARAM_STD_VECTOR_VEC2D: ar << value< std::vector<vec2d> >(); break;
+			case FE_PARAM_DOUBLE_MAPPED:
+			{
+				FEParamDouble& p = value<FEParamDouble>();
+				p.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_VEC3D_MAPPED:
+			{
+				FEParamVec3& p = value<FEParamVec3>();
+				p.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_MAT3D_MAPPED:
+			{
+				FEParamMat3d& p = value<FEParamMat3d>();
+				p.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_STD_VECTOR_INT:
+			{
+				vector<int>& p = value< vector<int> >();
+				ar & p;
+			}
+			break;
+			case FE_PARAM_STD_VECTOR_DOUBLE:
+			{
+				vector<double>& p = value< vector<double> >();
+				ar & p;
+			}
+			break;
+			default:
+				assert(false);
+			}
+		}
+		else
+		{
+			ar << m_dim;
+			switch (m_type)
+			{
+			case FE_PARAM_INT:
+			{
+				int* pi = (int*) m_pv;
+				for (int i = 0; i<m_dim; ++i) ar << pi[i];
+			}
+			break;
+			case FE_PARAM_DOUBLE:
+			{
+				double* pv = (double*) m_pv;
+				for (int i = 0; i<m_dim; ++i) ar << pv[i];
+			}
+			break;
+			case FE_PARAM_DOUBLE_MAPPED:
+			{
+				FEParamDouble* p = (FEParamDouble*)(m_pv);
+				for (int i = 0; i < m_dim; ++i)
+				{
+					p[i].Serialize(ar);
+				}
+			}
+			break;
+			default:
+				assert(false);
+			}
+		}
 	}
 	else
 	{
-		ar >> m_nlc;
-		ar >> m_scl;
-		ar >> m_vscl;
+		int ntype;
+		ar >> ntype >> m_flag;
+		if (ntype != (int) m_type) throw DumpStream::ReadError();
+
+		int watch = 0;
+		ar >> watch;
+		if (m_watch) *m_watch = (watch == 1);
+
+		if ((ar.IsShallow() == false) && (m_flag & FEParamFlag::FE_PARAM_USER))
+		{
+			assert(m_type == FE_PARAM_DOUBLE);
+			char sz[512] = { 0 };
+			ar >> sz;
+			m_szname = strdup(sz);
+			m_pv = new double(0);
+		}
+
+		if (m_dim == 1)
+		{
+			switch (m_type)
+			{
+			case FE_PARAM_INT       : ar >> value<int         >(); break;
+			case FE_PARAM_BOOL      : ar >> value<bool        >(); break;
+			case FE_PARAM_DOUBLE    : ar >> value<double      >(); break;
+			case FE_PARAM_VEC3D     : ar >> value<vec3d       >(); break;
+			case FE_PARAM_MAT3D     : ar >> value<mat3d       >(); break;
+			case FE_PARAM_MAT3DS    : ar >> value<mat3ds      >(); break;
+			case FE_PARAM_TENS3DRS  : ar >> value<tens3drs>(); break;
+			case FE_PARAM_DATA_ARRAY:
+			{
+				FEDataArray& m = value<FEDataArray>();
+				m.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_STRING: ar >> (char*)data_ptr(); break;
+			case FE_PARAM_STD_STRING: ar >> value<string>(); break;
+			case FE_PARAM_STD_VECTOR_VEC2D: ar >> value< std::vector<vec2d> >(); break;
+			case FE_PARAM_DOUBLE_MAPPED:
+			{
+				FEParamDouble& p = value<FEParamDouble>();
+				p.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_VEC3D_MAPPED:
+			{
+				FEParamVec3& p = value<FEParamVec3>();
+				p.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_MAT3D_MAPPED:
+			{
+				FEParamMat3d& p = value<FEParamMat3d>();
+				p.Serialize(ar);
+			}
+			break;
+			case FE_PARAM_STD_VECTOR_INT:
+			{
+				vector<int>& p = value< vector<int> >();
+				ar & p;
+			}
+			break;
+			case FE_PARAM_STD_VECTOR_DOUBLE:
+			{
+				vector<double>& p = value< vector<double> >();
+				ar & p;
+			}
+			break;			default:
+				assert(false);
+			}
+		}
+		else
+		{
+			int ndim = 0;
+			ar >> ndim;
+			if (ndim != (int) m_dim) throw DumpStream::ReadError();
+			switch (m_type)
+			{
+			case FE_PARAM_INT:
+			{
+				int* pi = (int*)data_ptr();
+				for (int i = 0; i<m_dim; ++i) ar >> pi[i];
+			}
+			break;
+			case FE_PARAM_DOUBLE:
+			{
+				double* pv = (double*)data_ptr();
+				for (int i = 0; i<m_dim; ++i) ar >> pv[i];
+			}
+			break;
+			case FE_PARAM_DOUBLE_MAPPED:
+			{
+				FEParamDouble* p = (FEParamDouble*)(m_pv);
+				for (int i = 0; i < m_dim; ++i)
+				{
+					p[i].Serialize(ar);
+				}
+			}
+			break;
+			default:
+				assert(false);
+			}
+		}
 	}
 
 	// serialize the validator
 	if (m_pvalid) m_pvalid->Serialize(ar);
+}
+
+void FEParam::SaveClass(DumpStream& ar, FEParam* p)
+{
+
+}
+
+FEParam* FEParam::LoadClass(DumpStream& ar, FEParam* p)
+{
+	return p;
 }
 
 //-----------------------------------------------------------------------------
@@ -255,10 +534,78 @@ void FEParam::Serialize(DumpStream& ar)
 bool FEParam::CopyState(const FEParam& p)
 {
 	if (p.type() != type()) return false;
-
-	m_nlc = p.m_nlc;
-	m_scl = p.m_scl;
-	m_vscl = p.m_vscl;
-
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+void FEParam::setParent(FEParamContainer* pc) { m_parent = pc; }
+FEParamContainer* FEParam::parent() { return m_parent; }
+
+//-----------------------------------------------------------------------------
+void FEParam::SetWatch(bool b)
+{
+	if (m_watch) *m_watch = b;
+}
+
+//-----------------------------------------------------------------------------
+void FEParam::SetFlags(unsigned int flags) { m_flag = flags; }
+unsigned int FEParam::GetFlags() const { return m_flag; }
+
+//-----------------------------------------------------------------------------
+// helper functions for accessing components of parameters via parameter strings
+FEParamValue GetParameterComponent(const ParamString& paramName, FEParam* param)
+{
+	// make sure we have something to do
+	if (param == 0) return FEParamValue();
+
+	if (param->type() == FE_PARAM_DOUBLE)
+	{
+		return param->paramValue(paramName.Index());
+	}
+	else if (param->type() == FE_PARAM_VEC3D)
+	{
+		vec3d* v = param->pvalue<vec3d>(0);
+		assert(v);
+		if (v)
+		{
+			if      (paramName == "x") return FEParamValue(param, &v->x, FE_PARAM_DOUBLE);
+			else if (paramName == "y") return FEParamValue(param, &v->y, FE_PARAM_DOUBLE);
+			else if (paramName == "z") return FEParamValue(param, &v->z, FE_PARAM_DOUBLE);
+			else return FEParamValue();
+		}
+		else return FEParamValue();
+	}
+	else if (param->type() == FE_PARAM_STD_VECTOR_DOUBLE)
+	{
+		int index = paramName.Index();
+		return param->paramValue(index);
+	}
+	else if (param->type() == FE_PARAM_STD_VECTOR_VEC2D)
+	{
+		int index = paramName.Index();
+		return param->paramValue(index);
+	}
+	else if (param->type() == FE_PARAM_STD_VECTOR_STRING)
+	{
+		int index = paramName.Index();
+		return param->paramValue(index);
+	}
+	else if (param->type() == FE_PARAM_DOUBLE_MAPPED)
+	{
+		return param->paramValue(paramName.Index());
+	}
+	else if (param->type() == FE_PARAM_VEC3D_MAPPED)
+	{
+		return param->paramValue(paramName.Index());
+	}
+	else if (param->type() == FE_PARAM_MAT3D_MAPPED)
+	{
+		return param->paramValue(paramName.Index());
+	}
+	else if (param->type() == FE_PARAM_MATERIALPOINT)
+	{
+		return param->paramValue(paramName.Index());
+	}
+
+	return FEParamValue();
 }

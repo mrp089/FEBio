@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 
 #include "FEContactInterface.h"
@@ -9,19 +37,18 @@ class FEFacetSlidingSurface : public FEContactSurface
 {
 public:
 	//! Integration point data
-	class Data
+	class Data : public FEContactMaterialPoint
 	{
 	public:
 		Data();
 
+		void Serialize(DumpStream& ar);
+
 	public:
-		double	m_gap;	//!< gap function at integration points
 		double	m_Lm;	//!< Lagrange multipliers
 		double	m_eps;	//!< penalty value at integration point
-		double	m_Ln;	//!< net contact pressure
-		vec3d	m_nu;	//!< master normal at integration points
+		vec3d	m_nu;	//!< secondary surface normal at integration points
 		vec2d	m_rs;	//!< natural coordinates of projection of integration point
-		FESurfaceElement*	m_pme;	//!< master element of projection
 	};
 
 public:
@@ -29,28 +56,27 @@ public:
 	FEFacetSlidingSurface(FEModel* pfem);
 
 	//! initialization
-	bool Init();
+	bool Init() override;
 
 	//! evaluate net contact force
-	vec3d GetContactForce();
+	vec3d GetContactForce() override;
 
 	//! evaluate net contact area
-	double GetContactArea();
+	double GetContactArea() override;
     
-	//! serialize data for (cold) restart
-	void Serialize(DumpStream& ar);
+	//! create material point data
+	FEMaterialPoint* CreateMaterialPoint() override;
+
+	//! serialization
+	void Serialize(DumpStream& ar) override;
 
 public:
-    void GetContactGap     (int nface, double& pg);
-    void GetContactPressure(int nface, double& pg);
-    void GetContactTraction(int nface, vec3d& pt);
-	void GetNodalContactGap     (int nface, double* gn);
-	void GetNodalContactPressure(int nface, double* pn);
-	void GetNodalContactTraction(int nface, vec3d* tn);
+    void GetContactTraction(int nface, vec3d& pt) override;
+	void GetNodalContactPressure(int nface, double* pn) override;
+	void GetNodalContactTraction(int nface, vec3d* tn) override;
 
 public:
-	vector< vector<Data> >		m_Data;	//!< integration point data
-	vector<vec3d>				m_Fn;	//!< equivalent nodal forces
+	vector<vec3d>	m_Fn;	//!< equivalent nodal forces
 };
 
 //-----------------------------------------------------------------------------
@@ -78,9 +104,9 @@ public:
 	//! serialize data to archive
 	void Serialize(DumpStream& ar) override;
 
-	//! return the master and slave surface
-	FESurface* GetMasterSurface() override { return &m_ms; }
-	FESurface* GetSlaveSurface () override { return &m_ss; }
+	//! get primary and secondary surfaces
+	FESurface* GetPrimarySurface() override { return &m_ss; }
+	FESurface* GetSecondarySurface() override { return &m_ms; }
 
 	//! return integration rule class
 	bool UseNodalIntegration() override { return false; }
@@ -90,22 +116,24 @@ public:
 
 public:
 	//! calculate contact forces
-	void Residual(FEGlobalVector& R, const FETimeInfo& tp) override;
+	void LoadVector(FEGlobalVector& R, const FETimeInfo& tp) override;
 
 	//! calculate contact stiffness
-	void StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+	void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
 
 	//! calculate Lagrangian augmentations
 	bool Augment(int naug, const FETimeInfo& tp) override;
 
 	//! update 
-	void Update(int niter, const FETimeInfo& tp) override;
+	void Update() override;
 
 protected:
-	//! project slave surface onto master
+	//! project primary surface onto secondary
 	void ProjectSurface(FEFacetSlidingSurface& ss, FEFacetSlidingSurface& ms, bool bsegup, bool bmove = false);
 
 	//! calculate auto-penalty
+    void UpdateAutoPenalty();
+    
 	void CalcAutoPenalty(FEFacetSlidingSurface& s);
 
 public:
@@ -114,6 +142,7 @@ public:
 	double	m_stol;			//!< search tolerance
 	bool	m_btwo_pass;	//!< two-pass flag
 	bool	m_bautopen;		//!< auto-penalty flag
+    bool    m_bupdtpen;     //!< update penalty at each time step
 	double	m_srad;			//!< search radius (% of model size)
 	int		m_nsegup;		//!< segment update parameter
 	bool	m_breloc;       //!< node relocation on initialization
@@ -129,13 +158,13 @@ public:
 
 	double	m_dxtol;		//!< penalty insertion distance
 
-	FEFacetSlidingSurface	m_ms;	//!< master surface
-	FEFacetSlidingSurface	m_ss;	//!< slave surface
+	FEFacetSlidingSurface	m_ss;	//!< primary surface
+	FEFacetSlidingSurface	m_ms;	//!< secondary surface
 
 private:
 	bool	m_bfirst;
 	double	m_normg0;
 
 public:
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

@@ -1,11 +1,32 @@
-//
-//  FEFiberIntegrationTrapezoidal.cpp
-//  FEBioXCode4
-//
-//  Created by Gerard Ateshian on 11/30/13.
-//  Copyright (c) 2013 Columbia University. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEFiberIntegrationTrapezoidal.h"
 
 #ifndef SQR
@@ -19,19 +40,8 @@ public:
 	{
 		m_nth = nth;
 
-		if (mp)
-		{
-			FEElasticMaterialPoint& pt = *mp->ExtractData<FEElasticMaterialPoint>();
-			// get the element's local coordinate system
-			mat3d Q = pt.m_Q;
-			a0 = Q.col(0); //(Q(0, 0), Q(1, 0), Q(2, 0)); // local x-direction unit vector
-			a1 = Q.col(1); //(Q(0, 1), Q(1, 1), Q(2, 1)); // local y-direction unit vector
-		}
-		else
-		{
-			a0 = vec3d(1,0,0);
-			a1 = vec3d(0,1,0);
-		}
+		a0 = vec3d(1,0,0);
+		a1 = vec3d(0,1,0);
 
 		double pi = 4 * atan(1.0);
 		dth = pi / m_nth;  // integrate from 0 to pi
@@ -77,9 +87,9 @@ public:
 // register the material with the framework
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEFiberIntegrationTrapezoidal, FEFiberIntegrationScheme)
-	ADD_PARAMETER2(m_nth, FE_PARAM_INT, FE_RANGE_GREATER(0), "nth");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFiberIntegrationTrapezoidal, FEFiberIntegrationScheme)
+	ADD_PARAMETER(m_nth, FE_RANGE_GREATER(0), "nth");
+END_FECORE_CLASS();
 
 FEFiberIntegrationTrapezoidal::FEFiberIntegrationTrapezoidal(FEModel* pfem) : FEFiberIntegrationScheme(pfem)
 { 
@@ -110,9 +120,9 @@ mat3ds FEFiberIntegrationTrapezoidal::Stress(FEMaterialPoint& mp)
     double pi = 4*atan(1.0);
     double dth = pi/m_nth;  // integrate from 0 to pi
     
-    // get the element's local coordinate system
-	mat3d Q = pt.m_Q;
-    vec3d a0(Q(0,0),Q(1,0),Q(2,0)); // local x-direction unit vector
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+	vec3d a0(Q(0,0),Q(1,0),Q(2,0)); // local x-direction unit vector
     vec3d a1(Q(0,1),Q(1,1),Q(2,1)); // local y-direction unit vector
     
     vec3d n0e, n0a;
@@ -151,9 +161,9 @@ tens4ds FEFiberIntegrationTrapezoidal::Tangent(FEMaterialPoint& mp)
     double pi = 4*atan(1.0);
     double dth = pi/m_nth;  // integrate from 0 to pi
     
-    // get the element's local coordinate system
-	mat3d Q = pt.m_Q;
-    vec3d a0(Q(0,0),Q(1,0),Q(2,0)); // local x-direction unit vector
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+	vec3d a0(Q(0,0),Q(1,0),Q(2,0)); // local x-direction unit vector
     vec3d a1(Q(0,1),Q(1,1),Q(2,1)); // local y-direction unit vector
     
     vec3d n0e, n0a;
@@ -191,9 +201,9 @@ double FEFiberIntegrationTrapezoidal::StrainEnergyDensity(FEMaterialPoint& mp)
     double pi = 4*atan(1.0);
     double dth = pi/m_nth;  // integrate from 0 to pi
     
-    // get the element's local coordinate system
-	mat3d Q = pt.m_Q;
-    vec3d a0(Q(0,0),Q(1,0),Q(2,0)); // local x-direction unit vector
+	// get the local coordinate systems
+	mat3d Q = GetLocalCS(mp);
+	vec3d a0(Q(0,0),Q(1,0),Q(2,0)); // local x-direction unit vector
     vec3d a1(Q(0,1),Q(1,1),Q(2,1)); // local y-direction unit vector
     
     vec3d n0e, n0a;

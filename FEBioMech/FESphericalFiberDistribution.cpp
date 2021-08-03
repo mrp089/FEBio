@@ -1,11 +1,30 @@
-/*
- *  FESphericalFiberDistribution.cpp
- *  FEBioXCode
- *
- *  Created by Gerard Ateshian on 12/26/11.
- *  Copyright 2011 Columbia University. All rights reserved.
- *
- */
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FESphericalFiberDistribution.h"
@@ -19,11 +38,11 @@
 #endif
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FESphericalFiberDistribution, FEElasticMaterial)
-	ADD_PARAMETER2(m_alpha, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "alpha");
-	ADD_PARAMETER2(m_beta , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(2.0), "beta" );
-	ADD_PARAMETER2(m_ksi  , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "ksi"  );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FESphericalFiberDistribution, FEElasticMaterial)
+	ADD_PARAMETER(m_alpha, FE_RANGE_GREATER_OR_EQUAL(0.0), "alpha");
+	ADD_PARAMETER(m_beta , FE_RANGE_GREATER_OR_EQUAL(2.0), "beta" );
+	ADD_PARAMETER(m_ksi  , FE_RANGE_GREATER_OR_EQUAL(0.0), "ksi"  );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 // FESphericalFiberDistribution
@@ -31,7 +50,6 @@ END_PARAMETER_LIST();
 
 FESphericalFiberDistribution::FESphericalFiberDistribution(FEModel* pfem) : FEElasticMaterial(pfem)
 {
-	m_alpha = 0.0;
 }
 
 //-----------------------------------------------------------------------------
@@ -43,9 +61,9 @@ mat3ds FESphericalFiberDistribution::Stress(FEMaterialPoint& mp)
 	mat3d &F = pt.m_F;
 	double J = pt.m_J;
 	
-	// get the element's local coordinate system
-	mat3d Q = pt.m_Q;
-	
+	// get local coordinates
+	mat3d Q = GetLocalCS(mp);
+
 	// loop over all integration points
 	vec3d n0e, n0a, n0q, nt;
 	double In, Wl;
@@ -63,9 +81,9 @@ mat3ds FESphericalFiberDistribution::Stress(FEMaterialPoint& mp)
 		double wn = XYZ2[n][3];
 		
 		// calculate material coefficients
-		double ksi  = m_ksi;
-		double alpha = m_alpha;
-		double beta = m_beta;
+		double ksi  = m_ksi(mp);
+		double alpha = m_alpha(mp);
+		double beta = m_beta(mp);
 		
 		// --- quadrant 1,1,1 ---
 		
@@ -168,9 +186,9 @@ tens4ds FESphericalFiberDistribution::Tangent(FEMaterialPoint& mp)
 	mat3d &F = pt.m_F;
 	double J = pt.m_J;
 	
-	// get the element's local coordinate system
-	mat3d Q = pt.m_Q;
-	
+	// get local coordinates
+	mat3d Q = GetLocalCS(mp);
+
 	// loop over all integration points
 	vec3d n0e, n0a, n0q, nt;
 	double In, Wll;
@@ -191,9 +209,9 @@ tens4ds FESphericalFiberDistribution::Tangent(FEMaterialPoint& mp)
 		double wn = XYZ2[n][3];
 		
 		// calculate material coefficients
-		double ksi  = m_ksi;
-		double alpha = m_alpha;
-		double beta = m_beta;
+		double ksi  = m_ksi(mp);
+		double alpha = m_alpha(mp);
+		double beta = m_beta(mp);
 		
 		// --- quadrant 1,1,1 ---
 		
@@ -311,9 +329,9 @@ double FESphericalFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 	mat3d &F = pt.m_F;
 	double J = pt.m_J;
 	
-	// get the element's local coordinate system
-	mat3d Q = pt.m_Q;
-	
+	// get local coordinates
+	mat3d Q = GetLocalCS(mp);
+
 	// loop over all integration points
 	vec3d n0e, n0a, n0q, nt;
 	double In, W;
@@ -330,9 +348,9 @@ double FESphericalFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 		double wn = XYZ2[n][3];
 		
 		// calculate material coefficients
-		double ksi  = m_ksi;
-		double alpha = m_alpha;
-		double beta = m_beta;
+		double ksi  = m_ksi(mp);
+		double alpha = m_alpha(mp);
+		double beta = m_beta(mp);
 		
 		// --- quadrant 1,1,1 ---
 		
@@ -349,8 +367,8 @@ double FESphericalFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 		if (In > 1. + eps)
 		{
 			// calculate strain energy density
-            if (m_alpha > 0)
-                W = ksi/m_alpha*(exp(alpha*pow(In - 1.0, beta))-1);
+            if (alpha > 0)
+                W = ksi/alpha*(exp(alpha*pow(In - 1.0, beta))-1);
             else
                 W = ksi*pow(In - 1.0, beta);
 			
@@ -374,8 +392,8 @@ double FESphericalFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 		if (In > 1. + eps)
 		{
 			// calculate strain energy density
-            if (m_alpha > 0)
-                W = ksi/m_alpha*(exp(alpha*pow(In - 1.0, beta))-1);
+            if (alpha > 0)
+                W = ksi/alpha*(exp(alpha*pow(In - 1.0, beta))-1);
             else
                 W = ksi*pow(In - 1.0, beta);
 			
@@ -399,8 +417,8 @@ double FESphericalFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 		if (In > 1. + eps)
 		{
 			// calculate strain energy density
-            if (m_alpha > 0)
-                W = ksi/m_alpha*(exp(alpha*pow(In - 1.0, beta))-1);
+            if (alpha > 0)
+                W = ksi/alpha*(exp(alpha*pow(In - 1.0, beta))-1);
             else
                 W = ksi*pow(In - 1.0, beta);
 			
@@ -424,8 +442,8 @@ double FESphericalFiberDistribution::StrainEnergyDensity(FEMaterialPoint& mp)
 		if (In > 1. + eps)
 		{
 			// calculate strain energy density
-            if (m_alpha > 0)
-                W = ksi/m_alpha*(exp(alpha*pow(In - 1.0, beta))-1);
+            if (alpha > 0)
+                W = ksi/alpha*(exp(alpha*pow(In - 1.0, beta))-1);
             else
                 W = ksi*pow(In - 1.0, beta);
 			

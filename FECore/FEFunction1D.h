@@ -1,5 +1,35 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "fecore_api.h"
+#include "FECoreBase.h"
+#include "MathObject.h"
 
 //-----------------------------------------------------------------------------
 class FEModel;
@@ -7,28 +37,135 @@ class DumpStream;
 
 //-----------------------------------------------------------------------------
 // Class that represents a 1D function
-// Currently, only function defined via load curves are defined. That's why
-// we need to FEModel class. 
-class FECORE_API FEFunction1D
+// Derived classes need to implement:
+//   - value(double): This evaluates the function at a particular point
+//   - copy()       : Create a copy of the class
+//   - derive(double) : Calculate the derivative. This is optional, but allows implementation of more efficient algorithm, since default implements forward difference
+//
+class FECORE_API FEFunction1D : public FECoreBase
 {
+	FECORE_SUPER_CLASS
+
 public:
 	FEFunction1D(FEModel* pfem);
-
-	// Set the load curve index and scale factor
-	void SetLoadCurveIndex(int lc, double scale = 1.0);
 
 	// serialization
 	void Serialize(DumpStream& ar);
 
-public: 
+	// this class requires a copy member
+	virtual FEFunction1D* copy() = 0;
+
 	// evaluate the function at x
-	double value(double x) const;
+	// must be defined by derived classes
+	virtual double value(double x) const = 0;
 
 	// value of first derivative of function at x
-	double derive(double x) const;
+	// can be overridden by derived classes.
+	// default implementation is a forward-difference
+	virtual double derive(double x) const;
+
+    virtual double deriv2(double x) const = 0;
+
+	// value of first definite integral of funciton from a to b
+	// can be overridden by derived classes.
+	// default implementation is trapezoidal rule
+	virtual double integrate(double a, double b) const;
+    
+	virtual void Clear() {}
+};
+
+//-----------------------------------------------------------------------------
+// A linear function
+class FECORE_API FELinearFunction : public FEFunction1D
+{
+public:
+	FELinearFunction(FEModel* fem) : FEFunction1D(fem), m_slope(0.0), m_intercept(0.0) {}
+	FELinearFunction(FEModel* fem, double m, double y0) : FEFunction1D(fem), m_slope(m), m_intercept(y0) {}
+	FEFunction1D* copy() override { return new FELinearFunction(GetFEModel(), m_slope, m_intercept); }
+
+	double value(double t) const override
+	{
+		return m_slope*t + m_intercept;
+	}
+
+	double derive(double t) const override
+	{
+		return m_slope;
+	}
+
+    double deriv2(double t) const override
+    {
+        return 0;
+    }
 
 private:
-	int		m_nlc;		//!< load curve index
-	double	m_scale;	//!< load curve scale factor
-	FEModel&	m_fem;
+	double	m_slope;
+	double	m_intercept;
+
+	DECLARE_FECORE_CLASS();
+};
+
+//-----------------------------------------------------------------------------
+// A step function
+class FECORE_API FEStepFunction : public FEFunction1D
+{
+public:
+	FEStepFunction(FEModel* fem) : FEFunction1D(fem), m_x0(0.0), m_leftVal(0.0), m_rightVal(1.0) {}
+	FEStepFunction(FEModel* fem, double x0, double lv, double rv) : FEFunction1D(fem), m_x0(x0), m_leftVal(lv), m_rightVal(rv) {}
+	FEFunction1D* copy() override { return new FEStepFunction(GetFEModel(), m_x0, m_leftVal, m_rightVal); }
+
+	double value(double t) const override
+	{
+		return (t < m_x0 ? m_leftVal : m_rightVal);
+	}
+
+	double derive(double t) const override
+	{
+		return 0.0;
+	}
+
+	double deriv2(double t) const override
+	{
+		return 0.0;
+	}
+
+private:
+	double	m_x0;
+	double	m_leftVal;
+	double	m_rightVal;
+
+	DECLARE_FECORE_CLASS();
+};
+
+
+//-----------------------------------------------------------------------------
+//! function defined via math expression
+class FECORE_API FEMathFunction : public FEFunction1D
+{
+public:
+	FEMathFunction(FEModel* fem);
+
+	bool Init() override;
+
+	FEFunction1D* copy() override;
+
+	double value(double t) const override;
+
+	double derive(double t) const override;
+
+    double deriv2(double t) const override;
+
+private:
+	void evalParams(std::vector<double>& val, double t) const;
+
+private:
+	std::string			m_s;
+	int					m_ix;			// index of independent variable
+	std::vector<FEParamValue>	m_var;	// list of model parameters that are used as variables in expression.
+
+	MSimpleExpression	m_exp;
+	MSimpleExpression	m_dexp;
+    MSimpleExpression   m_d2exp;
+
+	DECLARE_FECORE_CLASS();
 };

@@ -1,6 +1,30 @@
-// FEBox.cpp: implementation of the FEBox class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
 
 #include "stdafx.h"
 #include "FEBox.h"
@@ -11,7 +35,7 @@
 // Construction/Destruction
 //////////////////////////////////////////////////////////////////////
 
-FEBoxMesh::FEBoxMesh()
+FEBoxMesh::FEBoxMesh(FEModel* fem) : FEMesh(fem)
 {
 
 }
@@ -21,7 +45,7 @@ FEBoxMesh::~FEBoxMesh()
 
 }
 
-void FEBoxMesh::Create(FEModel* pfem, int nx, int ny, int nz, vec3d r0, vec3d r1, int nhex)
+void FEBoxMesh::Create(int nx, int ny, int nz, vec3d r0, vec3d r1, FE_Element_Type nhex)
 {
 	int i, j, k, n;
 
@@ -35,7 +59,8 @@ void FEBoxMesh::Create(FEModel* pfem, int nx, int ny, int nz, vec3d r0, vec3d r1
 	// allocate data
 	FEMesh::CreateNodes(nodes);
 
-	int MAX_DOFS = pfem->GetDOFS().GetTotalDOFS();
+	FEModel* fem = GetFEModel();
+	int MAX_DOFS = fem->GetDOFS().GetTotalDOFS();
 	FEMesh::SetDOFS(MAX_DOFS);
 
 	// create the nodes
@@ -66,8 +91,8 @@ void FEBoxMesh::Create(FEModel* pfem, int nx, int ny, int nz, vec3d r0, vec3d r1
 	// create the elements
 	int *en;
 	n = 0;
-	FEElasticSolidDomain* pbd = new FEElasticSolidDomain(pfem);
-	pbd->Create(elems, nhex);
+	FEElasticSolidDomain* pbd = new FEElasticSolidDomain(fem);
+	pbd->Create(elems, FEElementLibrary::GetElementSpecFromType(nhex));
 	pbd->SetMatID(-1);
 	AddDomain(pbd);
 	for (i=0; i<nx; ++i)

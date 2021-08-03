@@ -1,17 +1,36 @@
-// FETransIsoVerondaWestmann.h: interface for the FETransIsoVerondaWestmann class.
-//
-//////////////////////////////////////////////////////////////////////
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#if !defined(AFX_FETRANSISOVERONDAWESTMANN_H__0FDCFE28_F8ED_4E54_A70E_A8877038CE15__INCLUDED_)
-#define AFX_FETRANSISOVERONDAWESTMANN_H__0FDCFE28_F8ED_4E54_A70E_A8877038CE15__INCLUDED_
+See Copyright-FEBio.txt for details.
 
-#if _MSC_VER > 1000
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#endif // _MSC_VER > 1000
-
 #include "FEUncoupledMaterial.h"
 #include "FEUncoupledFiberExpLinear.h"
 #include "FEActiveFiberContraction.h"
+#include <FECore/FEModelParam.h>
 
 //-----------------------------------------------------------------------------
 //! Transversely Isotropic Veronda-Westmann material
@@ -22,7 +41,7 @@
 class FETransIsoVerondaWestmann : public FEUncoupledMaterial
 {
 public:
-	FETransIsoVerondaWestmann (FEModel* pfem);
+	FETransIsoVerondaWestmann(FEModel* pfem);
 
 public:
 	double	m_c1;	//!< Veronda-Westmann coefficient C1
@@ -38,15 +57,10 @@ public:
 	//! calculate deviatoric strain energy density at material point
 	virtual double DevStrainEnergyDensity(FEMaterialPoint& pt) override;
 
-	//! Create material point data
-	FEMaterialPoint* CreateMaterialPointData() override;
-    
 protected:
 	FEUncoupledFiberExpLinear	m_fib;
-	FEPropertyT<FEActiveFiberContraction>	m_ac;
+	FEActiveFiberContraction*	m_ac;
 
 	// declare parameter list
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };
-
-#endif // !defined(AFX_FETRANSISOVERONDAWESTMANN_H__0FDCFE28_F8ED_4E54_A70E_A8877038CE15__INCLUDED_)

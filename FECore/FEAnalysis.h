@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FESurfacePairConstraint.h"
 #include "FENLConstraint.h"
@@ -15,6 +43,8 @@ class FEBoundaryCondition;
 //! Base class for finite element analysis
 class FECORE_API FEAnalysis : public FECoreBase
 {
+	FECORE_SUPER_CLASS
+
 public:
 	//! constructor
 	FEAnalysis(FEModel* pfem);
@@ -47,11 +77,9 @@ public:
 	void CopyFrom(FEAnalysis* step);
 
 public:
-	FEModel& GetFEModel() { return m_fem; }
-
 	void SetFESolver(FESolver* psolver);
 
-	FESolver* GetFESolver() { return m_psolver; }
+	FESolver* GetFESolver();
 
 public:
 	//! Get active domains
@@ -86,44 +114,37 @@ public:
 	//! sets the zero-state plot flag
 	void SetPlotZeroState(bool b);
 
+	//! sets the plot hint
+	void SetPlotHint(int plotHint);
+
+	//! get the plot hint
+	int GetPlotHint() const;
+
 	//! get the plot level
-	int GetPlotLevel() { return m_nplot; }
-
-	//! Sets the print level
-	void SetPrintLevel(int n) { m_nprint = n; }
-
-	//! get the print level
-	int GetPrintLevel() { return m_nprint; }
+	int GetPlotLevel();
 
 	//! Set the output level
-	void SetOutputLevel(int n) { m_noutput = n; }
+	void SetOutputLevel(int n);
 
 	//! Get the output level
-	int GetOutputLevel() { return m_noutput; }
+	int GetOutputLevel();
 
-	//! Set the dump level (for cold restarts)
-	void SetDumpLevel(int n) { m_ndump = n; }
-
-	//! get the dump level
-	int GetDumpLevel() { return m_ndump; }
+	// initialize the solver
+	bool InitSolver();
 
 private:
-	// Call the FE Solver
+	// Call the FE Solver to solve the time step
 	// Returns an error code
 	// 0 = all is well, continue
 	// 1 = solver has failed, but try auto-time step
 	// 2 = abort
-	int CallFESolver();
+	int SolveTimeStep();
 
 public:
-	// --- The FE Model
-	//{
-		FEModel&	m_fem;	//!< reference to FE model
-	//}
-
 	// --- Control Data ---
 	//{
-		int		m_nanalysis;	//!< analysis type
+		int		m_nanalysis;		//!< analysis type
+		bool	m_badaptorReSolve;	//!< resolve analysis after mesh adaptor phase
 	//}
 
 	// --- Time Step Data ---
@@ -134,9 +155,8 @@ public:
 		double	m_dt0;			//!< initial time step size
 		double	m_tstart;		//!< start time
 		double	m_tend;			//!< end time
-		bool	m_bautostep;	//!< use auto stepper?
 
-		FETimeStepController m_timeController;
+		FETimeStepController* m_timeController;
 	//}
 
 	// --- Quasi-Newton Solver Variables ---
@@ -149,13 +169,12 @@ public:
 
 	// --- I/O Data ---
 	//{
-		int		m_nprint;		//!< print level
 		int		m_nplot;		//!< plot level
 		int		m_noutput;		//!< data output level
 		int		m_nplot_stride;	//!< stride for plotting
 		int		m_nplotRange[2];	//!< plot range
 		bool	m_bplotZero;		//!< Force plotting of time step "zero"
-		int		m_ndump;		//!< create a restart file or not
+		int		m_plotHint;			//!< the plot mode
 	//}
 
 private:
@@ -167,5 +186,5 @@ protected:
 	std::vector<int>				m_Dom;	//!< list of active domains for this analysis
 	std::vector<FEModelComponent*>	m_MC;	//!< array of model components active during this step
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

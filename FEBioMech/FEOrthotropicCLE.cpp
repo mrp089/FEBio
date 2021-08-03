@@ -1,30 +1,52 @@
-//
-//  FEOrthotropicCLE.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 3/25/15.
-//  Copyright (c) 2015 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEOrthotropicCLE.h"
+#include <FECore/log.h>
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEOrthotropicCLE, FEElasticMaterial)
-	ADD_PARAMETER(lp11, FE_PARAM_DOUBLE, "lp11");
-	ADD_PARAMETER(lm11, FE_PARAM_DOUBLE, "lm11");
-	ADD_PARAMETER(lp22, FE_PARAM_DOUBLE, "lp22");
-	ADD_PARAMETER(lm22, FE_PARAM_DOUBLE, "lm22");
-	ADD_PARAMETER(lp33, FE_PARAM_DOUBLE, "lp33");
-	ADD_PARAMETER(lp11, FE_PARAM_DOUBLE, "lp11");
-	ADD_PARAMETER(lm33, FE_PARAM_DOUBLE, "lm33");
-	ADD_PARAMETER(l12, FE_PARAM_DOUBLE, "l12");
-	ADD_PARAMETER(l23, FE_PARAM_DOUBLE, "l23");
-	ADD_PARAMETER(l31, FE_PARAM_DOUBLE, "l31");
-	ADD_PARAMETER2(mu1, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "mu1");
-	ADD_PARAMETER2(mu2, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "mu2");
-	ADD_PARAMETER2(mu3, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "mu3");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEOrthotropicCLE, FEElasticMaterial)
+	ADD_PARAMETER(lp11, "lp11");
+	ADD_PARAMETER(lm11, "lm11");
+	ADD_PARAMETER(lp22, "lp22");
+	ADD_PARAMETER(lm22, "lm22");
+	ADD_PARAMETER(lp33, "lp33");
+	ADD_PARAMETER(lp11, "lp11");
+	ADD_PARAMETER(lm33, "lm33");
+	ADD_PARAMETER(l12, "l12");
+	ADD_PARAMETER(l23, "l23");
+	ADD_PARAMETER(l31, "l31");
+	ADD_PARAMETER(mu1, FE_RANGE_GREATER_OR_EQUAL(0.0), "mu1");
+	ADD_PARAMETER(mu2, FE_RANGE_GREATER_OR_EQUAL(0.0), "mu2");
+	ADD_PARAMETER(mu3, FE_RANGE_GREATER_OR_EQUAL(0.0), "mu3");
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! Check material parameters.
@@ -47,8 +69,10 @@ bool FEOrthotropicCLE::Validate()
     double l[3];
     c.exact_eigen(l);
     
-    if ((l[0]<0) || (l[1]<0) || (l[2]<0))
-        return MaterialError("Stiffness matrix is not positive definite.");
+	if ((l[0] < 0) || (l[1] < 0) || (l[2] < 0)) {
+		feLogError("Stiffness matrix is not positive definite.");
+		return false;
+	}
     
     // repeat check with all tensile diagonal first lamé constants
     lam[0][0] = lp11; lam[1][1] = lp22; lam[2][2] = lp33;
@@ -56,8 +80,10 @@ bool FEOrthotropicCLE::Validate()
     c = mat3ds(lam[0][0]+2*mu[0],lam[1][1]+2*mu[1],lam[2][2]+2*mu[2],lam[0][1],lam[1][2],lam[0][2]);
     c.exact_eigen(l);
     
-    if ((l[0]<0) || (l[1]<0) || (l[2]<0))
-        return MaterialError("Stiffness matrix is not positive definite.");
+	if ((l[0] < 0) || (l[1] < 0) || (l[2] < 0)) {
+		feLogError("Stiffness matrix is not positive definite.");
+		return false;
+	}
  
 	return true;
 }
@@ -86,10 +112,13 @@ mat3ds FEOrthotropicCLE::Stress(FEMaterialPoint& mp)
     
     mat3d F = pt.m_F;
     double J = pt.m_J;
-    
+
+	// get local coordinates
+	mat3d Q = GetLocalCS(mp);
+
     for (i=0; i<3; i++) {	// Perform sum over all three texture directions
         // Copy the texture direction in the reference configuration to a0
-        a0.x = pt.m_Q[0][i]; a0.y = pt.m_Q[1][i]; a0.z = pt.m_Q[2][i];
+        a0.x = Q[0][i]; a0.y = Q[1][i]; a0.z = Q[2][i];
         A[i] = dyad(F*a0);
         K[i] = 0.5*(A[i].tr() - 1);
     }
@@ -102,7 +131,7 @@ mat3ds FEOrthotropicCLE::Stress(FEMaterialPoint& mp)
 	s.zero();
     
     for (i=0; i<3; ++i) {
-        s += (A[i]*BmI+BmI*A[i])*(mu[i]/2);
+        s += (A[i]*BmI).sym()*(mu[i]);
         for (j=0; j<3; ++j) {
             s += A[j]*(lam[i][j]*K[i]);
         }
@@ -137,9 +166,12 @@ tens4ds FEOrthotropicCLE::Tangent(FEMaterialPoint& mp)
     mat3d F = pt.m_F;
     double J = pt.m_J;
     
+	// get local coordinates
+	mat3d Q = GetLocalCS(mp);
+
     for (i=0; i<3; i++) {	// Perform sum over all three texture directions
         // Copy the texture direction in the reference configuration to a0
-        a0.x = pt.m_Q[0][i]; a0.y = pt.m_Q[1][i]; a0.z = pt.m_Q[2][i];
+        a0.x = Q[0][i]; a0.y = Q[1][i]; a0.z = Q[2][i];
         A[i] = dyad(F*a0);
         K[i] = 0.5*(A[i].tr() - 1);
     }
@@ -184,12 +216,15 @@ double FEOrthotropicCLE::StrainEnergyDensity(FEMaterialPoint& mp)
     double K[3], L[3];	// Ka
     mat3ds E = (pt.RightCauchyGreen() - mat3dd(1))/2;
     
+	// get local coordinates
+	mat3d Q = GetLocalCS(mp);
+
     for (i=0; i<3; i++) {	// Perform sum over all three texture directions
         // Copy the texture direction in the reference configuration to a0
-        a0.x = pt.m_Q[0][i]; a0.y = pt.m_Q[1][i]; a0.z = pt.m_Q[2][i];
+        a0.x = Q[0][i]; a0.y = Q[1][i]; a0.z = Q[2][i];
         A0 = dyad(a0);
-        K[i] = (A0*E).tr();
-        L[i] = (A0*E*E).tr();
+        K[i] = (A0*E).trace();
+        L[i] = (A0*E*E).trace();
     }
     
     lam[0][0] = (K[0] >= 0) ? lp11 : lm11;

@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
 #include "FEContactInterface.h"
 #include "FEContactSurface.h"
@@ -8,16 +36,15 @@ class FEFacetTiedSurface : public FEContactSurface
 {
 public:
 	//! integration point data
-	class Data
+	class Data : public FEContactMaterialPoint
 	{
 	public:
 		Data();
 
 	public:
-		vec3d	m_gap;	//!< gap function
+		vec3d	m_vgap;	//!< gap function
 		vec3d	m_Lm;	//!< Lagrange multiplier
-		vec2d	m_rs;	//!< natural coordinates on master element
-		FESurfaceElement*	m_pme;	//!< master element
+		vec2d	m_rs;	//!< natural coordinates on secondary surface element
 	};
 
 public:
@@ -25,13 +52,13 @@ public:
 	FEFacetTiedSurface(FEModel* pfem);
 
 	//! Initialization
-	bool Init();
+	bool Init() override;
 
 	//! serialization for cold restarts
-	void Serialize(DumpStream& ar);
+	void Serialize(DumpStream& ar) override;
 
-public:
-	vector< vector<Data> >	m_Data;	//!< integration point data
+	//! create material point data
+	FEMaterialPoint* CreateMaterialPoint() override;
 };
 
 //-----------------------------------------------------------------------------
@@ -51,9 +78,9 @@ public:
 	//! serialize data to archive
 	void Serialize(DumpStream& ar) override;
 
-	//! return the master and slave surface
-	FESurface* GetMasterSurface() override { return &m_ms; }
-	FESurface* GetSlaveSurface () override { return &m_ss; }
+	//! return the primary and secondary surface
+	FESurface* GetPrimarySurface() override { return &m_ss; }
+	FESurface* GetSecondarySurface() override { return &m_ms; }
 
 	//! return integration rule class
 	bool UseNodalIntegration() override { return false; }
@@ -63,25 +90,25 @@ public:
 
 public:
 	//! calculate contact forces
-	void Residual(FEGlobalVector& R, const FETimeInfo& tp) override;
+	void LoadVector(FEGlobalVector& R, const FETimeInfo& tp) override;
 
 	//! calculate contact stiffness
-	void StiffnessMatrix(FESolver* psolver, const FETimeInfo& tp) override;
+	void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
 
 	//! calculate Lagrangian augmentations
 	bool Augment(int naug, const FETimeInfo& tp) override;
 
 	//! update contact data
-	void Update(int niter, const FETimeInfo& tp) override;
+	void Update() override;
 
 protected:
 
-	//! projects slave nodes onto master nodes
+	//! projects primary nodes onto secondary nodes
 	void ProjectSurface(FEFacetTiedSurface& ss, FEFacetTiedSurface& ms);
 
 private:
-	FEFacetTiedSurface	m_ss;	//!< slave surface
-	FEFacetTiedSurface	m_ms;	//!< master surface
+	FEFacetTiedSurface	m_ms;	//!< secondary surface
+	FEFacetTiedSurface	m_ss;	//!< primary surface
 
 public:
 	double		m_atol;		//!< augmentation tolerance
@@ -90,5 +117,5 @@ public:
 	int			m_naugmax;	//!< maximum nr of augmentations
 	int			m_naugmin;	//!< minimum nr of augmentations
 
-	DECLARE_PARAMETER_LIST();
+	DECLARE_FECORE_CLASS();
 };

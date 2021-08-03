@@ -1,6 +1,34 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #pragma once
-#include "FECore/LinearSolver.h"
-#include "DenseMatrix.h"
+#include <FECore/LinearSolver.h>
+#include <FECore/DenseMatrix.h>
 
 //-----------------------------------------------------------------------------
 //! LU decomposition solver
@@ -15,24 +43,24 @@ class LUSolver : public LinearSolver
 {
 public:
 	//! constructor
-	LUSolver();
+	LUSolver(FEModel* fem);
 
 	//! Pre-process data
-	bool PreProcess();
+	bool PreProcess() override;
 
 	//! Factor matrix
-	bool Factor();
+	bool Factor() override;
 
 	//! solve using factored matrix
-	bool BackSolve(vector<double>& x, vector<double>& b);
+	bool BackSolve(double* x, double* b) override;
 
 	//! Clean-up
-	void Destroy();
+	void Destroy() override;
 
 	//! Create a sparse matrix
-	SparseMatrix* CreateSparseMatrix(Matrix_Type ntype);
+	SparseMatrix* CreateSparseMatrix(Matrix_Type ntype) override;
 
 protected:
-	vector<int>		indx;	//!< indices
-	DenseMatrix*	m_pA;	//!< sparse matrix
+	vector<int>				indx;	//!< indices
+	FECore::DenseMatrix*	m_pA;	//!< sparse matrix
 };

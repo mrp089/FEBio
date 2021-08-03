@@ -1,14 +1,43 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEDiffRefIso.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEDiffRefIso, FESoluteDiffusivity)
-	ADD_PARAMETER2(m_free_diff, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "free_diff");
-	ADD_PARAMETER2(m_diff0    , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "diff0"    );
-	ADD_PARAMETER2(m_diff1    , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "diff1"    );
-	ADD_PARAMETER2(m_diff2    , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "diff2"    );
-	ADD_PARAMETER2(m_M        , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "M"        );
-	ADD_PARAMETER2(m_alpha    , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(0.0), "alpha"    );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEDiffRefIso, FESoluteDiffusivity)
+	ADD_PARAMETER(m_free_diff, FE_RANGE_GREATER_OR_EQUAL(0.0), "free_diff");
+	ADD_PARAMETER(m_diff0    , FE_RANGE_GREATER_OR_EQUAL(0.0), "diff0"    );
+	ADD_PARAMETER(m_diff1    , FE_RANGE_GREATER_OR_EQUAL(0.0), "diff1"    );
+	ADD_PARAMETER(m_diff2    , FE_RANGE_GREATER_OR_EQUAL(0.0), "diff2"    );
+	ADD_PARAMETER(m_M        , FE_RANGE_GREATER_OR_EQUAL(0.0), "M"        );
+	ADD_PARAMETER(m_alpha    , FE_RANGE_GREATER_OR_EQUAL(0.0), "alpha"    );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 //! Constructor. 
@@ -40,7 +69,8 @@ double FEDiffRefIso::Tangent_Free_Diffusivity_Concentration(FEMaterialPoint& mp,
 mat3ds FEDiffRefIso::Diffusivity(FEMaterialPoint& mp)
 {
 	FEElasticMaterialPoint& et = *mp.ExtractData<FEElasticMaterialPoint>();
-	FEBiphasicMaterialPoint& ppt = *mp.ExtractData<FEBiphasicMaterialPoint>();
+	FEBiphasicMaterialPoint* ppt = mp.ExtractData<FEBiphasicMaterialPoint>();
+    FEBiphasicFSIMaterialPoint* bfpt = mp.ExtractData<FEBiphasicFSIMaterialPoint>();
 	
 	// Identity
 	mat3dd I(1);
@@ -52,7 +82,11 @@ mat3ds FEDiffRefIso::Diffusivity(FEMaterialPoint& mp)
 	double J = et.m_J;
 	
 	// solid volume fraction in reference configuration
-	double phi0 = ppt.m_phi0;
+    double phi0 = 0;
+    if (ppt)
+        phi0 = ppt->m_phi0;
+    else if (bfpt)
+        phi0 = bfpt->m_phi0;
 	
 	// --- strain-dependent permeability ---
 	
@@ -60,17 +94,18 @@ mat3ds FEDiffRefIso::Diffusivity(FEMaterialPoint& mp)
 	double d0 = m_diff0*f;
 	double d1 = m_diff1/(J*J)*f;
 	double d2 = 0.5*m_diff2/pow(J,4)*f;
-	mat3ds dt = d0*I+d1*b+2*d2*b*b;
+	mat3ds dt = d0*I+d1*b+2*d2*b.sqr();
 	
 	return dt;
 }
 
 //-----------------------------------------------------------------------------
 //! Tangent of diffusivity with respect to strain
-tens4ds FEDiffRefIso::Tangent_Diffusivity_Strain(FEMaterialPoint &mp)
+tens4dmm FEDiffRefIso::Tangent_Diffusivity_Strain(FEMaterialPoint &mp)
 {
 	FEElasticMaterialPoint& et = *mp.ExtractData<FEElasticMaterialPoint>();
-	FEBiphasicMaterialPoint& ppt = *mp.ExtractData<FEBiphasicMaterialPoint>();
+	FEBiphasicMaterialPoint* ppt = mp.ExtractData<FEBiphasicMaterialPoint>();
+    FEBiphasicFSIMaterialPoint* bfpt = mp.ExtractData<FEBiphasicFSIMaterialPoint>();
 	
 	// Identity
 	mat3dd I(1);
@@ -82,7 +117,11 @@ tens4ds FEDiffRefIso::Tangent_Diffusivity_Strain(FEMaterialPoint &mp)
 	double J = et.m_J;
 	
 	// solid volume fraction in reference configuration
-	double phi0 = ppt.m_phi0;
+    double phi0 = 0;
+    if (ppt)
+        phi0 = ppt->m_phi0;
+    else if (bfpt)
+        phi0 = bfpt->m_phi0;
 	
 	double f = pow((J-phi0)/(1-phi0),m_alpha)*exp(m_M*(J*J-1.0)/2.0);
 	double d0 = m_diff0*f;
@@ -95,9 +134,9 @@ tens4ds FEDiffRefIso::Tangent_Diffusivity_Strain(FEMaterialPoint &mp)
 	mat3ds d1hat = I*D1prime;
 	mat3ds d2hat = I*D2prime;
 	
-	tens4ds D4 = dyad1s(I,d0hat)/2.0-dyad4s(I)*2*d0
-	+ dyad1s(b,d1hat)/2.0
-	+ dyad1s(b*b,d2hat)+dyad4s(b)*4*d2;
+	tens4dmm D4 = dyad1mm(I,d0hat)-dyad4s(I)*(2*d0)
+	+ dyad1mm(b,d1hat)
+	+ dyad1mm(b.sqr(),d2hat)*2+dyad4s(b)*(4*d2);
 	
 	return D4;
 }

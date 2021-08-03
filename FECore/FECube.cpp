@@ -1,6 +1,35 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FECube.h"
 #include "FESurface.h"
+#include "FEModel.h"
 
 FECube::FECube() : m_mesh(0)
 {
@@ -24,13 +53,13 @@ FESurface* FECube::GetSurface(int i)
 // get the node set of the corner nodes
 const FENodeSet& FECube::GetCornerNodes() const
 {
-	return m_corners;
+	return *m_corners;
 }
 
 // get the node set of boundary nodes
 const FENodeSet& FECube::GetBoundaryNodes() const
 {
-	return m_boundary;
+	return *m_boundary;
 }
 
 // get the mesh of this cube
@@ -39,20 +68,20 @@ FEMesh* FECube::GetMesh()
 	return m_mesh;
 }
 
-bool FECube::Build(FEMesh* mesh)
+bool FECube::Build(FEModel* fem)
 {
 	// make sure we have a mesh
-	m_mesh = mesh;
-	if (mesh == 0) return false;
+	m_mesh = &fem->GetMesh();
 
-	FEMesh& m = *mesh;
+	FEMesh& m = *m_mesh;
 	int NN = m.Nodes();
 	
 	// first, get the outside surface
 	FESurface* boundary = m.ElementBoundarySurface();
 
 	// get the boundary node set
-	m_boundary = boundary->GetNodeSet();
+	m_boundary = new FENodeSet(fem);
+	m_boundary->Add(boundary->GetNodeList());
 
 	// Next, split it up in 6 surfaces
 	// We divide the surface by comparing normals to the 6 surface normals of a cube
@@ -60,7 +89,7 @@ bool FECube::Build(FEMesh* mesh)
 	for (int n = 0; n<6; ++n)
 	{
 		// create the surface
-		m_surf[n] = new FESurface(&m);
+		m_surf[n] = fecore_alloc(FESurface, m_mesh->GetFEModel());
 
 		// get the normal for this face
 		vec3d N = fn[n];
@@ -94,12 +123,13 @@ bool FECube::Build(FEMesh* mesh)
 	for (int n = 0; n<6; ++n)
 	{
 		FESurface& sn = *m_surf[n];
-		FENodeSet ns = sn.GetNodeSet();
-		for (int i = 0; i<ns.size(); ++i) tag[ns[i]]++;
+		FENodeList ns = sn.GetNodeList();
+		for (int i = 0; i<ns.Size(); ++i) tag[ns[i]]++;
 	}
 
-	for (int i = 0; i<NN; ++i) if (tag[i] == 3) m_corners.add(i);
-	assert(m_corners.size() == 8);
+	m_corners = new FENodeSet(fem);
+	for (int i = 0; i<NN; ++i) if (tag[i] == 3) m_corners->Add(i);
+	assert(m_corners->Size() == 8);
 
 	// don't forget to cleanup
 	delete boundary;

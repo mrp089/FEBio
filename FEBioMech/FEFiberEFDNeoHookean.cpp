@@ -1,13 +1,42 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FEFiberNeoHookean.h"
 #include "FEFiberEFDNeoHookean.h"
 
 // define the material parameters
-BEGIN_PARAMETER_LIST(FEFiberEFDNeoHookean, FEElasticMaterial)
-	ADD_PARAMETER2(m_E, FE_PARAM_DOUBLE, FE_RANGE_GREATER(0.0), "E");
-	ADD_PARAMETER2(m_v, FE_PARAM_DOUBLE, FE_RANGE_RIGHT_OPEN(-1.0, 0.5), "v");
-	ADD_PARAMETERV(m_a, FE_PARAM_DOUBLE, 3, "a");
-	ADD_PARAMETER(m_ac, FE_PARAM_DOUBLE, "active_contraction");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FEFiberEFDNeoHookean, FEElasticMaterial)
+	ADD_PARAMETER(m_E, FE_RANGE_GREATER(0.0), "E");
+	ADD_PARAMETER(m_v, FE_RANGE_RIGHT_OPEN(-1.0, 0.5), "v");
+	ADD_PARAMETER(m_a, 3, "a");
+	ADD_PARAMETER(m_ac, "active_contraction");
+END_FECORE_CLASS();
 
 #ifndef SQR
 	#define SQR(x) ((x)*(x))
@@ -102,8 +131,8 @@ mat3ds FEFiberEFDNeoHookean::Stress(FEMaterialPoint& mp)
 		const double* the = (m_nres == 0? THETAL: THETAH);
 		const double* w   = (m_nres == 0? AREAL : AREAH );
 
-		// get the element's local coordinate system
-		mat3d& Q = pt.m_Q;
+		// get the local coordinate systems
+		mat3d Q = GetLocalCS(mp);
 
 		// loop over all integration points
 		double nr[3], n0[3], nt[3];

@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FERemodelingElasticMaterial.h"
 #include "FECore/FECoreKernel.h"
@@ -35,17 +63,8 @@ void FERemodelingMaterialPoint::Update(const FETimeInfo& timeInfo)
 void FERemodelingMaterialPoint::Serialize(DumpStream& ar)
 {
 	FEMaterialPoint::Serialize(ar);
-        
-	if (ar.IsSaving())
-	{
-		ar << m_sed << m_dsed;
-		ar << m_rhor << m_rhorp;
-	}
-	else
-	{
-		ar >> m_sed >> m_dsed;
-		ar >> m_rhor >> m_rhorp;
-	}
+	ar & m_sed & m_dsed;
+	ar & m_rhor & m_rhorp;
 }
 
 //=============================================================================
@@ -54,16 +73,20 @@ void FERemodelingMaterialPoint::Serialize(DumpStream& ar)
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FERemodelingElasticMaterial, FEElasticMaterial)
-	ADD_PARAMETER(m_rhormin, FE_PARAM_DOUBLE, "min_density");
-	ADD_PARAMETER(m_rhormax, FE_PARAM_DOUBLE, "max_density");
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FERemodelingElasticMaterial, FEElasticMaterial)
+	ADD_PARAMETER(m_rhormin, "min_density");
+	ADD_PARAMETER(m_rhormax, "max_density");
+
+	ADD_PROPERTY(m_pBase, "solid");
+	ADD_PROPERTY(m_pSupp, "supply");
+
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 FERemodelingElasticMaterial::FERemodelingElasticMaterial(FEModel* pfem) : FEElasticMaterial(pfem)
 {
-	AddProperty(&m_pBase, "solid" );
-	AddProperty(&m_pSupp, "supply");
+	m_pBase = 0;
+	m_pSupp = 0;
 }
 
 //-----------------------------------------------------------------------------

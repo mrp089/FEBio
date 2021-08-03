@@ -1,63 +1,68 @@
-//
-//  FETangentialFlowStabilization.hpp
-//  FEBioFluid
-//
-//  Created by Gerard Ateshian on 3/2/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
-#ifndef FETangentialFlowStabilization_hpp
-#define FETangentialFlowStabilization_hpp
+See Copyright-FEBio.txt for details.
 
-#include "FECore/FESurfaceLoad.h"
-#include <FECore/FESurfaceMap.h>
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#pragma once
+#include <FECore/FESurfaceLoad.h>
+#include "febiofluid_api.h"
 
 //-----------------------------------------------------------------------------
 //! Tangential flow stabilization prescribes a shear traction that opposes
 //! tangential fluid velocity on a boundary surface, in the presence of normal
 //! flow.  This can help stabilize inflow/outflow conditions.
-class FETangentialFlowStabilization : public FESurfaceLoad
+class FEBIOFLUID_API FETangentialFlowStabilization : public FESurfaceLoad
 {
 public:
     //! constructor
     FETangentialFlowStabilization(FEModel* pfem);
+
+	//! Initialization
+	bool Init() override;
     
     //! Set the surface to apply the load to
     void SetSurface(FESurface* ps) override;
     
     //! calculate pressure stiffness
-    void StiffnessMatrix(const FETimeInfo& tp, FESolver* psolver) override;
+    void StiffnessMatrix(FELinearSystem& LS, const FETimeInfo& tp) override;
     
-    //! calculate residual
-    void Residual(const FETimeInfo& tp, FEGlobalVector& R) override;
+    //! calculate load vector
+    void LoadVector(FEGlobalVector& R, const FETimeInfo& tp) override;
     
     //! serialize data
     void Serialize(DumpStream& ar) override;
     
-    //! Unpack surface element data
-    void UnpackLM(FEElement& el, vector<int>& lm);
-    
-    //! initialization
-    bool Init() override;
-    
 protected:
-    //! calculate stiffness for an element
-    void ElementStiffness(FESurfaceElement& el, matrix& ke, const double alpha);
-    
-    //! Calculates the force for an element
-    void ElementForce(FESurfaceElement& el, vector<double>& fe, const double alpha);
+	vec3d FluidVelocity(FESurfaceMaterialPoint& mp, double alpha);
     
 protected:
     double			m_beta;     //!< damping coefficient
-    double          m_rho;      //!< fluid density
     
     // degrees of freedom
-    int     m_dofX, m_dofY, m_dofZ;
-    int		m_dofWX, m_dofWY, m_dofWZ;
-    int		m_dofWXP, m_dofWYP, m_dofWZP;
+	FEDofList	m_dofW;
     
-    DECLARE_PARAMETER_LIST();
+    DECLARE_FECORE_CLASS();
 };
-
-
-#endif /* FETangentialFlowStabilization_hpp */

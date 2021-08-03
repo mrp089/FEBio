@@ -1,20 +1,41 @@
-//
-//  FENewtonianViscousSolidUC.cpp
-//  FEBioMech
-//
-//  Created by Gerard Ateshian on 6/14/17.
-//  Copyright © 2017 febio.org. All rights reserved.
-//
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
 
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
+#include "stdafx.h"
 #include "FENewtonianViscousSolidUC.h"
 #include <FECore/FEModel.h>
 
 //-----------------------------------------------------------------------------
 // define the material parameters
-BEGIN_PARAMETER_LIST(FENewtonianViscousSolidUC, FEUncoupledMaterial)
-ADD_PARAMETER2(m_kappa, FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(      0.0), "kappa");
-ADD_PARAMETER2(m_mu   , FE_PARAM_DOUBLE, FE_RANGE_GREATER_OR_EQUAL(      0.0), "mu"   );
-END_PARAMETER_LIST();
+BEGIN_FECORE_CLASS(FENewtonianViscousSolidUC, FEUncoupledMaterial)
+	ADD_PARAMETER(m_kappa, FE_RANGE_GREATER_OR_EQUAL(      0.0), "kappa");
+	ADD_PARAMETER(m_mu   , FE_RANGE_GREATER_OR_EQUAL(      0.0), "mu"   );
+END_FECORE_CLASS();
 
 //-----------------------------------------------------------------------------
 mat3ds FENewtonianViscousSolidUC::DevStress(FEMaterialPoint& mp)
@@ -38,12 +59,14 @@ mat3ds FENewtonianViscousSolidUC::DevStress(FEMaterialPoint& mp)
 //-----------------------------------------------------------------------------
 tens4ds FENewtonianViscousSolidUC::DevTangent(FEMaterialPoint& mp)
 {
-    FEElasticMaterialPoint& pe = *mp.ExtractData<FEElasticMaterialPoint>();
-    
     mat3dd I(1);
-    
+    tens4ds Cv;
+
     double dt = GetFEModel()->GetTime().timeIncrement;
-    tens4ds Cv = (dyad1s(I, I)*(m_kappa - 2 * m_mu / 3) + dyad4s(I, I)*(2 * m_mu)) / (2 * dt);
+    if (dt > 0)
+        Cv = (dyad1s(I, I)*(m_kappa - 2 * m_mu / 3) + dyad4s(I, I)*(2 * m_mu)) / (2 * dt);
+    else
+        Cv.zero();
     
     return Cv;
 }

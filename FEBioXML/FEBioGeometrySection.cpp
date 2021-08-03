@@ -1,3 +1,31 @@
+/*This file is part of the FEBio source code and is licensed under the MIT license
+listed below.
+
+See Copyright-FEBio.txt for details.
+
+Copyright (c) 2020 University of Utah, The Trustees of Columbia University in 
+the City of New York, and others.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.*/
+
+
+
 #include "stdafx.h"
 #include "FEBioGeometrySection.h"
 #include "FECore/FESolidDomain.h"
@@ -10,12 +38,14 @@
 #include <FECore/FENodeNodeList.h>
 
 //-----------------------------------------------------------------------------
-void FEBioGeometrySection::ReadElement(XMLTag &tag, FEElement& el, int nid)
+bool FEBioGeometrySection::ReadElement(XMLTag &tag, FEElement& el, int nid)
 {
 	el.SetID(nid);
 	int n[FEElement::MAX_NODES];
-	tag.value(n, el.Nodes());
+	int m = tag.value(n, el.Nodes());
+	if (m != el.Nodes()) return false;
 	GetBuilder()->GlobalToLocalID(n, el.Nodes(), el.m_node);
+	return true;
 }
 
 //=============================================================================
@@ -71,10 +101,9 @@ void FEBioGeometrySection1x::ParseNodeSection(XMLTag& tag)
 	FENodeSet* ps = 0;
 	if (szl)
 	{
-		ps = new FENodeSet(&mesh);
+		ps = fecore_alloc(FENodeSet, &fem);
 
 		ps->SetName(szl);
-		ps->create(nodes);
 		mesh.AddNodeSet(ps);
 	}
 
@@ -107,7 +136,7 @@ void FEBioGeometrySection1x::ParseNodeSection(XMLTag& tag)
 	// If a node set is defined add these nodes to the node-set
 	if (ps)
 	{
-		for (int i = 0; i<nodes; ++i) (*ps)[i] = N0 + i;
+		for (int i = 0; i<nodes; ++i) ps->Add(N0 + i);
 	}
 
 	// tell the file reader to rebuild the node ID table
@@ -187,12 +216,12 @@ void FEBioGeometrySection1x::ParseElementSection(XMLTag& tag)
 		FEMaterial* pmat = fem.GetMaterial(d.mat);
 
 		// create the new domain
-		FEDomain* pdom = febio.CreateDomain(d.elem, &mesh, pmat);
+		FEDomain* pdom = GetBuilder()->CreateDomain(d.elem, pmat);
 		if (pdom == 0) throw FEBioImport::FailedCreatingDomain();
 
 		// add it to the mesh
 		assert(d.nel);
-		pdom->Create(d.nel, d.elem.etype);
+		pdom->Create(d.nel, d.elem);
 		mesh.AddDomain(pdom);
 
 		// we reset the nr of elements since we'll be using 
@@ -224,7 +253,7 @@ void FEBioGeometrySection1x::ParseElementSection(XMLTag& tag)
 		if (FEElementLibrary::IsValid(espec) == false) throw FEBioImport::InvalidElementType();
 
 		if (espec.etype != dom[ED[i]].elem.etype) throw XMLReader::InvalidTag(tag);
-		ReadElement(tag, domi.ElementRef(ne), nid);
+		if (ReadElement(tag, domi.ElementRef(ne), nid) == false) throw XMLReader::InvalidValue(tag);
 
 		// go to next tag
 		++tag;
@@ -257,14 +286,15 @@ void set_element_fiber(FEElement& el, const vec3d& v, int ncomp)
 
 	for (int i = 0; i<el.GaussPoints(); ++i)
 	{
-		FEMaterialPoint* mp = el.GetMaterialPoint(i)->GetPointData(ncomp);
+		FEMaterialPoint* mp = (ncomp == -1) ? el.GetMaterialPoint(i) : el.GetMaterialPoint(i)->GetPointData(ncomp);
 
 		FEElasticMaterialPoint& pt = *mp->ExtractData<FEElasticMaterialPoint>();
-		mat3d& m = pt.m_Q;
+/*		mat3d& m = pt.m_Q;
 		m.zero();
 		m[0][0] = a.x; m[0][1] = b.x; m[0][2] = c.x;
 		m[1][0] = a.y; m[1][1] = b.y; m[1][2] = c.y;
 		m[2][0] = a.z; m[2][1] = b.z; m[2][2] = c.z;
+*/
 	}
 }
 
@@ -288,7 +318,7 @@ void set_element_mat_axis(FEElement& el, const vec3d& v1, const vec3d& v2, int n
         FEMaterialPoint* mp = (ncomp == -1) ? el.GetMaterialPoint(i) : el.GetMaterialPoint(i)->GetPointData(ncomp);
 
 		FEElasticMaterialPoint& pt = *mp->ExtractData<FEElasticMaterialPoint>();
-		pt.m_Q = mat3d(a, b, c);
+//		pt.m_Q = mat3d(a, b, c);
 	}
 }
 
@@ -336,7 +366,8 @@ void FEBioGeometrySection1x::ParseElementData(FEElement& el, XMLTag& tag)
 		for (int i = 0; i<el.GaussPoints(); ++i)
 		{
 			FEMaterialPoint* pt = el.GetMaterialPoint(i);
-			while (pt)
+			// TODO: Material point parameters are no longer supported so I need to reimplement this
+/*			while (pt)
 			{
 				FEParameterList& pl = pt->GetParameterList();
 				if (ReadParameter(tag, pl)) break;
@@ -357,7 +388,7 @@ void FEBioGeometrySection1x::ParseElementData(FEElement& el, XMLTag& tag)
 				pt = pt->Next();
 				if (pt == 0) throw XMLReader::InvalidTag(tag);
 			}
-		}
+*/		}
 	}
 }
 
@@ -424,7 +455,7 @@ void FEBioGeometrySection1x::ParseElementDataSection(XMLTag& tag)
 			++tag;
 			do
 			{
-				int n = pset->size();
+				int n = pset->Elements();
 				for (int i = 0; i<n; ++i)
 				{
 					// get a pointer to the element
@@ -506,10 +537,9 @@ void FEBioGeometrySection2::ParseNodeSection(XMLTag& tag)
 	FENodeSet* ps = 0;
 	if (szl)
 	{
-		ps = new FENodeSet(&mesh);
+		ps = fecore_alloc(FENodeSet, &fem);
 
 		ps->SetName(szl);
-		ps->create(nodes);
 		mesh.AddNodeSet(ps);
 	}
 
@@ -542,7 +572,7 @@ void FEBioGeometrySection2::ParseNodeSection(XMLTag& tag)
 	// If a node set is defined add these nodes to the node-set
 	if (ps)
 	{
-		for (int i = 0; i<nodes; ++i) (*ps)[i] = N0 + i;
+		for (int i = 0; i<nodes; ++i) ps->Add(N0 + i);
 	}
 
 	// tell the file reader to rebuild the node ID table
@@ -585,8 +615,7 @@ void FEBioGeometrySection2::ParseElementSection(XMLTag& tag)
 	if (FEElementLibrary::IsValid(espec) == false) throw FEBioImport::InvalidElementType();
 
 	// create the new domain
-	FECoreKernel& febio = FECoreKernel::GetInstance();
-	FEDomain* pdom = febio.CreateDomain(espec, &mesh, pmat);
+	FEDomain* pdom = GetBuilder()->CreateDomain(espec, pmat);
 	if (pdom == 0) throw FEBioImport::FailedCreatingDomain();
 	FEDomain& dom = *pdom;
 	dom.SetName(szname);
@@ -596,7 +625,7 @@ void FEBioGeometrySection2::ParseElementSection(XMLTag& tag)
 	assert(elems);
 
 	// add domain it to the mesh
-	pdom->Create(elems, espec.etype);
+	pdom->Create(elems, espec);
 	pdom->SetMatID(pmat->GetID() - 1);
 	mesh.AddDomain(pdom);
 
@@ -604,9 +633,8 @@ void FEBioGeometrySection2::ParseElementSection(XMLTag& tag)
 	FEElementSet* pg = 0;
 	if (szname)
 	{
-		pg = new FEElementSet(&mesh);
+		pg = fecore_alloc(FEElementSet, &fem);
 		pg->SetName(szname);
-		pg->create(elems);
 		mesh.AddElementSet(pg);
 	}
 
@@ -627,15 +655,15 @@ void FEBioGeometrySection2::ParseElementSection(XMLTag& tag)
 		// (which by assumption is the ID that was just read in)
 		GetBuilder()->m_maxid = nid;
 
-		// add to the element set (if we have one)
-		if (pg) (*pg)[i] = nid;
-
 		// read the element data
-		ReadElement(tag, dom.ElementRef(i), nid);
+		if (ReadElement(tag, dom.ElementRef(i), nid) == false) throw XMLReader::InvalidValue(tag);
 
 		// go to next tag
 		++tag;
 	}
+
+	// create the element set
+	if (pg) pg->Create(pdom);
 
 	// assign material point data
 	dom.CreateMaterialPointData();
@@ -649,7 +677,7 @@ void FEBioGeometrySection2::ParseElementData(FEElement& el, XMLTag& tag)
 	{
 		// read the fiber direction
 		value(tag, a);
-		set_element_fiber(el, a, 0);
+		set_element_fiber(el, a, -1);
 	}
 	else if (tag == "mat_axis")
 	{
@@ -685,14 +713,15 @@ void FEBioGeometrySection2::ParseElementData(FEElement& el, XMLTag& tag)
 		for (int i = 0; i<el.GaussPoints(); ++i)
 		{
 			FEMaterialPoint* pt = el.GetMaterialPoint(i);
-			while (pt)
+			// TODO: material point parameters are no longer supported so I need to reimplement this.
+/*			while (pt)
 			{
 				FEParameterList& pl = pt->GetParameterList();
 				if (ReadParameter(tag, pl)) break;
 
+				bool tagFound = false;
 				if (pt->Components() > 1)
 				{
-					bool tagFound = false;
 					for (int i = 0; i<pt->Components(); ++i)
 					{
 						FEParameterList& pl = pt->GetPointData(i)->GetParameterList();
@@ -702,14 +731,14 @@ void FEBioGeometrySection2::ParseElementData(FEElement& el, XMLTag& tag)
 							break;
 						}
 					}
-
-					if (tagFound) break;
-
-					pt = pt->Next();
-					if (pt == 0) throw XMLReader::InvalidTag(tag);
 				}
+
+				if (tagFound) break;
+
+				pt = pt->Next();
+				if (pt == 0) throw XMLReader::InvalidTag(tag);
 			}
-		}
+*/		}
 	}
 }
 
@@ -776,7 +805,7 @@ void FEBioGeometrySection2::ParseElementDataSection(XMLTag& tag)
 			++tag;
 			do
 			{
-				int n = pset->size();
+				int n = pset->Elements();
 				for (int i = 0; i<n; ++i)
 				{
 					// get a pointer to the element
@@ -820,7 +849,7 @@ void FEBioGeometrySection2::ParseEdgeSection(XMLTag& tag)
 	int nsegs = tag.children();
 
 	// allocate storage for segments
-	FESegmentSet* ps = new FESegmentSet(&mesh);
+	FESegmentSet* ps = new FESegmentSet(&fem);
 	ps->Create(nsegs);
 	ps->SetName(szname);
 
@@ -871,7 +900,7 @@ void FEBioGeometrySection2::ParseSurfaceSection(XMLTag& tag)
 	int faces = tag.children();
 
 	// allocate storage for faces
-	FEFacetSet* ps = new FEFacetSet(&mesh);
+	FEFacetSet* ps = fecore_alloc(FEFacetSet, &fem);
 	ps->Create(faces);
 	ps->SetName(szname);
 
@@ -919,7 +948,7 @@ void FEBioGeometrySection2::ParseElementSetSection(XMLTag& tag)
 	const char* szname = tag.AttributeValue("name");
 
 	// create a new element set
-	FEElementSet* pg = new FEElementSet(&mesh);
+	FEElementSet* pg = fecore_alloc(FEElementSet, &fem);
 	pg->SetName(szname);
 
 	vector<int> l;
@@ -940,9 +969,7 @@ void FEBioGeometrySection2::ParseElementSetSection(XMLTag& tag)
 	if (l.empty() == false)
 	{
 		// assign indices to element set
-		int N = (int)l.size();
-		pg->create(N);
-		for (int i = 0; i<N; ++i) (*pg)[i] = l[i];
+		pg->Create(l);
 
 		// add the element set to the mesh
 		mesh.AddElementSet(pg);
@@ -1140,7 +1167,7 @@ void FEBioGeometrySection25::ParseInstanceSection(XMLTag& tag)
 	}
 
 	// build this part
-	if (m_feb.BuildPart(*GetFEModel(), *newPart, transform) == false) throw FEBioImport::FailedBuildingPart(newPart->Name());
+	if (m_feb.BuildPart(*GetFEModel(), *newPart, true, transform) == false) throw FEBioImport::FailedBuildingPart(newPart->Name());
 }
 
 //-----------------------------------------------------------------------------
@@ -1165,10 +1192,9 @@ void FEBioGeometrySection25::ParseNodeSection(XMLTag& tag)
 	FENodeSet* ps = 0;
 	if (szl)
 	{
-		ps = new FENodeSet(&mesh);
+		ps = fecore_alloc(FENodeSet, &fem);
 
 		ps->SetName(szl);
-		ps->create(nodes);
 		mesh.AddNodeSet(ps);
 	}
 
@@ -1201,7 +1227,7 @@ void FEBioGeometrySection25::ParseNodeSection(XMLTag& tag)
 	// If a node set is defined add these nodes to the node-set
 	if (ps)
 	{
-		for (int i = 0; i<nodes; ++i) (*ps)[i] = N0 + i;
+		for (int i = 0; i<nodes; ++i) ps->Add(N0 + i);
 	}
 
 	// tell the file reader to rebuild the node ID table
@@ -1295,8 +1321,7 @@ void FEBioGeometrySection25::ParseElementSection(XMLTag& tag)
 	if (FEElementLibrary::IsValid(espec) == false) throw FEBioImport::InvalidElementType();
 
 	// create the new domain
-	FECoreKernel& febio = FECoreKernel::GetInstance();
-	FEDomain* pdom = febio.CreateDomain(espec, &mesh, pmat);
+	FEDomain* pdom = GetBuilder()->CreateDomain(espec, pmat);
 	if (pdom == 0) throw FEBioImport::FailedCreatingDomain();
 	FEDomain& dom = *pdom;
 	dom.SetName(szname);
@@ -1309,11 +1334,27 @@ void FEBioGeometrySection25::ParseElementSection(XMLTag& tag)
 	}
 
 	// count elements
-	int elems = tag.children();
+	vector<FEModelBuilder::ELEMENT> elemList; elemList.reserve(512000);
+	++tag;
+	do
+	{
+		if ((tag == "elem") == false) throw XMLReader::InvalidTag(tag);
+
+		// get the element ID
+		FEModelBuilder::ELEMENT el;
+		tag.AttributeValue("id", el.nid);
+
+		el.nodes = tag.value(el.node, FEElement::MAX_NODES);
+		elemList.push_back(el);
+		++tag;
+	}
+	while (!tag.isend());
+
+	int elems = (int) elemList.size();
 	assert(elems);
 
 	// add domain it to the mesh
-	pdom->Create(elems, espec.etype);
+	pdom->Create(elems, espec);
 	pdom->SetMatID(pmat->GetID() - 1);
 	mesh.AddDomain(pdom);
 
@@ -1321,21 +1362,18 @@ void FEBioGeometrySection25::ParseElementSection(XMLTag& tag)
 	FEElementSet* pg = 0;
 	if (szname)
 	{
-		pg = new FEElementSet(&mesh);
+		pg = fecore_alloc(FEElementSet, &fem);
 		pg->SetName(szname);
-		pg->create(elems);
 		mesh.AddElementSet(pg);
 	}
 
 	// read element data
-	++tag;
 	for (int i = 0; i<elems; ++i)
 	{
-		if ((tag == "elem") == false) throw XMLReader::InvalidTag(tag);
-
+		FEModelBuilder::ELEMENT& elem = elemList[i];
+		
 		// get the element ID
-		int nid;
-		tag.AttributeValue("id", nid);
+		int nid = elem.nid;
 
 		// Make sure element IDs increase
 		//		if (nid <= m_pim->m_maxid) throw XMLReader::InvalidAttributeValue(tag, "id");
@@ -1344,15 +1382,15 @@ void FEBioGeometrySection25::ParseElementSection(XMLTag& tag)
 		// (which by assumption is the ID that was just read in)
 		GetBuilder()->m_maxid = nid;
 
-		// add to the element set (if we have one)
-		if (pg) (*pg)[i] = nid;
-
-		// read the element data
-		ReadElement(tag, dom.ElementRef(i), nid);
-
-		// go to next tag
-		++tag;
+		// process the element data
+		FEElement& el = dom.ElementRef(i);
+		el.SetID(nid);
+		if (elem.nodes != el.Nodes()) throw XMLReader::InvalidTag(tag);
+		GetBuilder()->GlobalToLocalID(elem.node, el.Nodes(), el.m_node);
 	}
+
+	// create the element set
+	if (pg) pg->Create(pdom);
 
 	// assign material point data
 	dom.CreateMaterialPointData();
@@ -1546,7 +1584,7 @@ void FEBioGeometrySection25::ParseEdgeSection(XMLTag& tag)
 	int nsegs = tag.children();
 
 	// allocate storage for segments
-	FESegmentSet* ps = new FESegmentSet(&mesh);
+	FESegmentSet* ps = new FESegmentSet(&fem);
 	ps->Create(nsegs);
 	ps->SetName(szname);
 
@@ -1597,14 +1635,14 @@ void FEBioGeometrySection25::ParseSurfacePairSection(XMLTag& tag)
 		if (tag == "master")
 		{
 			const char* sz = tag.AttributeValue("surface");
-			p->SetMasterSurface(mesh.FindFacetSet(sz));
-			if (p->GetMasterSurface() == 0) throw XMLReader::InvalidAttributeValue(tag, "surface", sz);
+			p->SetSecondarySurface(mesh.FindFacetSet(sz));
+			if (p->GetSecondarySurface() == 0) throw XMLReader::InvalidAttributeValue(tag, "surface", sz);
 		}
 		else if (tag == "slave")
 		{
 			const char* sz = tag.AttributeValue("surface");
-			p->SetSlaveSurface(mesh.FindFacetSet(sz));
-			if (p->GetSlaveSurface() == 0) throw XMLReader::InvalidAttributeValue(tag, "surface", sz);
+			p->SetPrimarySurface(mesh.FindFacetSet(sz));
+			if (p->GetPrimarySurface() == 0) throw XMLReader::InvalidAttributeValue(tag, "surface", sz);
 		}
 		else throw XMLReader::InvalidTag(tag);
 		++tag;
@@ -1631,14 +1669,14 @@ void FEBioGeometrySection25::ParseNodeSetPairSection(XMLTag& tag)
 		if (tag == "master")
 		{
 			const char* sz = tag.AttributeValue("node_set");
-			p.pmaster = mesh.FindNodeSet(sz);
-			if (p.pmaster == 0) throw XMLReader::InvalidAttributeValue(tag, "node_set", sz);
+			p.set2 = mesh.FindNodeSet(sz);
+			if (p.set2 == 0) throw XMLReader::InvalidAttributeValue(tag, "node_set", sz);
 		}
 		else if (tag == "slave")
 		{
 			const char* sz = tag.AttributeValue("node_set");
-			p.pslave = mesh.FindNodeSet(sz);
-			if (p.pslave == 0) throw XMLReader::InvalidAttributeValue(tag, "node_set", sz);
+			p.set1 = mesh.FindNodeSet(sz);
+			if (p.set1 == 0) throw XMLReader::InvalidAttributeValue(tag, "node_set", sz);
 		}
 		else throw XMLReader::InvalidTag(tag);
 		++tag;
@@ -1693,7 +1731,7 @@ void FEBioGeometrySection25::ParseSurfaceSection(XMLTag& tag)
 	// if parts are defined we use the new format
 	if (m_feb.Parts() > 0)
 	{
-		FEFacetSet* ps = new FEFacetSet(&mesh);
+		FEFacetSet* ps = fecore_alloc(FEFacetSet, &fem);
 		ps->SetName(szname);
 
 		// add it to the mesh
@@ -1722,7 +1760,7 @@ void FEBioGeometrySection25::ParseSurfaceSection(XMLTag& tag)
 		int faces = tag.children();
 
 		// allocate storage for faces
-		FEFacetSet* ps = new FEFacetSet(&mesh);
+		FEFacetSet* ps = fecore_alloc(FEFacetSet, &fem);
 		ps->Create(faces);
 		ps->SetName(szname);
 
@@ -1748,7 +1786,8 @@ void FEBioGeometrySection25::ParseSurfaceSection(XMLTag& tag)
 
 			// we assume that the facet type also defines the number of nodes
 			int N = face.ntype;
-			tag.value(nf, N);
+			int nread = tag.value(nf, N);
+			if (nread != face.ntype) throw XMLReader::InvalidValue(tag);
 			for (int j = 0; j<N; ++j)
 			{
 				int nid = nf[j] - 1;
@@ -1816,7 +1855,7 @@ void FEBioGeometrySection25::ParseElementSetSection(XMLTag& tag)
 	const char* szname = tag.AttributeValue("name");
 
 	// create a new element set
-	FEElementSet* pg = new FEElementSet(&mesh);
+	FEElementSet* pg = fecore_alloc(FEElementSet, &fem);
 	pg->SetName(szname);
 
 	vector<int> l;
@@ -1836,10 +1875,27 @@ void FEBioGeometrySection25::ParseElementSetSection(XMLTag& tag)
 	// only add non-empty element sets
 	if (l.empty() == false)
 	{
+		// see if all elements belong to the same domain
+		bool oneDomain = true;
+		FEElement* el = mesh.FindElementFromID(l[0]); assert(el);
+		FEDomain* dom = dynamic_cast<FEDomain*>(el->GetMeshPartition());
+		for (int i = 1; i < l.size(); ++i)
+		{
+			FEElement* el_i = mesh.FindElementFromID(l[i]); assert(el);
+			FEDomain* dom_i = dynamic_cast<FEDomain*>(el_i->GetMeshPartition());
+
+			if (dom != dom_i)
+			{
+				oneDomain = false;
+				break;
+			}
+		}
+
 		// assign indices to element set
-		int N = (int)l.size();
-		pg->create(N);
-		for (int i = 0; i<N; ++i) (*pg)[i] = l[i];
+		if (oneDomain)
+			pg->Create(dom, l);
+		else
+			pg->Create(l);
 
 		// add the element set to the mesh
 		mesh.AddElementSet(pg);
