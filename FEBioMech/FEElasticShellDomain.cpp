@@ -11,7 +11,7 @@
 //-----------------------------------------------------------------------------
 FEElasticShellDomain::FEElasticShellDomain(FEModel* pfem) : FESSIShellDomain(pfem), FEElasticDomain(pfem)
 {
-	m_pMat = 0;
+    m_pMat = 0;
     m_alphaf = m_beta = 1;
     m_alpham = 2;
 }
@@ -19,25 +19,25 @@ FEElasticShellDomain::FEElasticShellDomain(FEModel* pfem) : FESSIShellDomain(pfe
 //-----------------------------------------------------------------------------
 FEElasticShellDomain& FEElasticShellDomain::operator = (FEElasticShellDomain& d)
 { 
-	m_Elem = d.m_Elem; 
-	m_pMesh = d.m_pMesh; 
-	return (*this); 
+    m_Elem = d.m_Elem; 
+    m_pMesh = d.m_pMesh; 
+    return (*this); 
 }
 
 //-----------------------------------------------------------------------------
 void FEElasticShellDomain::SetMaterial(FEMaterial* pmat)
 {
-	m_pMat = dynamic_cast<FESolidMaterial*>(pmat);
+    m_pMat = dynamic_cast<FESolidMaterial*>(pmat);
 }
 
 //-----------------------------------------------------------------------------
 bool FEElasticShellDomain::Init()
 {
-	// initialize base class
-	FESSIShellDomain::Init();
+    // initialize base class
+    FESSIShellDomain::Init();
 
-	// error flag (set true on error)
-	bool bmerr = false;
+    // error flag (set true on error)
+    bool bmerr = false;
 
     // get the elements material
     if (m_pMat)
@@ -54,58 +54,58 @@ bool FEElasticShellDomain::Init()
         }
     }
     
-	// check for initially inverted shells
-	for (int i=0; i<Elements(); ++i)
-	{
-		FEShellElement& el = Element(i);
-		int nint = el.GaussPoints();
-		for (int n=0; n<nint; ++n)
-		{
-			double J0 = detJ0(el, n);
-			if (J0 <= 0)
-			{
-				felog.printf("**************************** E R R O R ****************************\n");
-				felog.printf("Negative jacobian detected at integration point %d of element %d\n", n+1, el.GetID());
-				felog.printf("Jacobian = %lg\n", J0);
-				felog.printf("Did you use the right node numbering?\n");
-				felog.printf("Nodes:");
-				for (int l=0; l<el.Nodes(); ++l)
-				{
-					felog.printf("%d", el.m_node[l]+1);
-					if (l+1 != el.Nodes()) felog.printf(","); else felog.printf("\n");
-				}
-				felog.printf("*******************************************************************\n\n");
-				bmerr = true;
-			}
-		}
-	}
+    // check for initially inverted shells
+    for (int i=0; i<Elements(); ++i)
+    {
+        FEShellElement& el = Element(i);
+        int nint = el.GaussPoints();
+        for (int n=0; n<nint; ++n)
+        {
+            double J0 = detJ0(el, n);
+            if (J0 <= 0)
+            {
+                felog.printf("**************************** E R R O R ****************************\n");
+                felog.printf("Negative jacobian detected at integration point %d of element %d\n", n+1, el.GetID());
+                felog.printf("Jacobian = %lg\n", J0);
+                felog.printf("Did you use the right node numbering?\n");
+                felog.printf("Nodes:");
+                for (int l=0; l<el.Nodes(); ++l)
+                {
+                    felog.printf("%d", el.m_node[l]+1);
+                    if (l+1 != el.Nodes()) felog.printf(","); else felog.printf("\n");
+                }
+                felog.printf("*******************************************************************\n\n");
+                bmerr = true;
+            }
+        }
+    }
 
-	return (bmerr == false);
+    return (bmerr == false);
 }
 
 //-----------------------------------------------------------------------------
 void FEElasticShellDomain::Activate()
 {
-	for (int i=0; i<Nodes(); ++i)
-	{
-		FENode& node = Node(i);
-		if (node.HasFlags(FENode::EXCLUDE) == false)
-		{
-			if (node.m_rid < 0)
-			{
-				node.m_ID[m_dofX] = DOF_ACTIVE;
-				node.m_ID[m_dofY] = DOF_ACTIVE;
-				node.m_ID[m_dofZ] = DOF_ACTIVE;
+    for (int i=0; i<Nodes(); ++i)
+    {
+        FENode& node = Node(i);
+        if (node.HasFlags(FENode::EXCLUDE) == false)
+        {
+            if (node.m_rid < 0)
+            {
+                node.m_ID[m_dofX] = DOF_ACTIVE;
+                node.m_ID[m_dofY] = DOF_ACTIVE;
+                node.m_ID[m_dofZ] = DOF_ACTIVE;
 
-				if (node.HasFlags(FENode::SHELL))
-				{
-					node.m_ID[m_dofSX] = DOF_ACTIVE;
-					node.m_ID[m_dofSY] = DOF_ACTIVE;
-					node.m_ID[m_dofSZ] = DOF_ACTIVE;
-				}
-			}
-		}
-	}
+                if (node.HasFlags(FENode::SHELL))
+                {
+                    node.m_ID[m_dofSX] = DOF_ACTIVE;
+                    node.m_ID[m_dofSY] = DOF_ACTIVE;
+                    node.m_ID[m_dofSZ] = DOF_ACTIVE;
+                }
+            }
+        }
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -169,42 +169,42 @@ void FEElasticShellDomain::InternalForces(FEGlobalVector& R)
 
 void FEElasticShellDomain::ElementInternalForce(FEShellElement& el, vector<double>& fe)
 {
-	int i, n;
+    int i, n;
 
-	// jacobian matrix determinant
-	double detJt;
+    // jacobian matrix determinant
+    double detJt;
 
-	const double* Mr, *Ms, *M;
+    const double* Mr, *Ms, *M;
 
-	int nint = el.GaussPoints();
-	int neln = el.Nodes();
+    int nint = el.GaussPoints();
+    int neln = el.Nodes();
 
-	double*	gw = el.GaussWeights();
-	double eta;
+    double* gw = el.GaussWeights();
+    double eta;
     
     vec3d gcnt[3];
 
-	// repeat for all integration points
-	for (n=0; n<nint; ++n)
-	{
-		FEElasticMaterialPoint& pt = *(el.GetMaterialPoint(n)->ExtractData<FEElasticMaterialPoint>());
+    // repeat for all integration points
+    for (n=0; n<nint; ++n)
+    {
+        FEElasticMaterialPoint& pt = *(el.GetMaterialPoint(n)->ExtractData<FEElasticMaterialPoint>());
 
-		// calculate the jacobian
+        // calculate the jacobian
         detJt = detJ(el, n, m_alphaf)*gw[n];
 
-		// get the stress vector for this integration point
-		mat3ds& s = pt.m_s;
+        // get the stress vector for this integration point
+        mat3ds& s = pt.m_s;
 
-		eta = el.gt(n);
+        eta = el.gt(n);
 
-		Mr = el.Hr(n);
-		Ms = el.Hs(n);
-		M  = el.H(n);
+        Mr = el.Hr(n);
+        Ms = el.Hs(n);
+        M  = el.H(n);
         
         ContraBaseVectors(el, n, gcnt, m_alphaf);
 
-		for (i=0; i<neln; ++i)
-		{
+        for (i=0; i<neln; ++i)
+        {
             vec3d gradM = gcnt[0]*Mr[i] + gcnt[1]*Ms[i];
             vec3d gradMu = (gradM*(1+eta) + gcnt[2]*M[i])/2;
             vec3d gradMd = (gradM*(1-eta) - gcnt[2]*M[i])/2;
@@ -212,17 +212,17 @@ void FEElasticShellDomain::ElementInternalForce(FEShellElement& el, vector<doubl
             vec3d fd = s*gradMd;
             
             // calculate internal force
-			// the '-' sign is so that the internal forces get subtracted
-			// from the global residual vector
-			fe[6*i  ] -= fu.x*detJt;
-			fe[6*i+1] -= fu.y*detJt;
-			fe[6*i+2] -= fu.z*detJt;
+            // the '-' sign is so that the internal forces get subtracted
+            // from the global residual vector
+            fe[6*i  ] -= fu.x*detJt;
+            fe[6*i+1] -= fu.y*detJt;
+            fe[6*i+2] -= fu.z*detJt;
 
-			fe[6*i+3] -= fd.x*detJt;
-			fe[6*i+4] -= fd.y*detJt;
-			fe[6*i+5] -= fd.z*detJt;
-		}
-	}
+            fe[6*i+3] -= fd.x*detJt;
+            fe[6*i+4] -= fd.y*detJt;
+            fe[6*i+5] -= fd.z*detJt;
+        }
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -556,7 +556,7 @@ void FEElasticShellDomain::ElementStiffness(int iel, matrix& ke)
         
         // get the stress and elasticity for this integration point
         mat3ds s = pt.m_s;
-        tens4ds C = m_pMat->Tangent(mp);
+        tens4ds C;      //tens4ds C = m_pMat->Tangent(mp);
         
         eta = el.gt(n);
         
@@ -754,30 +754,30 @@ void FEElasticShellDomain::ElementBodyForce(FEModel& fem, FEShellElement& el, ve
 //-----------------------------------------------------------------------------
 void FEElasticShellDomain::Update(const FETimeInfo& tp)
 {
-	FESSIShellDomain::Update(tp);
+    FESSIShellDomain::Update(tp);
 
     double dt = tp.timeIncrement;
     
     const int NELN = FEElement::MAX_NODES;
-	vec3d r0[NELN], s0[NELN], r[NELN], s[NELN];
+    vec3d r0[NELN], s0[NELN], r[NELN], s[NELN];
     vec3d v[NELN], w[NELN];
     vec3d a[NELN], b[NELN];
 
-	int n;
-	for (int i=0; i<(int) m_Elem.size(); ++i)
-	{
-		// get the solid element
-		FEShellElement& el = m_Elem[i];
+    int n;
+    for (int i=0; i<(int) m_Elem.size(); ++i)
+    {
+        // get the solid element
+        FEShellElement& el = m_Elem[i];
 
-		// get the number of integration points
-		int nint = el.GaussPoints();
+        // get the number of integration points
+        int nint = el.GaussPoints();
 
-		// number of nodes
-		int neln = el.Nodes();
+        // number of nodes
+        int neln = el.Nodes();
 
-		// nodal coordinates
-		for (int j=0; j<neln; ++j)
-		{
+        // nodal coordinates
+        for (int j=0; j<neln; ++j)
+        {
             FENode& node = m_pMesh->Node(el.m_node[j]);
             r0[j] = node.m_r0;
             s0[j] = node.m_r0 - node.m_d0;
@@ -787,20 +787,20 @@ void FEElasticShellDomain::Update(const FETimeInfo& tp)
             w[j] = node.get_vec3d(m_dofSVX, m_dofSVY, m_dofSVZ)*m_alphaf + node.get_vec3d(m_dofSVXP, m_dofSVYP, m_dofSVZP)*(1-m_alphaf);
             a[j] = node.m_at*m_alpham + node.m_ap*(1-m_alpham);
             b[j] = node.get_vec3d(m_dofSAX, m_dofSAY, m_dofSAZ)*m_alpham + node.get_vec3d(m_dofSAXP, m_dofSAYP, m_dofSAZP)*(1-m_alpham);
-		}
+        }
 
-		// loop over the integration points and calculate
-		// the stress at the integration point
-		for (n=0; n<nint; ++n)
-		{
-			FEMaterialPoint& mp = *(el.GetMaterialPoint(n));
-			FEElasticMaterialPoint& pt = *(mp.ExtractData<FEElasticMaterialPoint>());
+        // loop over the integration points and calculate
+        // the stress at the integration point
+        for (n=0; n<nint; ++n)
+        {
+            FEMaterialPoint& mp = *(el.GetMaterialPoint(n));
+            FEElasticMaterialPoint& pt = *(mp.ExtractData<FEElasticMaterialPoint>());
 
-			// material point coordinates
-			// TODO: I'm not entirly happy with this solution
-			//		 since the material point coordinates are used by most materials.
-			pt.m_r0 = evaluate(el, r0, s0, n);
-			pt.m_rt = evaluate(el, r, s, n);
+            // material point coordinates
+            // TODO: I'm not entirly happy with this solution
+            //       since the material point coordinates are used by most materials.
+            pt.m_r0 = evaluate(el, r0, s0, n);
+            pt.m_rt = evaluate(el, r, s, n);
 
             // get the deformation gradient and determinant at intermediate time
             double Jt, Jp;
@@ -830,8 +830,8 @@ void FEElasticShellDomain::Update(const FETimeInfo& tp)
                 if (D2 > 0)
                     pt.m_s += D*(((pt.m_Wt-pt.m_Wp)/(dt*pt.m_J) - pt.m_s.dotdot(D))/D2);
             }
-		}
-	}
+        }
+    }
 }
 
 
@@ -843,26 +843,26 @@ void FEElasticShellDomain::Update(const FETimeInfo& tp)
 //! have 3 dofs.
 void FEElasticShellDomain::UnpackLM(FEElement& el, vector<int>& lm)
 {
-	int N = el.Nodes();
-	lm.resize(N*9);
-	for (int i=0; i<N; ++i)
-	{
-		FENode& node = m_pMesh->Node(el.m_node[i]);
-		vector<int>& id = node.m_ID;
+    int N = el.Nodes();
+    lm.resize(N*9);
+    for (int i=0; i<N; ++i)
+    {
+        FENode& node = m_pMesh->Node(el.m_node[i]);
+        vector<int>& id = node.m_ID;
 
-		// first the displacement dofs
-		lm[6*i  ] = id[m_dofX];
-		lm[6*i+1] = id[m_dofY];
-		lm[6*i+2] = id[m_dofZ];
+        // first the displacement dofs
+        lm[6*i  ] = id[m_dofX];
+        lm[6*i+1] = id[m_dofY];
+        lm[6*i+2] = id[m_dofZ];
 
-		// next the rotational dofs
-		lm[6*i+3] = id[m_dofSX];
-		lm[6*i+4] = id[m_dofSY];
-		lm[6*i+5] = id[m_dofSZ];
+        // next the rotational dofs
+        lm[6*i+3] = id[m_dofSX];
+        lm[6*i+4] = id[m_dofSY];
+        lm[6*i+5] = id[m_dofSZ];
 
-		// rigid rotational dofs
-		lm[6*N + 3*i  ] = id[m_dofRU];
-		lm[6*N + 3*i+1] = id[m_dofRV];
-		lm[6*N + 3*i+2] = id[m_dofRW];
-	}
+        // rigid rotational dofs
+        lm[6*N + 3*i  ] = id[m_dofRU];
+        lm[6*N + 3*i+1] = id[m_dofRV];
+        lm[6*N + 3*i+2] = id[m_dofRW];
+    }
 }

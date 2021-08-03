@@ -49,13 +49,13 @@ mat3ds FEDamageMaterial::Stress(FEMaterialPoint& pt)
 
 //-----------------------------------------------------------------------------
 //! calculate tangent stiffness at material point
-tens4ds FEDamageMaterial::Tangent(FEMaterialPoint& pt)
+tens4dss FEDamageMaterial::Tangent(FEMaterialPoint& pt)
 {
     // evaluate the damage
     double d = Damage(pt);
     
     // evaluate the tangent
-    tens4ds c = m_pBase->Tangent(pt);
+    tens4dss c = m_pBase->Tangent(pt);
     
     // return damaged tangent
     return c*(1-d);

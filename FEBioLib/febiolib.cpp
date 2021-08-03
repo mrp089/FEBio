@@ -2,11 +2,11 @@
 #include "FECore/FECore.h"
 #include "NumCore/NumCore.h"
 #include "FEBioMech/FEBioMech.h"
-#include "FEBioMix/FEBioMix.h"
-#include "FEBioOpt/FEBioOpt.h"
-#include "FEBioFluid/FEBioFluid.h"
-#include <FEBioFluid/FEBioFSI.h>
-#include <FEBioTest/FEBioTest.h>
+//#include "FEBioMix/FEBioMix.h"
+//#include "FEBioOpt/FEBioOpt.h"
+//#include "FEBioFluid/FEBioFluid.h"
+//#include <FEBioFluid/FEBioFSI.h>
+//#include <FEBioTest/FEBioTest.h>
 #include <FEBioXML/XMLReader.h>
 #include <FEBioXML/xmltool.h>
 #include <FECore/FEModel.h>
@@ -34,11 +34,11 @@ void InitLibrary()
 	FECore::InitModule();
 	NumCore::InitModule();
 	FEBioMech::InitModule();
-	FEBioMix::InitModule();
-	FEBioOpt::InitModule();
-	FEBioFluid::InitModule();
-	FEBioFSI::InitModule();
-	FEBioTest::InitModule();
+	//FEBioMix::InitModule();
+//	FEBioOpt::InitModule();
+//	FEBioFluid::InitModule();
+//	FEBioFSI::InitModule();
+	//FEBioTest::InitModule();
 }
 
 //-----------------------------------------------------------------------------

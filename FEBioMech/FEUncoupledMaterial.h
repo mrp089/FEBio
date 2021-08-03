@@ -80,7 +80,7 @@ public:
 	mat3ds Stress(FEMaterialPoint& mp) override;
 
 	//! total spatial tangent (do not overload!)
-	tens4ds Tangent(FEMaterialPoint& mp) override;
+	tens4dss Tangent(FEMaterialPoint& mp) override;
 
 	//! calculate strain energy (do not overload!)
 	double StrainEnergyDensity(FEMaterialPoint& pt) override;

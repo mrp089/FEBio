@@ -69,7 +69,6 @@ void FEPressureLoad::SymmetricPressureStiffness(FESurfaceElement& el, matrix& ke
         for (int j=0; j<neln; ++j) {
             FENode& nd = mesh.Node(el.m_node[j]);
             rt[j] -= nd.m_d0 + nd.get_vec3d(m_dofX, m_dofY, m_dofZ) - nd.get_vec3d(m_dofSX, m_dofSY, m_dofSZ);
-            
         }
     }
 
@@ -97,7 +96,7 @@ void FEPressureLoad::SymmetricPressureStiffness(FESurfaceElement& el, matrix& ke
 			for (int j=0; j<neln; ++j)
 			{
 				vec3d kab = (dxr*(N[j]*Gs[i]-N[i]*Gs[j])
-					   -dxs*(N[j]*Gr[i]-N[i]*Gr[j]))*w[n]*0.5*tr;
+				            -dxs*(N[j]*Gr[i]-N[i]*Gr[j]))*w[n]*0.5*tr;
 
 				ke.add(3*i, 3*j, mat3da(kab));
 			}

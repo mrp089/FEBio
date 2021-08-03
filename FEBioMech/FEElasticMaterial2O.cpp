@@ -72,10 +72,10 @@ FEMaterialPoint* FEElasticMaterial2O::CreateMaterialPointData()
 // can just return it here. Note that this assumes that the stress function 
 // is always called prior to the tangent function.
 // Note that this function is not used in the second-order implemenetation
-tens4ds FEElasticMaterial2O::Tangent(FEMaterialPoint &mp)
+tens4dss FEElasticMaterial2O::Tangent(FEMaterialPoint &mp)
 {
 	assert(false);
-	tens4ds c; c.zero();
+	tens4dss c; c.zero();
 	return c;
 }
 

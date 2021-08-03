@@ -58,7 +58,7 @@ public:
 	virtual mat3ds Stress(FEMaterialPoint& pt);
 		
 	//! calculate tangent stiffness at material point
-	virtual tens4ds Tangent(FEMaterialPoint& pt);
+	virtual tens4dss Tangent(FEMaterialPoint& pt);
 		
 	//! calculate strain energy density at material point
 	virtual double StrainEnergyDensity(FEMaterialPoint& pt);

@@ -45,7 +45,7 @@ public:
 	mat3ds Stress(FEMaterialPoint& pt) override;
     
 	//! tangent function
-	tens4ds Tangent(FEMaterialPoint& pt) override;
+	tens4dss Tangent(FEMaterialPoint& pt) override;
     
     //! strain energy density function
     double StrainEnergyDensity(FEMaterialPoint& pt) override;

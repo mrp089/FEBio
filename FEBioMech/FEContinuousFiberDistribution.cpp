@@ -100,7 +100,7 @@ mat3ds FEContinuousFiberDistribution::Stress(FEMaterialPoint& mp)
 //! calculate tangent stiffness at material point
 //tens4ds FEContinuousFiberDistribution::Tangent(FEMaterialPoint& pt) { return m_pFint->Tangent(pt); }
 
-tens4ds FEContinuousFiberDistribution::Tangent(FEMaterialPoint& mp)
+tens4dss FEContinuousFiberDistribution::Tangent(FEMaterialPoint& mp)
 {
 	FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
 	FEFiberMaterialPoint& fp = *mp.ExtractData<FEFiberMaterialPoint>();
@@ -109,7 +109,7 @@ tens4ds FEContinuousFiberDistribution::Tangent(FEMaterialPoint& mp)
 	mat3d QT = (pt.m_Q).transpose();
 
 	// initialize stress tensor
-	tens4ds c;
+	tens4dss c;
 	c.zero();
 
 	FEFiberIntegrationSchemeIterator* it = m_pFint->GetIterator(&pt);

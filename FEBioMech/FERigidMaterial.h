@@ -48,7 +48,7 @@ public:
 	virtual mat3ds Stress(FEMaterialPoint& pt) override { return mat3ds(); }
 
 	//! calculate tangent stiffness at material point
-	virtual tens4ds Tangent(FEMaterialPoint& pt) override { return tens4ds(); }
+	virtual tens4dss Tangent(FEMaterialPoint& pt) override { return tens4dss(); }
 
 	//! data initialization
 	bool Init() override;

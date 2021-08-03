@@ -41,25 +41,39 @@ public:
     mat3d   m_Q;            //!< local material orientation
     
 	// position
-	vec3d	m_r0;	//!< material position
+	vec3d	m_r0;			//!< material position
 
 	// deformation data at intermediate time
-    vec3d   m_rt;   //!< spatial position
-	mat3d	m_F;	//!< deformation gradient
-	double	m_J;	//!< determinant of F
-    vec3d   m_v;    //!< velocity
-    vec3d   m_a;    //!< acceleration
-    mat3d   m_L;    //!< spatial velocity gradient
+    vec3d   m_rt;			//!< spatial position
+	mat3d	m_F;			//!< deformation gradient
+	double	m_J;			//!< determinant of F
+    vec3d   m_v;			//!< velocity
+    vec3d   m_a;			//!< acceleration
+    mat3d   m_L;			//!< spatial velocity gradient
 
 	// solid material data
-	mat3ds		m_s;		//!< Cauchy stress
-	mat3ds		m_s0;		//!< Initial stress (only used by linear solid solver)
+	mat3ds	m_s;			//!< Cauchy stress
+	mat3ds	m_s0;			//!< Initial stress (only used by linear solid solver)
     
     // current time data
-    double      m_Wt;       //!< strain energy density at current time
+    double	m_Wt;			//!< strain energy density at current time (temporarily: circumferential mbe stiffness)
     
     // previous time data
-    double      m_Wp;       //!< strain energy density
+    double	m_Wp;			//!< strain energy density (temporarily: axial mbe stiffness)
+
+	// original (o) homeostatic data
+	double	m_Jo;			//!< Jacobian at o
+	double	m_svo;			//!< volumetric stress at o
+	mat3ds	m_smo;			//!< Cauchy stress tensor for smooth muscle cells at o
+	mat3ds	m_sco;			//!< Cauchy stress tensor for all collagen fiber families at o
+	mat3d	m_Fio;			//!< inverse of deformation gradient tensor at o
+	double	m_Jh;			//!< Jacobian at h
+	mat3d	m_Fih;			//!< inverse of deformation gradient tensor at h
+
+	// evolved homeostatic (h) data
+	double	 m_phic;		//!< total mass fraction of all collagen fiber families at h
+	double	 m_Iemax;		//!< maximum value of Ie achieved over the loading history up until the current G&R time
+	tens4dss m_Cnss;		//!< numerical Lagrangian tangent
 };
 
 //-----------------------------------------------------------------------------

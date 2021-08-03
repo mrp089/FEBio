@@ -180,12 +180,12 @@ mat3ds FEViscoElasticMaterial::Stress(FEMaterialPoint& mp)
 
 //-----------------------------------------------------------------------------
 //! Material tangent
-tens4ds FEViscoElasticMaterial::Tangent(FEMaterialPoint& pt)
+tens4dss FEViscoElasticMaterial::Tangent(FEMaterialPoint& pt)
 {
 	double dt = GetFEModel()->GetTime().timeIncrement;
 
 	// calculate the spatial elastic tangent
-	tens4ds C = m_Base->Tangent(pt);
+	tens4dss C = m_Base->Tangent(pt);
 	if (dt == 0.0) return C;
 
 	// calculate the visco scale factor

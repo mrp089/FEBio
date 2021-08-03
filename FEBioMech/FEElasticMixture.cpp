@@ -121,7 +121,7 @@ mat3ds FEElasticMixture::Stress(FEMaterialPoint& mp)
 }
 
 //-----------------------------------------------------------------------------
-tens4ds FEElasticMixture::Tangent(FEMaterialPoint& mp)
+tens4dss FEElasticMixture::Tangent(FEMaterialPoint& mp)
 {
 	FEElasticMixtureMaterialPoint& pt = *mp.ExtractData<FEElasticMixtureMaterialPoint>();
 	vector<double>& w = pt.m_w;
@@ -131,7 +131,7 @@ tens4ds FEElasticMixture::Tangent(FEMaterialPoint& mp)
 	FEElasticMaterialPoint& ep = *mp.ExtractData<FEElasticMaterialPoint>();
 
 	// calculate elasticity tensor
-	tens4ds c(0.);
+	tens4dss c(0.);
 	for (int i=0; i < (int) m_pMat.size(); ++i)
 	{
 		// copy the elastic material point data to the components

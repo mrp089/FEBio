@@ -109,7 +109,7 @@ public:
 	virtual mat3ds Stress(FEMaterialPoint& pt) override;
 
 	//! calculate tangent stiffness at material point
-	virtual tens4ds Tangent(FEMaterialPoint& pt) override;
+	virtual tens4dss Tangent(FEMaterialPoint& pt) override;
 
 	//! data initialization
 	bool Init() override;

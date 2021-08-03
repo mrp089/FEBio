@@ -97,7 +97,7 @@ mat3ds FERemodelingElasticMaterial::Stress(FEMaterialPoint& mp)
 
 //-----------------------------------------------------------------------------
 //! Tangent of stress with strain
-tens4ds FERemodelingElasticMaterial::Tangent(FEMaterialPoint& mp)
+tens4dss FERemodelingElasticMaterial::Tangent(FEMaterialPoint& mp)
 {
 	return m_pBase->Tangent(mp);
 }

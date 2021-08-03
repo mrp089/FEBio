@@ -673,7 +673,7 @@ double FELogElemElasticity_::value(FEElement& el, int n)
     FEElasticMaterial* pme = m_pfem->GetMaterial(el.GetMatID())->GetElasticMaterial();
     if ((pme == 0) || pme->IsRigid()) return 0;
 
-    tens4ds c;
+    tens4dss c;
 	double val = 0.0;
 	int nint = el.GaussPoints();
 	for (int i=0; i<nint; ++i)

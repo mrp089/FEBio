@@ -4,7 +4,7 @@
 
 // Material parameters for FEElasticMaterial
 BEGIN_PARAMETER_LIST(FESolidMaterial, FEMaterial)
-	ADD_PARAMETER(m_density, FE_PARAM_DOUBLE, "density");
+    ADD_PARAMETER(m_density, FE_PARAM_DOUBLE, "density");
 END_PARAMETER_LIST();
 
 FESolidMaterial::FESolidMaterial(FEModel* pfem) : FEMaterial(pfem) {}
@@ -74,7 +74,7 @@ tens4ds FESolidMaterial::MaterialTangent(FEMaterialPoint& mp, const mat3ds E)
     pt.m_J = J;
     
     // Evaluate Cauchy stress
-    tens4ds c = Tangent(mp);
+    tens4dss c = Tangent(mp);
     
     // Restore original F
     pt.m_F = Fsafe;
@@ -82,7 +82,7 @@ tens4ds FESolidMaterial::MaterialTangent(FEMaterialPoint& mp, const mat3ds E)
     
     // Convert spatial tangent to material tangent
     mat3d Ui = dyad(v[0])/lam[0] + dyad(v[1])/lam[1] + dyad(v[2])/lam[2];
-    tens4ds Cm = c.pp(Ui)*J;
+    tens4ds Cm;     //tens4ds Cm = c.pp(Ui)*J;
     
     return Cm;
 }

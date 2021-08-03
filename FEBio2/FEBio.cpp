@@ -553,7 +553,7 @@ int prompt(CMDOPTIONS& ops)
 	Console* pShell = Console::GetHandle();
 
 	// set the title
-	pShell->SetTitle("FEBio2");
+	pShell->SetTitle("FEBio3");
 	int nargs;
 	char* argv[32];
 
@@ -577,11 +577,11 @@ int prompt(CMDOPTIONS& ops)
 			{
 				ParseCmdLine(nargs, argv, ops);
 
-				// run the FEBio2 on the ops
+				// run the FEBio3 on the ops
 				Run(ops);
 					
 				// reset the title after computation.
-				pShell->SetTitle("FEBio2");
+				pShell->SetTitle("FEBio3");
 			}
 			else if (strcmp(argv[0], "import") == 0)
 			{

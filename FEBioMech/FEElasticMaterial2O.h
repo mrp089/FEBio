@@ -64,7 +64,7 @@ private:
 	// TODO: Perhaps we should derive this class directly from FEMaterial so
 	//       that these functions are not inherited. 
 	mat3ds Stress(FEMaterialPoint& pt) override;
-	tens4ds Tangent(FEMaterialPoint& pt) override;
+	tens4dss Tangent(FEMaterialPoint& pt) override;
 
 	DECLARE_PARAMETER_LIST();
 };

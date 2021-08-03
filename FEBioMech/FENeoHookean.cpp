@@ -34,7 +34,7 @@ mat3ds FENeoHookean::Stress(FEMaterialPoint& mp)
 }
 
 //-----------------------------------------------------------------------------
-tens4ds FENeoHookean::Tangent(FEMaterialPoint& mp)
+tens4dss FENeoHookean::Tangent(FEMaterialPoint& mp)
 {
 	FEElasticMaterialPoint& pt = *mp.ExtractData<FEElasticMaterialPoint>();
 
@@ -56,7 +56,7 @@ tens4ds FENeoHookean::Tangent(FEMaterialPoint& mp)
 	D[4][4] = mu1;
 	D[5][5] = mu1;
 
-	return tens4ds(D);
+	return tens4dss(D);
 }
 
 //-----------------------------------------------------------------------------

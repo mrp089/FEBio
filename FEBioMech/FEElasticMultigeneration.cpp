@@ -25,7 +25,7 @@ mat3ds FEGenerationMaterial::Stress(FEMaterialPoint& pt)
 		
 //-----------------------------------------------------------------------------
 //! calculate tangent stiffness at material point
-tens4ds FEGenerationMaterial::Tangent(FEMaterialPoint& pt)
+tens4dss FEGenerationMaterial::Tangent(FEMaterialPoint& pt)
 {
 	return m_pMat->Tangent(pt);
 }
@@ -234,12 +234,12 @@ mat3ds FEElasticMultigeneration::Stress(FEMaterialPoint& mp)
 }
 
 //-----------------------------------------------------------------------------
-tens4ds FEElasticMultigeneration::Tangent(FEMaterialPoint& mp)
+tens4dss FEElasticMultigeneration::Tangent(FEMaterialPoint& mp)
 {
 	FEMultigenerationMaterialPoint& pt = *mp.ExtractData<FEMultigenerationMaterialPoint>();
 	FEElasticMaterialPoint& ep = *mp.ExtractData<FEElasticMaterialPoint>();
 	
-	tens4ds c(0.);
+	tens4dss c(0.0);
 	
 	// extract deformation gradient
 	mat3d Fs = ep.m_F;

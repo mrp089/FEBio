@@ -403,7 +403,7 @@ void FEUDGHexDomain::UDGMaterialStiffness(FESolidElement &el, matrix &ke)
 	FEElasticMaterialPoint& pt = *(mp.ExtractData<FEElasticMaterialPoint>());
 
 	// get the 'D' matrix
-	tens4ds C = m_pMat->Tangent(mp);
+	tens4dss C = m_pMat->Tangent(mp);
 	C.extract(D);
 
 	// we only calculate the upper triangular part

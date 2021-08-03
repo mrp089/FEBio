@@ -12,9 +12,17 @@ FEElasticMaterialPoint::FEElasticMaterialPoint()
 	m_J = 1;
 	m_s.zero();
 	m_s0.zero();
-    m_v = m_a = vec3d(0, 0, 0);
+	m_v = m_a = vec3d(0, 0, 0);
 	m_buncoupled = false;
-    m_Wt = m_Wp = 0;
+	m_Wt = m_Wp = 0;
+	m_Jo = 1;
+	m_svo = 0;
+	m_smo.zero();
+	m_sco.zero();
+	m_Fio.unit();
+	m_phic = 0;
+	m_Iemax = 0;
+	m_Cnss.zero();
 }
 
 //-----------------------------------------------------------------------------
@@ -30,17 +38,29 @@ void FEElasticMaterialPoint::Init()
 {
 	m_F.unit();
 
-	m_J = 1;
+	m_J = 1.0;
 
 	m_s.zero();
 	m_s0.zero();
 
 //	m_Q.unit();
 
-    m_v = m_a = vec3d(0, 0, 0);
+    m_v = m_a = vec3d(0.0,0.0,0.0);
     m_L.zero();
     
-    m_Wt = m_Wp = 0;
+    m_Wt = m_Wp = 0.0;
+
+	m_Jo = 1.0;
+	m_svo = 0.0;
+	m_smo.zero();
+	m_sco.zero();
+	m_Fio.unit();
+	m_Jh = 1.0;
+	m_Fih.unit();
+	m_phic = 0.0;
+	m_Iemax = 0.0;
+
+	m_Cnss.zero();
     
 	// don't forget to initialize the base class
     FEMaterialPoint::Init();
@@ -51,11 +71,11 @@ void FEElasticMaterialPoint::Serialize(DumpStream& ar)
 {
 	if (ar.IsSaving())
 	{
-		ar << m_F << m_J << m_Q << m_s << m_s0 << m_v << m_a << m_L << m_Wt << m_Wp;
+		ar << m_F << m_J << m_Q << m_s << m_s0 << m_v << m_a << m_L << m_Wt << m_Wp << m_Jo << m_svo << m_smo << m_sco << m_Fio << m_Jh << m_Fih << m_phic << m_Iemax << m_Cnss;
 	}
 	else
 	{
-		ar >> m_F >> m_J >> m_Q >> m_s >> m_s0 >> m_v >> m_a >> m_L >> m_Wt >> m_Wp;
+		ar >> m_F >> m_J >> m_Q >> m_s >> m_s0 >> m_v >> m_a >> m_L >> m_Wt >> m_Wp >> m_Jo >> m_svo >> m_smo >> m_sco >> m_Fio >> m_Jh >> m_Fih >> m_phic >> m_Iemax >> m_Cnss;
 	}
 
 	FEMaterialPoint::Serialize(ar);
@@ -353,4 +373,3 @@ bool FEElasticMaterial::Validate()
 //-----------------------------------------------------------------------------
 //! return the strain energy density
 double FEElasticMaterial::StrainEnergyDensity(FEMaterialPoint& pt) { return 0; }
-

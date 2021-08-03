@@ -278,7 +278,7 @@ mat3ds FEReactiveViscoelasticMaterial::Stress(FEMaterialPoint& mp)
 
 //-----------------------------------------------------------------------------
 //! Material tangent
-tens4ds FEReactiveViscoelasticMaterial::Tangent(FEMaterialPoint& mp)
+tens4dss FEReactiveViscoelasticMaterial::Tangent(FEMaterialPoint& mp)
 {
     CullGenerations(mp);
     
@@ -291,7 +291,7 @@ tens4ds FEReactiveViscoelasticMaterial::Tangent(FEMaterialPoint& mp)
     mat3ds D = ep.RateOfDeformation();
     
 	// calculate the base material tangent
-	tens4ds c = m_pBase->Tangent(mp);
+	tens4dss c = m_pBase->Tangent(mp);
     
     // current number of breaking generations
     int ng = (int)pt.m_Fi.size();
@@ -307,7 +307,7 @@ tens4ds FEReactiveViscoelasticMaterial::Tangent(FEMaterialPoint& mp)
         double J = ep.m_J;
         
         double w;
-        tens4ds cb;
+        tens4dss cb;
         
         // calculate the bond tangents for breaking generations
         for (int ig=0; ig<ng; ++ig) {

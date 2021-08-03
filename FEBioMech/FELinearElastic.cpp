@@ -51,7 +51,7 @@ mat3ds FELinearElastic::Stress(FEMaterialPoint& mp)
 }
 
 //-----------------------------------------------------------------------------
-tens4ds FELinearElastic::Tangent(FEMaterialPoint& mp)
+tens4dss FELinearElastic::Tangent(FEMaterialPoint& mp)
 {
 	double D[6][6] = {0};
 	D[0][0] = m_lam+2.*m_mu; D[0][1] = m_lam      ; D[0][2] = m_lam      ;
@@ -61,7 +61,7 @@ tens4ds FELinearElastic::Tangent(FEMaterialPoint& mp)
 	D[4][4] = m_mu;
 	D[5][5] = m_mu;
 
-	return tens4ds(D);
+	return tens4dss(D);
 }
 
 //-----------------------------------------------------------------------------

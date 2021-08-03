@@ -5,6 +5,7 @@
 //-----------------------------------------------------------------------------
 class tens4ds;
 class tens4dms;
+class tens4dss;
 class tens4d;
 
 //-----------------------------------------------------------------------------
@@ -26,58 +27,58 @@ class tens4d;
 class tens4ds
 {
 public:
-	enum { NNZ = 21 };
+    enum { NNZ = 21 };
 
-	// default constructor
-	tens4ds() {}
-	explicit tens4ds(const double g);
-	tens4ds(double m[6][6]);
+    // default constructor
+    tens4ds() {}
+    explicit tens4ds(const double g);
+    tens4ds(double m[6][6]);
 
-	double& operator () (int i, int j, int k, int l);
-	double operator () (int i, int j, int k, int l) const;
+    double& operator () (int i, int j, int k, int l);
+    double operator () (int i, int j, int k, int l) const;
 
-	// TODO: remove this?
-	double& operator () (int i, int j);
-	double operator () (int i, int j) const;
+    // TODO: remove this?
+    double& operator () (int i, int j);
+    double operator () (int i, int j) const;
 
-	// arithmetic operators
-	tens4ds operator + (const tens4ds& t) const;
-	tens4ds operator - (const tens4ds& t) const;
-	tens4ds operator * (double g) const;
-	tens4ds operator / (double g) const;
+    // arithmetic operators
+    tens4ds operator + (const tens4ds& t) const;
+    tens4ds operator - (const tens4ds& t) const;
+    tens4ds operator * (double g) const;
+    tens4ds operator / (double g) const;
 
-	// arithmetic assignment operators
-	tens4ds& operator += (const tens4ds& t);
-	tens4ds& operator -= (const tens4ds& t);
-	tens4ds& operator *= (double g);
-	tens4ds& operator /= (double g);
+    // arithmetic assignment operators
+    tens4ds& operator += (const tens4ds& t);
+    tens4ds& operator -= (const tens4ds& t);
+    tens4ds& operator *= (double g);
+    tens4ds& operator /= (double g);
 
-	// unary operators
-	tens4ds operator - () const;
-	
-	// double dot product with 2nd order tensor
-	mat3ds dot(const mat3ds& m) const;
+    // unary operators
+    tens4ds operator - () const;
+    
+    // double dot product with 2nd order tensor
+    mat3ds dot(const mat3ds& m) const;
     mat3ds dot(const mat3dd& m) const { return dot(mat3ds(m)); }
     mat3ds dot(const mat3d& m) const;
     mat3ds dot2(const mat3d& m) const;
 
-	// trace
-	double tr() const;
-	
-	// initialize to zero
-	void zero();
+    // trace
+    double tr() const;
+    
+    // initialize to zero
+    void zero();
 
-	// extract 6x6 matrix
-	void extract(double d[6][6]);
+    // extract 6x6 matrix
+    void extract(double d[6][6]);
 
-	// calculates the inverse
-	tens4ds inverse() const;
+    // calculates the inverse
+    tens4ds inverse() const;
     
     // evaluate push/pull operation
     tens4ds pp(const mat3d& F);
 
 public:
-	double d[NNZ];	// stored in column major order
+    double d[NNZ];  // stored in column major order
 };
 
 //! Check positive definiteness of a 4th-order symmetric tensor
@@ -117,55 +118,54 @@ inline tens4ds operator * (const double g, const tens4ds& a) { return a*g; }
 //     \                                    44  /
 //
 
-
 class tens4dms
 {
 public:
-	enum { NNZ = 45 };
+    enum { NNZ = 45 };
 
-	// Default constructor
-	tens4dms() {}
-	tens4dms(const double g);
-	tens4dms(double m[9][9]);
+    // Default constructor
+    tens4dms() {}
+    tens4dms(const double g);
+    tens4dms(double m[9][9]);
 
-	// access operators
-	double& operator () (int i, int j, int k, int l);
-	double operator () (int i, int j, int k, int l) const;
-	double& operator () (int i, int j);
-	double operator () (int i, int j) const;
+    // access operators
+    double& operator () (int i, int j, int k, int l);
+    double operator () (int i, int j, int k, int l) const;
+    double& operator () (int i, int j);
+    double operator () (int i, int j) const;
 
-	// arithmetic operators
-	tens4dms operator + (const tens4dms& t) const;
-	tens4dms operator - (const tens4dms& t) const;
-	tens4dms operator * (double g) const;
-	tens4dms operator / (double g) const;
+    // arithmetic operators
+    tens4dms operator + (const tens4dms& t) const;
+    tens4dms operator - (const tens4dms& t) const;
+    tens4dms operator * (double g) const;
+    tens4dms operator / (double g) const;
 
-	// arithmetic assignment operators
-	tens4dms& operator += (const tens4dms& t);
-	tens4dms& operator -= (const tens4dms& t);
-	tens4dms& operator *= (double g);
-	tens4dms& operator /= (double g);
+    // arithmetic assignment operators
+    tens4dms& operator += (const tens4dms& t);
+    tens4dms& operator -= (const tens4dms& t);
+    tens4dms& operator *= (double g);
+    tens4dms& operator /= (double g);
 
-	// unary operators
-	tens4dms operator - () const;
-	
-	// trace
-	double tr() const;
-	
-	// initialize to zero
-	void zero();
+    // unary operators
+    tens4dms operator - () const;
+    
+    // trace
+    double tr() const;
+    
+    // initialize to zero
+    void zero();
 
-	// extract 9x9 matrix
-	void extract(double d[9][9]);
+    // extract 9x9 matrix
+    void extract(double d[9][9]);
 
-	// compute the super-symmetric (major and minor symmetric) component of the tensor
-	tens4ds supersymm() const;
+    // compute the super-symmetric (major and minor symmetric) component of the tensor
+    tens4ds supersymm() const;
 
-	//// calculates the inverse
-	//tens4dms inverse() const;
+    //// calculates the inverse
+    //tens4dms inverse() const;
 
 public:
-	double d[NNZ];	// stored in column major order
+    double d[NNZ];  // stored in column major order
 };
 
 // outer (dyadic) products for symmetric and non-symmetric matrices
@@ -174,6 +174,72 @@ tens4dms dyad1(const mat3ds& a, const mat3ds& b);
 
 // The following file contains the actual definition of the class functions
 #include "tens4dms.hpp"
+
+//-----------------------------------------------------------------------------
+//! Class for 4th order tensors with minor symmetries only
+
+// Due to the lack of major symmetry, we have to store this tensor as a FULL 6x6 matrix.
+// The tensor is stored in column major order:
+//
+//       00   11   22   01   12   02    |
+//       -------------------------------+---
+//     /  0    6   12   18   24   30  \ | 00
+//     |  1    7   13   19   25   31  | | 11
+//     |  2    8   14   20   26   32  | | 22
+// A = |  3    9   15   21   27   33  | | 01
+//     |  4   10   16   22   28   34  | | 12
+//     \  5   11   17   23   29   35  / | 02
+//
+
+class tens4dss
+{
+public:
+    enum { NNZ = 36 };
+
+    // default constructor
+    tens4dss() {}
+    tens4dss(const double g);
+    tens4dss(double m[6][6]);
+    tens4dss(tens4ds& t);
+
+    // access operators
+    double& operator () (int i, int j, int k, int l);
+    double operator () (int i, int j, int k, int l) const;
+    double& operator () (int i, int j);
+    double operator () (int i, int j) const;
+
+    // arithmetic operators
+    tens4dss operator + (const tens4dss& t) const;
+    tens4dss operator - (const tens4dss& t) const;
+    tens4dss operator * (double g) const;
+    tens4dss operator / (double g) const;
+
+    // arithmetic assignment operators
+    tens4dss& operator += (const tens4dss& t);
+    tens4dss& operator -= (const tens4dss& t);
+    tens4dss& operator *= (double g);
+    tens4dss& operator /= (double g);
+
+    // unary operators
+    tens4dss operator - () const;
+    
+    // initialize to zero
+    void zero();
+    
+    // extract 6x6 matrix
+    void extract(double d[6][6]);
+
+public:
+    double d[NNZ];  // stored in column major order
+};
+
+tens4dss ddotss(const tens4dss& a, const tens4dss& b);
+tens4dss dyad1ss(const mat3ds& a, const mat3ds& b);
+
+inline tens4dss operator * (const double g, const tens4dss& a) { return a*g; }
+
+// The following file contains the actual definition of the class functions
+#include "tens4dss.hpp"
 
 //-----------------------------------------------------------------------------
 //! Class for 4th order tensors without symmetry
@@ -199,17 +265,17 @@ template <> class tensor_traits<tens4d> {public: enum { NNZ = 81}; };
 class tens4d : public tensor_base<tens4d>
 {
 public:
-	// constructors
-	tens4d() {}
+    // constructors
+    tens4d() {}
 
 public:
-	// access operators
-	double& operator () (int i, int j, int k, int l);
-	double operator () (int i, int j, int k, int l) const;
+    // access operators
+    double& operator () (int i, int j, int k, int l);
+    double operator () (int i, int j, int k, int l) const;
 
 private:
-	double& operator () (int i, int j);
-	double operator () (int i, int j) const;
+    double& operator () (int i, int j);
+    double operator () (int i, int j) const;
 };
 
 // The following file contains the actual definition of the class functions
